@@ -1,2 +1,2 @@
 english_file = "locales/en/app.ftl"
-file_masks = ["src/**/*.ts"]
+file_masks = ["locales/**/*.ftl"]

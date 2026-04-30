@@ -5,14 +5,14 @@ Minimal Fluent-focused language server.
 Current behavior:
 
 - Reads `fluent-lsp.toml` or `.fluent-lsp.toml` from the workspace root.
-- Restricts lookup to files matched by `file_masks`.
-- Resolves `textDocument/definition` by extracting the key under the cursor and jumping to the matching message in the configured English `.ftl` file.
+- Restricts lookup to translated `.ftl` files matched by `file_masks`.
+- Resolves `textDocument/definition` by extracting the message, term, or attribute under the cursor from a translated Fluent file and jumping to the matching entry in the configured English `.ftl` file.
 
 Config shape:
 
 ```toml
 english_file = "locales/en/app.ftl"
-file_masks = ["src/**/*.ts", "src/**/*.tsx"]
+file_masks = ["locales/**/*.ftl"]
 ```
 
 Run it over stdio:
@@ -26,6 +26,11 @@ Validation:
 ```bash
 cargo test
 ```
+
+Local fork:
+
+- `third_party/fluent-syntax/` is a path-patched local fork of `fluent-syntax 0.12.0`.
+- The intent is to have a clean place to add AST/source span support for editor features without waiting on upstream merges.
 
 The test suite includes:
 

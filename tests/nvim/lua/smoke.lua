@@ -5,7 +5,7 @@ function M.run()
   local server = assert(vim.env.FLUENT_LSP_BIN ~= "" and vim.env.FLUENT_LSP_BIN)
   local result_path = assert(vim.env.FLUENT_LSP_RESULT ~= "" and vim.env.FLUENT_LSP_RESULT)
 
-  vim.cmd.edit(workspace .. "/src/app.ts")
+  vim.cmd.edit(workspace .. "/locales/es/app.ftl")
 
   local client_id = vim.lsp.start({
     name = "fluent-lsp",

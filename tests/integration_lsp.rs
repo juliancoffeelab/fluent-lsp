@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{Value, json};
+use std::convert::TryFrom;
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -67,9 +68,9 @@ impl Drop for LspProcess {
 }
 
 #[test]
-fn goto_definition_resolves_to_english_fluent_file() {
+fn goto_definition_from_translation_resolves_to_english_fluent_file() {
     let root = fixture_root();
-    let source_path = root.join("src/app.ts");
+    let source_path = root.join("locales/es/app.ftl");
     let source_uri = format!("file://{}", source_path.display());
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
@@ -108,32 +109,84 @@ fn goto_definition_resolves_to_english_fluent_file() {
         "params": {
             "textDocument": {
                 "uri": source_uri,
-                "languageId": "typescript",
+                "languageId": "fluent",
                 "version": 1,
                 "text": source_text
             }
         }
     }));
 
+    assert_definition(
+        &mut lsp,
+        2,
+        &source_path,
+        position_of(&source_text, "welcome-title"),
+        &root.join("locales/en/app.ftl"),
+        0,
+        0,
+    );
+
+    assert_definition(
+        &mut lsp,
+        3,
+        &source_path,
+        position_of(&source_text, "brand-name"),
+        &root.join("locales/en/app.ftl"),
+        1,
+        1,
+    );
+
+    assert_definition(
+        &mut lsp,
+        4,
+        &source_path,
+        position_of(&source_text, "label ="),
+        &root.join("locales/en/app.ftl"),
+        3,
+        5,
+    );
+}
+
+fn assert_definition(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    source_path: &Path,
+    position: (u32, u32),
+    expected_target: &Path,
+    expected_line: u32,
+    expected_character: u32,
+) {
     lsp.send(&json!({
         "jsonrpc": "2.0",
-        "id": 2,
+        "id": request_id,
         "method": "textDocument/definition",
         "params": {
             "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "position": { "line": 2, "character": 25 }
+            "position": { "line": position.0, "character": position.1 }
         }
     }));
 
     let definition = lsp.recv();
-    assert_eq!(definition["id"], 2);
+    assert_eq!(definition["id"], request_id);
     assert_eq!(
         definition["result"]["uri"],
-        Value::String(format!(
-            "file://{}",
-            root.join("locales/en/app.ftl").display()
-        ))
+        Value::String(format!("file://{}", expected_target.display()))
     );
-    assert_eq!(definition["result"]["range"]["start"]["line"], 0);
-    assert_eq!(definition["result"]["range"]["start"]["character"], 0);
+    assert_eq!(
+        definition["result"]["range"]["start"]["line"],
+        Value::from(expected_line),
+    );
+    assert_eq!(
+        definition["result"]["range"]["start"]["character"],
+        Value::from(expected_character),
+    );
+}
+
+fn position_of(source: &str, needle: &str) -> (u32, u32) {
+    let offset = source.find(needle).expect("needle not found in source");
+    let prefix = &source[..offset];
+    let line = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count()).unwrap();
+    let line_start = prefix.rfind('\n').map(|idx| idx + 1).unwrap_or(0);
+    let character = u32::try_from(source[line_start..offset].chars().count()).unwrap();
+    (line, character)
 }

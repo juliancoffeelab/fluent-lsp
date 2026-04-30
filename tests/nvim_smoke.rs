@@ -12,7 +12,7 @@ fn fixture_root() -> PathBuf {
 }
 
 #[test]
-fn nvim_definition_jumps_into_english_file() {
+fn nvim_definition_from_translation_jumps_into_english_file() {
     let output_dir = tempdir().unwrap();
     let result_path = output_dir.path().join("result.json");
     let fixture = fixture_root();
