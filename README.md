@@ -41,3 +41,15 @@ The test suite includes:
 
 - direct LSP JSON-RPC integration coverage
 - a headless Neovim smoke test with a mock config under `tests/nvim/`
+
+
+# TODO
+- It would be nice to have some sort of subtle syntax higlighting in on hover,
+at least on comments vs strings. But that's it. Nothing more probably.
+- It should work with trees of files. There shouldn't be english_file, there
+should be just origin language
+- File masks potentially should be /path/to/{lang}/{filepath} and then just
+you know resolve the thing.
+- Hover should work on english too, and show you all the stuff hovers for
+translations work, but like, ouroboros thing, where it just shows english +
+usual meta.
