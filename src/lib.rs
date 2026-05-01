@@ -13,7 +13,8 @@ use tower_lsp::jsonrpc::Result as LspResult;
 use tower_lsp::lsp_types::{
     DidChangeTextDocumentParams, DidOpenTextDocumentParams, GotoDefinitionParams,
     GotoDefinitionResponse, InitializeParams, InitializeResult, Location, MessageType, OneOf,
-    Position, Range, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    Position, Range, ReferenceParams, ServerCapabilities, TextDocumentSyncCapability,
+    TextDocumentSyncKind, Url,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -71,6 +72,10 @@ impl WorkspaceConfig {
         &self.english_file
     }
 
+    pub fn is_english_file(&self, path: &Path) -> bool {
+        path == self.english_file
+    }
+
     pub fn matches_translation_file(&self, path: &Path) -> bool {
         if path == self.english_file || !is_fluent_file(path) {
             return false;
@@ -105,6 +110,30 @@ fn compile_globs(globs: &[String]) -> Result<Option<GlobSet>> {
     }
 
     Ok(Some(builder.build()?))
+}
+
+fn collect_translation_files(workspace: &WorkspaceConfig) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_files_under(&workspace.root_dir, &mut files);
+    files.retain(|path| workspace.matches_translation_file(path));
+    files.sort();
+    files
+}
+
+fn collect_files_under(root: &Path, files: &mut Vec<PathBuf>) {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files_under(&path, files);
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -162,6 +191,54 @@ impl Backend {
             range: definition,
         })
     }
+
+    async fn references_for(&self, params: ReferenceParams) -> Option<Vec<Location>> {
+        let state = self.state.read().await;
+        let workspace = state.workspace.clone()?;
+        let uri = params.text_document_position.text_document.uri;
+        let path = uri.to_file_path().ok()?;
+        if !workspace.is_english_file(&path) {
+            return None;
+        }
+
+        let source = state
+            .open_documents
+            .get(&uri)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(&path).ok())?;
+        drop(state);
+
+        let key = extract_definition_key(&source, &path, params.text_document_position.position)?;
+        let mut references = Vec::new();
+
+        if params.context.include_declaration {
+            let range = find_fluent_definition(&source, &key)?;
+            references.push(Location {
+                uri: uri.clone(),
+                range,
+            });
+        }
+
+        for translation_path in collect_translation_files(&workspace) {
+            let translation_uri = match Url::from_file_path(&translation_path) {
+                Ok(uri) => uri,
+                Err(()) => continue,
+            };
+            let translation_source = match self.read_document_text(&translation_uri).await {
+                Some(source) => source,
+                None => continue,
+            };
+            let Some(range) = find_fluent_definition(&translation_source, &key) else {
+                continue;
+            };
+            references.push(Location {
+                uri: translation_uri,
+                range,
+            });
+        }
+
+        Some(references)
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -191,6 +268,7 @@ impl LanguageServer for Backend {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
@@ -261,6 +339,10 @@ impl LanguageServer for Backend {
             .definition_for(params)
             .await
             .map(GotoDefinitionResponse::Scalar))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> LspResult<Option<Vec<Location>>> {
+        Ok(self.references_for(params).await)
     }
 }
 
@@ -505,6 +587,34 @@ mod tests {
 
         let attribute = extract_definition_key(source, Path::new("locales/fr/app.ftl"), Position::new(3, 6)).unwrap();
         assert_eq!(attribute, "button-copy.label");
+    }
+
+    #[test]
+    fn collects_translation_files_without_english() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("workspace");
+        let workspace = WorkspaceConfig::load(root).unwrap();
+
+        let files = collect_translation_files(&workspace);
+        let relative: Vec<_> = files
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&workspace.root_dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+
+        assert_eq!(
+            relative,
+            vec![
+                "locales/es/app.ftl".to_string(),
+                "locales/fr/app.ftl".to_string(),
+            ]
+        );
     }
 
     #[test]

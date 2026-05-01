@@ -93,6 +93,10 @@ fn goto_definition_from_translation_resolves_to_english_fluent_file() {
         initialize["result"]["capabilities"]["definitionProvider"],
         Value::Bool(true)
     );
+    assert_eq!(
+        initialize["result"]["capabilities"]["referencesProvider"],
+        Value::Bool(true)
+    );
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -180,6 +184,141 @@ fn assert_definition(
         definition["result"]["range"]["start"]["character"],
         Value::from(expected_character),
     );
+}
+
+#[test]
+fn references_from_english_resolve_to_translated_fluent_files() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_uri = format!("file://{}", source_path.display());
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {}
+        }
+    }));
+
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], 10);
+    assert_eq!(
+        initialize["result"]["capabilities"]["referencesProvider"],
+        Value::Bool(true)
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": source_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": source_text
+            }
+        }
+    }));
+
+    assert_references(
+        &mut lsp,
+        11,
+        &source_path,
+        position_of(&source_text, "welcome-title"),
+        &[
+            ReferenceExpectation::new("locales/es/app.ftl", 0, 0),
+            ReferenceExpectation::new("locales/fr/app.ftl", 0, 0),
+        ],
+    );
+
+    assert_references(
+        &mut lsp,
+        12,
+        &source_path,
+        position_of(&source_text, "brand-name"),
+        &[
+            ReferenceExpectation::new("locales/es/app.ftl", 1, 1),
+            ReferenceExpectation::new("locales/fr/app.ftl", 1, 1),
+        ],
+    );
+
+    assert_references(
+        &mut lsp,
+        13,
+        &source_path,
+        position_of(&source_text, "label ="),
+        &[
+            ReferenceExpectation::new("locales/es/app.ftl", 3, 5),
+            ReferenceExpectation::new("locales/fr/app.ftl", 3, 5),
+        ],
+    );
+}
+
+struct ReferenceExpectation<'a> {
+    relative_path: &'a str,
+    line: u32,
+    character: u32,
+}
+
+impl<'a> ReferenceExpectation<'a> {
+    fn new(relative_path: &'a str, line: u32, character: u32) -> Self {
+        Self {
+            relative_path,
+            line,
+            character,
+        }
+    }
+}
+
+fn assert_references(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    source_path: &Path,
+    position: (u32, u32),
+    expected: &[ReferenceExpectation<'_>],
+) {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+
+    let references = lsp.recv();
+    assert_eq!(references["id"], request_id);
+    let items = references["result"].as_array().expect("expected references array");
+    assert_eq!(items.len(), expected.len());
+
+    for (item, expected) in items.iter().zip(expected.iter()) {
+        let uri = item["uri"].as_str().unwrap();
+        assert!(
+            uri.ends_with(expected.relative_path),
+            "unexpected reference uri: {uri}"
+        );
+        assert_eq!(item["range"]["start"]["line"], Value::from(expected.line));
+        assert_eq!(
+            item["range"]["start"]["character"],
+            Value::from(expected.character)
+        );
+    }
 }
 
 fn position_of(source: &str, needle: &str) -> (u32, u32) {
