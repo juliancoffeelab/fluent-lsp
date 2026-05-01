@@ -1,2 +1,4 @@
 english_file = "locales/en/app.ftl"
 file_masks = ["locales/**/*.ftl"]
+hover_selector_combinations = true
+hover_selector_combinations_limit = 3

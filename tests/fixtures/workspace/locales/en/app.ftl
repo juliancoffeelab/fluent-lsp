@@ -10,4 +10,14 @@ welcome-title = Welcome
 button-copy =
     .label = Launch
 
+# Shortcut combinations
+install-hint =
+    { $platform ->
+        [macos] Press Command
+       *[other] Press Ctrl
+    } + { $action ->
+        [copy] C
+       *[paste] V
+    }
+
 secondary-copy = More text

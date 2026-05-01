@@ -20,12 +20,17 @@ use tower_lsp::lsp_types::{
 use tower_lsp::{Client, LanguageServer};
 
 const CONFIG_FILE_NAMES: [&str; 2] = ["fluent-lsp.toml", ".fluent-lsp.toml"];
+const DEFAULT_HOVER_SELECTOR_COMBINATIONS_LIMIT: usize = 32;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub english_file: PathBuf,
     #[serde(default)]
     pub file_masks: Vec<String>,
+    #[serde(default)]
+    pub hover_selector_combinations: bool,
+    #[serde(default = "default_hover_selector_combinations_limit")]
+    pub hover_selector_combinations_limit: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +38,8 @@ pub struct WorkspaceConfig {
     root_dir: PathBuf,
     english_file: PathBuf,
     file_masks: Vec<String>,
+    hover_selector_combinations: bool,
+    hover_selector_combinations_limit: usize,
     matcher: Option<GlobSet>,
 }
 
@@ -65,6 +72,8 @@ impl WorkspaceConfig {
             root_dir,
             english_file,
             file_masks: config.file_masks,
+            hover_selector_combinations: config.hover_selector_combinations,
+            hover_selector_combinations_limit: config.hover_selector_combinations_limit.max(1),
             matcher,
         })
     }
@@ -98,6 +107,18 @@ impl WorkspaceConfig {
             self.file_masks.join(", ")
         }
     }
+
+    pub fn hover_selector_combinations(&self) -> bool {
+        self.hover_selector_combinations
+    }
+
+    pub fn hover_selector_combinations_limit(&self) -> usize {
+        self.hover_selector_combinations_limit
+    }
+}
+
+fn default_hover_selector_combinations_limit() -> usize {
+    DEFAULT_HOVER_SELECTOR_COMBINATIONS_LIMIT
 }
 
 fn compile_globs(globs: &[String]) -> Result<Option<GlobSet>> {
@@ -262,11 +283,24 @@ impl Backend {
         let english_source = self.read_document_text(&english_uri).await?;
         let english_entry = render_fluent_entry(&english_source, &key)?;
         let hover_range = find_fluent_definition(&source, &key)?;
+        let hover_suffix = if workspace.hover_selector_combinations() {
+            render_selector_combinations_section(
+                &english_source,
+                &key,
+                workspace.hover_selector_combinations_limit(),
+            )
+        } else {
+            None
+        };
+        let hover_value = match hover_suffix {
+            Some(section) => format!("```ftl\n{english_entry}```\n\n{section}"),
+            None => format!("```ftl\n{english_entry}```"),
+        };
 
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: format!("```ftl\n{english_entry}```"),
+                value: hover_value,
             }),
             range: Some(hover_range),
         })
@@ -437,6 +471,34 @@ pub fn render_fluent_entry(source: &str, key: &str) -> Option<String> {
     Some(rendered)
 }
 
+fn render_selector_combinations_section(source: &str, key: &str, max_items: usize) -> Option<String> {
+    let resource = parse_fluent_resource(source);
+    let pattern = find_fluent_pattern(&resource, key)?;
+    let expansion = expand_pattern(pattern, max_items);
+    if expansion.items.is_empty() || expansion.items.iter().all(|item| item.selectors.is_empty()) {
+        return None;
+    }
+
+    let rendered_count = expansion.items.len();
+    let mut lines = vec!["Static combinations:".to_string()];
+    for item in expansion.items {
+        let selectors = item
+            .selectors
+            .iter()
+            .map(|(selector, variant)| format!("`{selector}={variant}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let text = item.text.replace('\n', "\\n");
+        lines.push(format!("- {selectors}: `{text}`"));
+    }
+    let omitted = expansion.total_count.saturating_sub(rendered_count);
+    if omitted > 0 {
+        lines.push(format!("- `...`: {omitted} more"));
+    }
+
+    Some(lines.join("\n"))
+}
+
 fn parse_fluent_resource(source: &str) -> Resource<&str> {
     match parser::parse(source) {
         Ok(resource) => resource,
@@ -477,6 +539,36 @@ fn extract_fluent_key_at_position(source: &str, position: Position) -> Option<St
     }
 
     None
+}
+
+fn find_fluent_pattern<'a>(resource: &'a Resource<&'a str>, key: &str) -> Option<&'a fluent_syntax::ast::Pattern<&'a str>> {
+    let entry = find_fluent_entry(resource, key)?;
+    let (entry_key, attribute_key) = split_fluent_key(key);
+
+    match entry {
+        Entry::Message(message) if entry_key == message.id.name => {
+            if let Some(attribute_key) = attribute_key {
+                message
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.id.name == attribute_key)
+                    .map(|attribute| &attribute.value)
+            } else {
+                message.value.as_ref()
+            }
+        }
+        Entry::Term(term) if entry_key == format!("-{}", term.id.name) => {
+            if let Some(attribute_key) = attribute_key {
+                term.attributes
+                    .iter()
+                    .find(|attribute| attribute.id.name == attribute_key)
+                    .map(|attribute| &attribute.value)
+            } else {
+                Some(&term.value)
+            }
+        }
+        _ => None,
+    }
 }
 
 fn find_fluent_definition_span(resource: &Resource<&str>, key: &str) -> Option<ByteRange<usize>> {
@@ -545,6 +637,159 @@ fn split_fluent_key(key: &str) -> (&str, Option<&str>) {
     match key.rsplit_once('.') {
         Some((entry, attribute)) if !attribute.is_empty() => (entry, Some(attribute)),
         _ => (key, None),
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct SelectorExpansion {
+    items: Vec<SelectorExpansionItem>,
+    total_count: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct SelectorExpansionItem {
+    selectors: Vec<(String, String)>,
+    text: String,
+}
+
+fn expand_pattern(pattern: &fluent_syntax::ast::Pattern<&str>, max_items: usize) -> SelectorExpansion {
+    let mut items = vec![SelectorExpansionItem::default()];
+    let mut total_count = 1usize;
+
+    for element in &pattern.elements {
+        let element_items = expand_pattern_element(element, max_items);
+        if element_items.items.is_empty() {
+            continue;
+        }
+
+        total_count = total_count.saturating_mul(element_items.total_count);
+
+        let mut combined = Vec::new();
+        for left in &items {
+            for right in &element_items.items {
+                if combined.len() >= max_items {
+                    break;
+                }
+                let mut selectors = left.selectors.clone();
+                selectors.extend(right.selectors.clone());
+                combined.push(SelectorExpansionItem {
+                    selectors,
+                    text: format!("{}{}", left.text, right.text),
+                });
+            }
+            if combined.len() >= max_items {
+                break;
+            }
+        }
+
+        items = combined;
+        if items.is_empty() {
+            break;
+        }
+    }
+
+    SelectorExpansion { items, total_count }
+}
+
+fn expand_pattern_element(
+    element: &fluent_syntax::ast::PatternElement<&str>,
+    max_items: usize,
+) -> SelectorExpansion {
+    match element {
+        fluent_syntax::ast::PatternElement::TextElement { value } => SelectorExpansion {
+            items: vec![SelectorExpansionItem {
+                selectors: Vec::new(),
+                text: (*value).to_string(),
+            }],
+            total_count: 1,
+        },
+        fluent_syntax::ast::PatternElement::Placeable { expression } => expand_expression(expression, max_items),
+    }
+}
+
+fn expand_expression(expression: &fluent_syntax::ast::Expression<&str>, max_items: usize) -> SelectorExpansion {
+    match expression {
+        fluent_syntax::ast::Expression::Inline(inline) => SelectorExpansion {
+            items: vec![SelectorExpansionItem {
+                selectors: Vec::new(),
+                text: render_inline_expression(inline),
+            }],
+            total_count: 1,
+        },
+        fluent_syntax::ast::Expression::Select { selector, variants } => {
+            let selector_name = render_inline_expression(selector);
+            let mut items = Vec::new();
+            let mut total_count = 0usize;
+
+            for variant in variants {
+                let nested = expand_pattern(&variant.value, max_items);
+                 total_count = total_count.saturating_add(nested.total_count);
+                let variant_name = render_variant_key(&variant.key);
+                for item in nested.items {
+                    if items.len() >= max_items {
+                        break;
+                    }
+                    let mut selectors = vec![(selector_name.clone(), variant_name.clone())];
+                    selectors.extend(item.selectors);
+                    items.push(SelectorExpansionItem {
+                        selectors,
+                        text: item.text,
+                    });
+                }
+                if items.len() >= max_items {
+                    break;
+                }
+            }
+
+            SelectorExpansion { items, total_count }
+        }
+    }
+}
+
+fn render_variant_key(key: &fluent_syntax::ast::VariantKey<&str>) -> String {
+    match key {
+        fluent_syntax::ast::VariantKey::Identifier { name } => (*name).to_string(),
+        fluent_syntax::ast::VariantKey::NumberLiteral { value } => (*value).to_string(),
+    }
+}
+
+fn render_inline_expression(expression: &fluent_syntax::ast::InlineExpression<&str>) -> String {
+    match expression {
+        fluent_syntax::ast::InlineExpression::StringLiteral { value } => format!("\"{value}\""),
+        fluent_syntax::ast::InlineExpression::NumberLiteral { value } => (*value).to_string(),
+        fluent_syntax::ast::InlineExpression::FunctionReference { id, .. } => format!("{}()", id.name),
+        fluent_syntax::ast::InlineExpression::MessageReference { id, attribute } => match attribute {
+            Some(attribute) => format!("{}.{}", id.name, attribute.name),
+            None => id.name.to_string(),
+        },
+        fluent_syntax::ast::InlineExpression::TermReference {
+            id,
+            attribute,
+            arguments,
+        } => {
+            let mut rendered = format!("-{}", id.name);
+            if let Some(attribute) = attribute {
+                rendered.push('.');
+                rendered.push_str(attribute.name);
+            }
+            if arguments.is_some() {
+                rendered.push_str("()");
+            }
+            rendered
+        }
+        fluent_syntax::ast::InlineExpression::VariableReference { id } => format!("${}", id.name),
+        fluent_syntax::ast::InlineExpression::Placeable { expression } => {
+            format!("{{ {} }}", render_expression_summary(expression))
+        }
+    }
+}
+
+fn render_expression_summary(expression: &fluent_syntax::ast::Expression<&str>) -> String {
+    match expression {
+        fluent_syntax::ast::Expression::Inline(inline) => render_inline_expression(inline),
+        fluent_syntax::ast::Expression::Select { selector, .. } => {
+            format!("{} -> …", render_inline_expression(selector))
+        }
     }
 }
 
@@ -726,6 +971,17 @@ mod tests {
         assert_eq!(
             term,
             "# Product naming\n# Keep in title case\n-brand-name = Nightly\n"
+        );
+    }
+
+    #[test]
+    fn renders_selector_combinations_section() {
+        let source = "install-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + { $action ->\n        [copy] C\n       *[paste] V\n    }\n";
+
+        let rendered = render_selector_combinations_section(source, "install-hint", 3).unwrap();
+        assert_eq!(
+            rendered,
+            "Static combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `...`: 1 more"
         );
     }
 

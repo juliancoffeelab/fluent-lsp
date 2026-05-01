@@ -339,6 +339,16 @@ fn hover_from_translation_shows_english_entry_and_comments() {
         3,
         5,
     );
+
+    assert_hover(
+        &mut lsp,
+        23,
+        &source_path,
+        position_of(&source_text, "install-hint"),
+        "```ftl\n# Shortcut combinations\ninstall-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + { $action ->\n        [copy] C\n       *[paste] V\n    }\n```\n\nStatic combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `...`: 1 more",
+        4,
+        0,
+    );
 }
 
 struct ReferenceExpectation<'a> {
