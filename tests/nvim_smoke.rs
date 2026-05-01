@@ -37,5 +37,5 @@ fn nvim_definition_from_translation_jumps_into_english_file() {
         file.ends_with("locales/en/app.ftl"),
         "unexpected file: {file}"
     );
-    assert_eq!(result["line"], 1);
+    assert_eq!(result["line"], 2);
 }

@@ -7,6 +7,7 @@ Current behavior:
 - Reads `fluent-lsp.toml` or `.fluent-lsp.toml` from the workspace root.
 - Restricts lookup to translated `.ftl` files matched by `file_masks`.
 - Resolves `textDocument/definition` by extracting the message, term, or attribute under the cursor from a translated Fluent file and jumping to the matching entry in the configured English `.ftl` file.
+- Resolves `textDocument/hover` on translated Fluent entries by showing the matching English entry, including its attached comments.
 - Resolves `textDocument/references` from the configured English `.ftl` file into matching entries across translated Fluent files.
 
 Config shape:

@@ -94,6 +94,10 @@ fn goto_definition_from_translation_resolves_to_english_fluent_file() {
         Value::Bool(true)
     );
     assert_eq!(
+        initialize["result"]["capabilities"]["hoverProvider"],
+        Value::Bool(true)
+    );
+    assert_eq!(
         initialize["result"]["capabilities"]["referencesProvider"],
         Value::Bool(true)
     );
@@ -126,7 +130,7 @@ fn goto_definition_from_translation_resolves_to_english_fluent_file() {
         &source_path,
         position_of(&source_text, "welcome-title"),
         &root.join("locales/en/app.ftl"),
-        0,
+        1,
         0,
     );
 
@@ -136,7 +140,7 @@ fn goto_definition_from_translation_resolves_to_english_fluent_file() {
         &source_path,
         position_of(&source_text, "brand-name"),
         &root.join("locales/en/app.ftl"),
-        1,
+        5,
         1,
     );
 
@@ -146,7 +150,7 @@ fn goto_definition_from_translation_resolves_to_english_fluent_file() {
         &source_path,
         position_of(&source_text, "label ="),
         &root.join("locales/en/app.ftl"),
-        3,
+        10,
         5,
     );
 }
@@ -268,6 +272,75 @@ fn references_from_english_resolve_to_translated_fluent_files() {
     );
 }
 
+#[test]
+fn hover_from_translation_shows_english_entry_and_comments() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_uri = format!("file://{}", source_path.display());
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 20,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {}
+        }
+    }));
+
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], 20);
+    assert_eq!(
+        initialize["result"]["capabilities"]["hoverProvider"],
+        Value::Bool(true)
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": source_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": source_text
+            }
+        }
+    }));
+
+    assert_hover(
+        &mut lsp,
+        21,
+        &source_path,
+        position_of(&source_text, "welcome-title"),
+        "```ftl\n# Shown on the welcome screen\nwelcome-title = Welcome\n```",
+        0,
+        0,
+    );
+
+    assert_hover(
+        &mut lsp,
+        22,
+        &source_path,
+        position_of(&source_text, "label ="),
+        "```ftl\n# CTA copy\n# Keep it short\nbutton-copy =\n    .label = Launch\n```",
+        3,
+        5,
+    );
+}
+
 struct ReferenceExpectation<'a> {
     relative_path: &'a str,
     line: u32,
@@ -319,6 +392,42 @@ fn assert_references(
             Value::from(expected.character)
         );
     }
+}
+
+fn assert_hover(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    source_path: &Path,
+    position: (u32, u32),
+    expected_value: &str,
+    expected_line: u32,
+    expected_character: u32,
+) {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+
+    let hover = lsp.recv();
+    assert_eq!(hover["id"], request_id);
+    assert_eq!(hover["result"]["contents"]["kind"], Value::String("markdown".to_string()));
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(expected_value.to_string())
+    );
+    assert_eq!(
+        hover["result"]["range"]["start"]["line"],
+        Value::from(expected_line),
+    );
+    assert_eq!(
+        hover["result"]["range"]["start"]["character"],
+        Value::from(expected_character),
+    );
 }
 
 fn position_of(source: &str, needle: &str) -> (u32, u32) {

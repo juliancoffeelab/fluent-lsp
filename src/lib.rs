@@ -6,15 +6,16 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use fluent_syntax::ast::{Entry, Resource};
 use fluent_syntax::parser;
+use fluent_syntax::serializer;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result as LspResult;
 use tower_lsp::lsp_types::{
     DidChangeTextDocumentParams, DidOpenTextDocumentParams, GotoDefinitionParams,
-    GotoDefinitionResponse, InitializeParams, InitializeResult, Location, MessageType, OneOf,
-    Position, Range, ReferenceParams, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Url,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams, InitializeParams,
+    InitializeResult, Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, Range,
+    ReferenceParams, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -239,6 +240,37 @@ impl Backend {
 
         Some(references)
     }
+
+    async fn hover_for(&self, params: HoverParams) -> Option<Hover> {
+        let state = self.state.read().await;
+        let workspace = state.workspace.clone()?;
+        let uri = params.text_document_position_params.text_document.uri;
+        let path = uri.to_file_path().ok()?;
+        if !workspace.matches_translation_file(&path) {
+            return None;
+        }
+
+        let source = state
+            .open_documents
+            .get(&uri)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(&path).ok())?;
+        drop(state);
+
+        let key = extract_definition_key(&source, &path, params.text_document_position_params.position)?;
+        let english_uri = Url::from_file_path(workspace.english_file()).ok()?;
+        let english_source = self.read_document_text(&english_uri).await?;
+        let english_entry = render_fluent_entry(&english_source, &key)?;
+        let hover_range = find_fluent_definition(&source, &key)?;
+
+        Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: format!("```ftl\n{english_entry}```"),
+            }),
+            range: Some(hover_range),
+        })
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -268,6 +300,7 @@ impl LanguageServer for Backend {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 definition_provider: Some(OneOf::Left(true)),
+                hover_provider: Some(tower_lsp::lsp_types::HoverProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
@@ -344,6 +377,10 @@ impl LanguageServer for Backend {
     async fn references(&self, params: ReferenceParams) -> LspResult<Option<Vec<Location>>> {
         Ok(self.references_for(params).await)
     }
+
+    async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
+        Ok(self.hover_for(params).await)
+    }
 }
 
 pub fn extract_key_at_position(source: &str, position: Position) -> Option<String> {
@@ -391,6 +428,15 @@ pub fn find_fluent_definition(source: &str, key: &str) -> Option<Range> {
     byte_range_to_lsp_range(source, span)
 }
 
+pub fn render_fluent_entry(source: &str, key: &str) -> Option<String> {
+    let resource = parse_fluent_resource(source);
+    let entry = find_fluent_entry(&resource, key)?;
+    let rendered = serializer::serialize(&Resource {
+        body: vec![entry.clone()],
+    });
+    Some(rendered)
+}
+
 fn parse_fluent_resource(source: &str) -> Resource<&str> {
     match parser::parse(source) {
         Ok(resource) => resource,
@@ -434,34 +480,58 @@ fn extract_fluent_key_at_position(source: &str, position: Position) -> Option<St
 }
 
 fn find_fluent_definition_span(resource: &Resource<&str>, key: &str) -> Option<ByteRange<usize>> {
+    let entry = find_fluent_entry(resource, key)?;
+    let (entry_key, attribute_key) = split_fluent_key(key);
+
+    match entry {
+        Entry::Message(message) if entry_key == message.id.name => {
+            if let Some(attribute_key) = attribute_key {
+                message
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.id.name == attribute_key)
+                    .map(|attribute| attribute.id.span.clone())
+            } else {
+                Some(message.id.span.clone())
+            }
+        }
+        Entry::Term(term) if entry_key == format!("-{}", term.id.name) => {
+            if let Some(attribute_key) = attribute_key {
+                term.attributes
+                    .iter()
+                    .find(|attribute| attribute.id.name == attribute_key)
+                    .map(|attribute| attribute.id.span.clone())
+            } else {
+                Some(term.id.span.clone())
+            }
+        }
+        _ => None,
+    }
+}
+
+fn find_fluent_entry<'a>(resource: &'a Resource<&'a str>, key: &str) -> Option<&'a Entry<&'a str>> {
     let (entry_key, attribute_key) = split_fluent_key(key);
 
     for entry in &resource.body {
         match entry {
             Entry::Message(message) if entry_key == message.id.name => {
-                if let Some(attribute_key) = attribute_key {
-                    if let Some(attribute) = message
+                if attribute_key.is_none()
+                    || message
                         .attributes
                         .iter()
-                        .find(|attribute| attribute.id.name == attribute_key)
-                    {
-                        return Some(attribute.id.span.clone());
-                    }
-                } else {
-                    return Some(message.id.span.clone());
+                        .any(|attribute| Some(attribute.id.name) == attribute_key)
+                {
+                    return Some(entry);
                 }
             }
             Entry::Term(term) if entry_key == format!("-{}", term.id.name) => {
-                if let Some(attribute_key) = attribute_key {
-                    if let Some(attribute) = term
+                if attribute_key.is_none()
+                    || term
                         .attributes
                         .iter()
-                        .find(|attribute| attribute.id.name == attribute_key)
-                    {
-                        return Some(attribute.id.span.clone());
-                    }
-                } else {
-                    return Some(term.id.span.clone());
+                        .any(|attribute| Some(attribute.id.name) == attribute_key)
+                {
+                    return Some(entry);
                 }
             }
             _ => {}
@@ -643,6 +713,20 @@ mod tests {
         let attribute = find_fluent_definition(source, "button-copy.label").unwrap();
         assert_eq!(attribute.start, Position::new(2, 5));
         assert_eq!(attribute.end, Position::new(2, 10));
+    }
+
+    #[test]
+    fn renders_fluent_entry_with_comments() {
+        let source = "# Shown on first launch\nwelcome-title = Welcome\n# Product naming\n# Keep in title case\n-brand-name = Nightly\n";
+
+        let message = render_fluent_entry(source, "welcome-title").unwrap();
+        assert_eq!(message, "# Shown on first launch\nwelcome-title = Welcome\n");
+
+        let term = render_fluent_entry(source, "-brand-name").unwrap();
+        assert_eq!(
+            term,
+            "# Product naming\n# Keep in title case\n-brand-name = Nightly\n"
+        );
     }
 
     #[test]
