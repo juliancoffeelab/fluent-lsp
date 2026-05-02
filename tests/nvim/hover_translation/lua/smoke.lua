@@ -40,17 +40,32 @@ function M.run()
   end, 50)
   assert(attached, "hover provider not ready")
 
-  local found = vim.fn.searchpos("download-action", "n")
+  local found = vim.fn.searchpos("welcome-title", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
   local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
-  local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
+  local hover = assert(responses[client_id] and responses[client_id].result, "missing plain hover")
   local value = hover.contents.value
-  assert(value:match("# Primary install action in the downloads panel"), "missing source hover comment")
-  assert(value:match("%-%-%-"), "missing source/local separator")
-  assert(value:match("# Accion principal en la pantalla de descargas"), "missing local hover comment")
-  assert(not value:match("Source:"), "hover should not include source body")
-  assert(not value:match("Instalar build"), "hover should not include local source body")
+  assert(value == "```ftl\nBienvenido\n```", "unexpected plain hover preview: " .. value)
+
+  local found = vim.fn.searchpos("\\[female\\] ella", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+
+  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  hover = assert(responses[client_id] and responses[client_id].result, "missing selector hover")
+  value = hover.contents.value
+  assert(value:match("`%$gender=female`, `%$count=%*`"), "missing selected selector header")
+  assert(value:match("```ftl\nCopia el enlace de descarga para la cuenta de ella en { %$count } dispositivos ahora%.\n```"), "missing formatted local selector preview")
+  assert(not value:match("\\\\n"), "hover should not escape newlines")
+
+  found = vim.fn.searchpos("en { $count } { $count ->", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+
+  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  hover = assert(responses[client_id] and responses[client_id].result, "missing post-selector hover")
+  value = hover.contents.value
+  assert(value:match("`%$gender=other`, `%$count=%*`"), "missing post-selector retained header")
+  assert(value:match("```ftl\nCopia el enlace de descarga para la cuenta de elle en { %$count } dispositivos ahora%.\n```"), "missing post-selector formatted preview")
 
   write_result(result_path, {
     ok = true,

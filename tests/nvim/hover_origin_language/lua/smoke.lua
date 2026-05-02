@@ -46,9 +46,7 @@ function M.run()
   local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
   local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
   local value = hover.contents.value
-  assert(value:match("### Shared menu copy"), "missing origin hover comments")
-  assert(not value:match("Source:"), "hover should not include source body")
-  assert(not value:match("label = Save"), "hover should not include origin source body")
+  assert(value == "```ftl\nSave\n```", "unexpected origin hover preview: " .. value)
 
   write_result(result_path, {
     ok = true,

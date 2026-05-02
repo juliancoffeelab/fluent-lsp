@@ -7,7 +7,7 @@ Current behavior:
 - Reads `fluent-lsp.toml` or `.fluent-lsp.toml` from the workspace root.
 - Tracks localized `.ftl` files through templated `file_masks` that include `{lang}` and `{filepath}`, so nested locale trees resolve back to the matching origin-language file.
 - Resolves `textDocument/definition` by extracting the message, term, or attribute under the cursor from a translated Fluent file and jumping to the matching origin-language `.ftl` file.
-- Resolves `textDocument/hover` as comments-only output: origin comments first, then local translation comments after `---` when both exist.
+- Resolves `textDocument/hover` as a formatted Fluent preview for the hovered message or attribute in the current document language.
 - Publishes `textDocument/inlayHint` source previews for matched Fluent messages, terms, and attributes, anchored at the local value start.
 - Resolves selector-bearing inlay hints through the Fluent default branch for each selector and labels the chosen branches with `*`.
 - Publishes standard-LSP CodeLens entries for selector-bearing Fluent values, and uses `workspace/executeCommand` plus `window/showDocument` to open a temp Markdown document with the full combination list in the current document language.
@@ -38,7 +38,7 @@ Try it locally from this repo:
 
 - Open the repository root as your editor workspace.
 - The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml) points at the repo-local [example/](/home/codex/workspace/fluent-lsp/example/README.md) tree.
-- Use the files under `example/locales/` to try definition, comments-only hover, source-preview inlay hints, locale-tree resolution, and CodeLens-driven selector expansion.
+- Use the files under `example/locales/` to try definition, formatted hover previews, source-preview inlay hints, locale-tree resolution, and CodeLens-driven selector expansion.
 
 Local fork:
 

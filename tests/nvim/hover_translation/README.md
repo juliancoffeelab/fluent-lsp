@@ -6,11 +6,11 @@ Hover from translation showing origin entry and comments
 
 ## Exercise
 
-Requests hover on a translated entry and asserts that the returned hover text contains source comments first, local comments last, and no source-body duplication.
+Requests hover on a plain translated message, inside a translated selector branch, and again on the closing-line text after that selector, then asserts that the returned hover text shows the plain preview plus both selector-aware contexts.
 
 ## Assumptions
 
-Neovim exposes raw hover payloads through synchronous LSP requests.
+Neovim exposes raw hover payloads through synchronous LSP requests, including Markdown code fences.
 
 ## Source Under Test
 

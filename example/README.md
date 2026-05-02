@@ -8,13 +8,14 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
 
 - `example/locales/es/app.ftl`
   - Go to definition on `welcome-title`, `-brand-name`, or `.label`
-  - Hover `welcome-title` for source-first and local-last comments only
+  - Hover `welcome-title` for the formatted local-language preview
+  - Hover inside `[female]` under `install-hint` to verify selector-aware hover context
   - Check inlay hints on `welcome-title`, `install-hint`, and `download-action.tooltip` for source previews
   - Run the CodeLens on `install-hint` to open the full selector combinations document in Spanish
   - Run the CodeLens on `download-action.tooltip` to verify attribute-level selector combinations
 - `example/locales/en/app.ftl`
   - Run references from `welcome-title` or `.label`
-  - Hover origin-language entries directly for comments-only output
+  - Hover `install-hint` on the key line for default selector choices, or inside a specific branch for explicit selector choices
   - This is the denser top-level file: terms, message values, multiple attributes, and both message-level and attribute-level selectors
 - `example/locales/fr/app.ftl`
   - Extra translation target for references and locale comparisons
@@ -23,7 +24,7 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
 - `example/locales/es/dialogs/menu.ftl`
   - Go to definition on `menu-save.label` to verify locale-tree resolution for nested attributes
 - `example/locales/en/dialogs/menu.ftl`
-  - Hover `menu-save.label` to verify `###`, `##`, and `#` comment preservation on a nested attribute
+  - Hover `menu-save.label` to verify plain attribute preview rendering on a nested file
   - This is the file with top-level comment structure
 - `example/locales/fr/dialogs/menu.ftl`
   - Extra nested translation target

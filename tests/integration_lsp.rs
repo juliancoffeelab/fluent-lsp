@@ -340,7 +340,7 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
 }
 
 #[test]
-fn hover_from_translation_shows_source_and_local_comments_only() {
+fn hover_from_translation_shows_local_formatted_messages() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
     let source_uri = format!("file://{}", source_path.display());
@@ -392,7 +392,7 @@ fn hover_from_translation_shows_source_and_local_comments_only() {
         21,
         &source_path,
         position_of(&source_text, "welcome-title"),
-        "```ftl\n# Shown on the welcome screen\n```\n\n---\n\n```ftl\n# Texto que ve la persona usuaria al entrar\n```",
+        "```ftl\nBienvenido\n```",
         1,
         0,
     );
@@ -401,18 +401,35 @@ fn hover_from_translation_shows_source_and_local_comments_only() {
         &mut lsp,
         22,
         &source_path,
-        position_of(
-            &source_text,
-            "tooltip =\n        Instala la build recomendada",
-        ),
-        "```ftl\n# Primary install action in the downloads panel\n```\n\n---\n\n```ftl\n# Accion principal en la pantalla de descargas\n```",
+        position_of(&source_text, "[female] ella"),
+        "`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```",
+        8,
+        0,
+    );
+
+    assert_hover(
+        &mut lsp,
+        23,
+        &source_path,
+        position_of(&source_text, "Instala la build recomendada para la cuenta de"),
+        "`$gender=*`, `$count=*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.\n```",
         21,
         5,
+    );
+
+    assert_hover(
+        &mut lsp,
+        24,
+        &source_path,
+        position_of(&source_text, "en { $count } { $count ->"),
+        "`$gender=other`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```",
+        8,
+        0,
     );
 }
 
 #[test]
-fn hover_from_origin_file_shows_origin_comments_only() {
+fn hover_from_origin_file_shows_formatted_attribute_text() {
     let root = fixture_root();
     let source_path = root.join("locales/en/dialogs/menu.ftl");
     let source_uri = format!("file://{}", source_path.display());
@@ -460,7 +477,7 @@ fn hover_from_origin_file_shows_origin_comments_only() {
         31,
         &source_path,
         position_of(&source_text, "label = Save"),
-        "```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```",
+        "```ftl\nSave\n```",
         4,
         5,
     );
@@ -560,7 +577,7 @@ fn inlay_hints_show_source_previews_for_messages_and_attributes() {
     assert!(items.iter().any(|item| {
         item["label"]
             == Value::String(
-                "[gender=*, count=*] Copy the download link for their account on $count devices now."
+                "[gender=*, count=*] Copy the download link for their account on { $count } devices now."
                     .to_string(),
             )
             && item["position"]["line"].as_u64() == Some(8)
@@ -569,7 +586,7 @@ fn inlay_hints_show_source_previews_for_messages_and_attributes() {
     assert!(items.iter().any(|item| {
         item["label"]
             == Value::String(
-                "[gender=*, count=*] Install the recommended build for their account on $count devices now."
+                "[gender=*, count=*] Install the recommended build for their account on { $count } devices now."
                     .to_string(),
             )
             && item["position"]["line"].as_u64() == Some(21)
@@ -598,7 +615,7 @@ fn inlay_hints_show_source_previews_for_messages_and_attributes() {
     assert_eq!(
         filtered_items[0]["label"],
         Value::String(
-            "[gender=*, count=*] Copy the download link for their account on $count devices now."
+            "[gender=*, count=*] Copy the download link for their account on { $count } devices now."
                 .to_string(),
         )
     );
@@ -762,8 +779,8 @@ fn code_lens_opens_full_selector_combinations_document() {
     assert!(document_text.contains("Current language combinations:"));
     assert!(document_text.contains("Copy the download link for their account"));
     assert!(document_text.contains("Copia el enlace de descarga para la cuenta de elle"));
-    assert!(document_text.contains("- `$gender=other`, `$count=other`\n  `Copy the download link for their account on $count devices now.`"));
-    assert!(document_text.contains("- `$gender=other`, `$count=other`\n  `Copia el enlace de descarga para la cuenta de elle en $count dispositivos ahora.`"));
+    assert!(document_text.contains("`$gender=other`, `$count=other`\n```ftl\nCopy the download link for their account on { $count } devices now.\n```"));
+    assert!(document_text.contains("`$gender=other`, `$count=other`\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```"));
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -877,8 +894,8 @@ fn code_lens_opens_full_selector_combinations_document_for_attribute() {
     assert!(document_text.contains("Current language combinations:"));
     assert!(document_text.contains("Install the recommended build for their account"));
     assert!(document_text.contains("Instala la build recomendada para la cuenta de elle"));
-    assert!(document_text.contains("- `$gender=other`, `$count=other`\n  `Install the recommended build for their account on $count devices now.`"));
-    assert!(document_text.contains("- `$gender=other`, `$count=other`\n  `Instala la build recomendada para la cuenta de elle en $count dispositivos ahora.`"));
+    assert!(document_text.contains("`$gender=other`, `$count=other`\n```ftl\nInstall the recommended build for their account on { $count } devices now.\n```"));
+    assert!(document_text.contains("`$gender=other`, `$count=other`\n```ftl\nInstala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.\n```"));
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -890,6 +907,114 @@ fn code_lens_opens_full_selector_combinations_document_for_attribute() {
 
     let response = lsp.recv();
     assert_eq!(response["id"], 52);
+    assert_eq!(response["result"], Value::Null);
+}
+
+#[test]
+fn code_lens_origin_document_omits_duplicate_source_sections() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_uri = format!("file://{}", source_path.display());
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 55,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {
+                "window": {
+                    "showDocument": {
+                        "support": true
+                    }
+                }
+            }
+        }
+    }));
+
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], 55);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": source_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": source_text
+            }
+        }
+    }));
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 56,
+        "method": "textDocument/codeLens",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) }
+        }
+    }));
+
+    let lenses = lsp.recv();
+    assert_eq!(lenses["id"], 56);
+    let items = lenses["result"]
+        .as_array()
+        .expect("expected code lens array");
+    let install_hint_lens = items
+        .iter()
+        .find(|item| item["command"]["arguments"][1] == Value::String("install-hint".to_string()))
+        .expect("missing install-hint codelens");
+
+    let command = install_hint_lens["command"].clone();
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 57,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": command["command"],
+            "arguments": command["arguments"]
+        }
+    }));
+
+    let request = lsp.recv();
+    assert_eq!(request["method"], "window/showDocument");
+    let document_uri = request["params"]["uri"]
+        .as_str()
+        .expect("showDocument uri must be a string");
+    let document_path = document_uri
+        .strip_prefix("file://")
+        .expect("expected file uri for temp document");
+    let document_text = std::fs::read_to_string(document_path).expect("read temp document");
+    assert!(document_text.contains("Current language: `en`"));
+    assert!(!document_text.contains("Source language:"));
+    assert!(!document_text.contains("Source text:"));
+    assert!(!document_text.contains("Source language combinations:"));
+    assert_eq!(document_text.matches("Current language combinations:").count(), 1);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": {
+            "success": true
+        }
+    }));
+
+    let response = lsp.recv();
+    assert_eq!(response["id"], 57);
     assert_eq!(response["result"], Value::Null);
 }
 
@@ -990,9 +1115,9 @@ fn code_lens_falls_back_to_show_message_with_fixed_selector_limit() {
         .expect("showMessage payload must be a string");
     assert!(message.contains("Selector combinations for audience-rollout"));
     assert!(message.contains("Current language combinations:"));
-    assert_eq!(message.matches("\n- `").count(), 11);
-    assert!(message.contains("- `...`\n  2 more"));
-    assert!(!message.contains("`Resumen para otras personas en movil con $count elementos.`"));
+    assert_eq!(message.matches("\n```ftl\n").count(), 10);
+    assert!(message.contains("`...`\n2 more"));
+    assert!(!message.contains("```ftl\nResumen para otras personas en movil con { $count } elementos.\n```"));
 }
 
 struct ReferenceExpectation<'a> {

@@ -33,6 +33,28 @@ local function run_selector_lens(client_id, source_buf, needle, filename_pattern
   assert(shown, "codelens did not open expected selector combinations document for " .. needle)
 end
 
+local function run_origin_selector_lens(client_id, source_buf, needle, filename_pattern)
+  vim.api.nvim_set_current_buf(source_buf)
+  local found = vim.fn.searchpos(needle, "n")
+  assert(found[1] > 0, "missing origin selector target: " .. needle)
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  vim.lsp.codelens.run({ client_id = client_id })
+
+  local shown = vim.wait(5000, function()
+    local current = vim.api.nvim_buf_get_name(0)
+    local filename = vim.fn.fnamemodify(current, ":t")
+    if not filename:match(filename_pattern) then
+      return false
+    end
+    local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+    return text:match("Current language: `en`")
+      and not text:match("Source language:")
+      and not text:match("Source text:")
+      and not text:match("Source language combinations:")
+  end, 50)
+  assert(shown, "codelens did not open expected origin selector combinations document for " .. needle)
+end
+
 function M.run()
   local workspace = assert(vim.env.FLUENT_LSP_WORKSPACE ~= "" and vim.env.FLUENT_LSP_WORKSPACE)
   local server = assert(vim.env.FLUENT_LSP_BIN ~= "" and vim.env.FLUENT_LSP_BIN)
@@ -66,14 +88,30 @@ function M.run()
     source_buf,
     "install-hint",
     "^fluent%-lsp%-selector%-combinations%-.+%-install%-hint%.md$",
-    "Copia el enlace de descarga para la cuenta de elle en %$count dispositivos ahora%."
+    "```ftl\nCopia el enlace de descarga para la cuenta de elle en { %$count } dispositivos ahora%.\n```"
   )
   run_selector_lens(
     client_id,
     source_buf,
     "tooltip =",
     "^fluent%-lsp%-selector%-combinations%-.+%-download%-action_tooltip%.md$",
-    "Install the recommended build for their account on %$count devices now%."
+    "```ftl\nInstall the recommended build for their account on { %$count } devices now%.\n```"
+  )
+
+  vim.cmd.edit(workspace .. "/locales/en/app.ftl")
+  vim.lsp.buf_attach_client(0, client_id)
+  vim.lsp.codelens.enable(true, { bufnr = 0 })
+  local origin_ready = vim.wait(5000, function()
+    return #vim.lsp.codelens.get({ bufnr = 0, client_id = client_id }) > 0
+  end, 50)
+  assert(origin_ready, "origin codelens did not populate")
+  local origin_buf = vim.api.nvim_get_current_buf()
+
+  run_origin_selector_lens(
+    client_id,
+    origin_buf,
+    "install-hint",
+    "^fluent%-lsp%-selector%-combinations%-.+%-install%-hint%.md$"
   )
 
   write_result(result_path, {

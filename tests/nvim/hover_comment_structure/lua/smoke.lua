@@ -27,7 +27,7 @@ function M.run()
   local server = assert(vim.env.FLUENT_LSP_BIN ~= "" and vim.env.FLUENT_LSP_BIN)
   local result_path = assert(vim.env.FLUENT_LSP_RESULT ~= "" and vim.env.FLUENT_LSP_RESULT)
 
-  vim.cmd.edit(workspace .. "/locales/en/dialogs/menu.ftl")
+  vim.cmd.edit(workspace .. "/locales/en/app.ftl")
   local client_id = start_client(server, workspace)
 
   local attached = vim.wait(5000, function()
@@ -40,15 +40,15 @@ function M.run()
   end, 50)
   assert(attached, "hover provider not ready")
 
-  local found = vim.fn.searchpos("label = Save", "n")
+  local found = vim.fn.searchpos("install-hint", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
   local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
   local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
   local value = hover.contents.value
-  assert(value:match("```ftl\n### Shared menu copy\n## File menu\n# Primary action"), "missing preserved comment markers")
-  assert(not value:match("Source:"), "hover should not include source body")
-  assert(not value:match("label = Save"), "hover should not include attribute source")
+  assert(value:match("`%$gender=%*`, `%$count=%*`"), "missing default selector header")
+  assert(value:match("```ftl\nCopy the download link for their account on { %$count } devices now%.\n```"), "missing formatted default selector preview")
+  assert(not value:match("\\\\n"), "hover should not escape newlines")
 
   write_result(result_path, {
     ok = true,

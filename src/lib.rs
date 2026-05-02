@@ -262,9 +262,17 @@ struct SourceRender {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct DefaultPreview {
+struct MessagePreview {
     selectors: Vec<(String, String)>,
     text: String,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveSelectorContext {
+    name: String,
+    indent: usize,
+    current_variant: Option<String>,
+    current_variant_line: Option<usize>,
 }
 
 #[derive(Default)]
@@ -437,43 +445,21 @@ impl Backend {
         ) else {
             return Ok(None);
         };
-        let origin_path = workspace.origin_file_for(&path).ok_or_else(|| {
-            internal_error_with_message(format!(
-                "failed to resolve origin counterpart for {}",
-                path.display()
-            ))
-        })?;
-        let origin_uri = Url::from_file_path(&origin_path).map_err(|()| {
-            internal_error_with_message(format!(
-                "failed to convert origin path to URI: {}",
-                origin_path.display()
-            ))
-        })?;
-        let source_render = if workspace.is_origin_file(&path) {
-            None
-        } else {
-            render_fluent_source(&source, &key)
-        };
-        let origin_source = if workspace.is_origin_file(&path) {
-            source.clone()
-        } else {
-            self.read_document_text_required(&origin_uri).await?
-        };
-        let Some(origin_render) = render_fluent_source(&origin_source, &key) else {
+        let resource = parse_fluent_resource(&source);
+        let Some(pattern) = find_fluent_pattern(&resource, &key) else {
             return Ok(None);
         };
         let Some(hover_range) = find_fluent_definition(&source, &key) else {
             return Ok(None);
         };
-        let hover_value = render_hover_markdown(
-            origin_render.comments.as_deref(),
-            source_render
-                .as_ref()
-                .and_then(|render| render.comments.as_deref()),
+        let selector_overrides = selector_overrides_for_position(
+            &source,
+            &key,
+            params.text_document_position_params.position,
         );
-        let Some(hover_value) = hover_value else {
-            return Ok(None);
-        };
+        let hover_value = render_hover_markdown(
+            &render_message_preview(pattern, Some(&selector_overrides)),
+        );
 
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -1058,25 +1044,13 @@ fn render_fluent_source(source: &str, key: &str) -> Option<SourceRender> {
     Some(SourceRender { comments, source })
 }
 
-fn render_hover_markdown(
-    source_comments: Option<&str>,
-    local_comments: Option<&str>,
-) -> Option<String> {
+fn render_hover_markdown(preview: &MessagePreview) -> String {
     let mut sections = Vec::new();
-    if let Some(comments) = source_comments {
-        sections.push(format!("```ftl\n{comments}```"));
+    if !preview.selectors.is_empty() {
+        sections.push(render_selector_assignments(&preview.selectors));
     }
-    if let Some(comments) = local_comments {
-        if !sections.is_empty() {
-            sections.push("---".to_string());
-        }
-        sections.push(format!("```ftl\n{comments}```"));
-    }
-    if sections.is_empty() {
-        None
-    } else {
-        Some(sections.join("\n\n"))
-    }
+    sections.push(render_ftl_block(&preview.text));
+    sections.join("\n\n")
 }
 
 fn render_selector_combinations_document(
@@ -1088,28 +1062,33 @@ fn render_selector_combinations_document(
     current_render: Option<&SourceRender>,
     current_combinations_section: &str,
 ) -> String {
+    let is_origin_language_document = file_match.language == origin_language;
     let mut sections = vec![format!("# Selector combinations for `{key}`")];
     sections.push(format!("Current language: `{}`", file_match.language));
-    sections.push(format!("Source language: `{origin_language}`"));
+    if !is_origin_language_document {
+        sections.push(format!("Source language: `{origin_language}`"));
+    }
     sections.push(format!("Logical file: `{}`", file_match.filepath));
 
-    if let Some(origin_render) = origin_render {
-        sections.push("Source text:".to_string());
-        if let Some(comments) = &origin_render.comments {
-            sections.push(format!("```ftl\n{comments}```"));
+    if !is_origin_language_document {
+        if let Some(origin_render) = origin_render {
+            sections.push("Source text:".to_string());
+            if let Some(comments) = &origin_render.comments {
+                sections.push(render_ftl_block(comments));
+            }
+            sections.push(render_ftl_block(&origin_render.source));
         }
-        sections.push(format!("```ftl\n{}```", origin_render.source));
-    }
-    if let Some(origin_combinations_section) = origin_combinations_section {
-        sections.push(origin_combinations_section.to_string());
+        if let Some(origin_combinations_section) = origin_combinations_section {
+            sections.push(origin_combinations_section.to_string());
+        }
     }
 
     if let Some(current_render) = current_render {
         sections.push("Current text:".to_string());
         if let Some(comments) = &current_render.comments {
-            sections.push(format!("```ftl\n{comments}```"));
+            sections.push(render_ftl_block(comments));
         }
-        sections.push(format!("```ftl\n{}```", current_render.source));
+        sections.push(render_ftl_block(&current_render.source));
     }
 
     sections.push(current_combinations_section.to_string());
@@ -1186,80 +1165,86 @@ fn strip_attribute_container(rendered: &str) -> String {
 fn render_source_inlay_hint_label(source: &str, key: &str) -> Option<String> {
     let resource = parse_fluent_resource(source);
     let pattern = find_fluent_pattern(&resource, key)?;
-    let preview = render_default_preview(pattern);
+    let preview = render_message_preview(pattern, None);
     if preview.selectors.is_empty() {
         Some(preview.text)
     } else {
         let selectors = preview
             .selectors
             .iter()
-            .map(|(selector, variant)| format!("{selector}={variant}"))
+            .map(|(selector, variant)| {
+                format!("{}={variant}", selector.strip_prefix('$').unwrap_or(selector))
+            })
             .collect::<Vec<_>>()
             .join(", ");
         Some(format!("[{selectors}] {}", preview.text))
     }
 }
 
-fn render_default_preview(pattern: &fluent_syntax::ast::Pattern<&str>) -> DefaultPreview {
-    let mut preview = DefaultPreview::default();
+fn render_message_preview(
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    selector_overrides: Option<&HashMap<String, String>>,
+) -> MessagePreview {
+    let mut preview = MessagePreview::default();
     for element in &pattern.elements {
-        let element_preview = render_default_pattern_element_preview(element);
+        let element_preview = render_pattern_element_preview(element, selector_overrides);
         preview.selectors.extend(element_preview.selectors);
         preview.text.push_str(&element_preview.text);
     }
     preview
 }
 
-fn render_default_pattern_element_preview(
+fn render_pattern_element_preview(
     element: &fluent_syntax::ast::PatternElement<&str>,
-) -> DefaultPreview {
+    selector_overrides: Option<&HashMap<String, String>>,
+) -> MessagePreview {
     match element {
-        fluent_syntax::ast::PatternElement::TextElement { value } => DefaultPreview {
+        fluent_syntax::ast::PatternElement::TextElement { value } => MessagePreview {
             selectors: Vec::new(),
             text: (*value).to_string(),
         },
         fluent_syntax::ast::PatternElement::Placeable { expression } => {
-            render_default_expression_preview(expression)
+            render_expression_preview(expression, selector_overrides)
         }
     }
 }
 
-fn render_default_expression_preview(
+fn render_expression_preview(
     expression: &fluent_syntax::ast::Expression<&str>,
-) -> DefaultPreview {
+    selector_overrides: Option<&HashMap<String, String>>,
+) -> MessagePreview {
     match expression {
-        fluent_syntax::ast::Expression::Inline(inline) => DefaultPreview {
+        fluent_syntax::ast::Expression::Inline(inline) => MessagePreview {
             selectors: Vec::new(),
-            text: render_inline_expression(inline),
+            text: render_inline_expression_as_text(inline),
         },
         fluent_syntax::ast::Expression::Select { selector, variants } => {
             let default_variant = variants
                 .iter()
                 .find(|variant| variant.default)
                 .or_else(|| variants.first());
-            let Some(default_variant) = default_variant else {
-                return DefaultPreview::default();
+            let selector_name = render_inline_expression(selector);
+            let Some((selected_variant, rendered_variant_name)) = selector_overrides
+                .and_then(|overrides| {
+                    let requested = overrides.get(&selector_name)?;
+                    variants
+                        .iter()
+                        .find(|variant| render_variant_key(&variant.key) == *requested)
+                        .map(|variant| (variant, requested.clone()))
+                })
+                .or_else(|| default_variant.map(|variant| (variant, "*".to_string())))
+            else {
+                return MessagePreview::default();
             };
 
-            let mut preview = render_default_preview(&default_variant.value);
+            let mut preview = render_message_preview(&selected_variant.value, selector_overrides);
             preview.selectors.insert(
                 0,
-                (
-                    normalize_selector_name(&render_inline_expression(selector)),
-                    if default_variant.default {
-                        "*".to_string()
-                    } else {
-                        render_variant_key(&default_variant.key)
-                    },
-                ),
+                (selector_name, rendered_variant_name),
             );
             preview
         }
     }
-}
-
-fn normalize_selector_name(selector: &str) -> String {
-    selector.strip_prefix('$').unwrap_or(selector).to_string()
 }
 
 fn strip_inline_comment<'a>(
@@ -1336,18 +1321,12 @@ fn render_selector_combinations_section(
     let rendered_count = expansion.items.len();
     let mut lines = vec![heading.to_string()];
     for item in expansion.items {
-        let selectors = item
-            .selectors
-            .iter()
-            .map(|(selector, variant)| format!("`{selector}={variant}`"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let text = item.text.replace('\n', "\\n");
-        lines.push(format!("- {selectors}\n  `{text}`"));
+        lines.push(render_selector_assignments(&item.selectors));
+        lines.push(render_ftl_block(&item.text));
     }
     let omitted = expansion.total_count.saturating_sub(rendered_count);
     if omitted > 0 {
-        lines.push(format!("- `...`\n  {omitted} more"));
+        lines.push(format!("`...`\n{omitted} more"));
     }
 
     Some(lines.join("\n"))
@@ -1386,6 +1365,25 @@ fn sanitize_document_segment(value: &str) -> String {
     } else {
         sanitized
     }
+}
+
+fn parse_select_openers(line: &str) -> Vec<String> {
+    use std::sync::OnceLock;
+
+    static SELECT_OPENER_RE: OnceLock<Regex> = OnceLock::new();
+    let re = SELECT_OPENER_RE
+        .get_or_init(|| Regex::new(r"\{\s*([^{}\n]+?)\s*->").expect("valid select opener regex"));
+
+    re.captures_iter(line)
+        .filter_map(|captures| captures.get(1).map(|value| value.as_str().trim().to_string()))
+        .collect()
+}
+
+fn parse_variant_line(trimmed: &str) -> Option<String> {
+    let trimmed = trimmed.strip_prefix('*').unwrap_or(trimmed);
+    let rest = trimmed.strip_prefix('[')?;
+    let end = rest.find(']')?;
+    Some(rest[..end].trim().to_string())
 }
 
 fn collect_fluent_keys(source: &str) -> Vec<String> {
@@ -1449,38 +1447,19 @@ fn parse_fluent_resource(source: &str) -> Resource<&str> {
 }
 
 fn extract_fluent_key_at_position(source: &str, position: Position) -> Option<String> {
-    let resource = parse_fluent_resource(source);
-    let target = position_to_byte_index(source, position)?;
-
-    for entry in &resource.body {
-        match entry {
-            Entry::Message(message) => {
-                if byte_range_contains(&message.id.span, target) {
-                    return Some(message.id.name.to_string());
-                }
-
-                for attribute in &message.attributes {
-                    if byte_range_contains(&attribute.id.span, target) {
-                        return Some(format!("{}.{}", message.id.name, attribute.id.name));
-                    }
-                }
+    let line_index = usize::try_from(position.line).ok()?;
+    collect_fluent_keys(source)
+        .into_iter()
+        .filter_map(|key| {
+            let (start_line, end_line) = find_fluent_block_line_range(source, &key)?;
+            if start_line <= line_index && line_index <= end_line {
+                Some((key, start_line, end_line))
+            } else {
+                None
             }
-            Entry::Term(term) => {
-                if byte_range_contains(&term.id.span, target) {
-                    return Some(format!("-{}", term.id.name));
-                }
-
-                for attribute in &term.attributes {
-                    if byte_range_contains(&attribute.id.span, target) {
-                        return Some(format!("-{}.{}", term.id.name, attribute.id.name));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    None
+        })
+        .max_by_key(|(_, start_line, end_line)| (*start_line, usize::MAX - (end_line - start_line)))
+        .map(|(key, _, _)| key)
 }
 
 fn find_fluent_pattern<'a>(
@@ -1562,6 +1541,35 @@ fn find_fluent_entry_index(resource: &Resource<&str>, key: &str) -> Option<usize
         .position(|entry| entry_matches_key(entry, entry_key, attribute_key))
 }
 
+fn find_fluent_block_line_range(source: &str, key: &str) -> Option<(usize, usize)> {
+    let definition = find_fluent_definition(source, key)?;
+    let start_line = usize::try_from(definition.start.line).ok()?;
+    let (_, attribute_key) = split_fluent_key(key);
+    let lines: Vec<&str> = source.split('\n').collect();
+    let start_indent = leading_spaces(lines.get(start_line)?);
+    let mut end_line = start_line;
+
+    for (index, line) in lines.iter().enumerate().skip(start_line + 1) {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let indent = leading_spaces(line);
+        if attribute_key.is_some() {
+            if indent <= start_indent {
+                break;
+            }
+        } else if indent == 0 || trimmed.starts_with('.') {
+            break;
+        }
+
+        end_line = index;
+    }
+
+    Some((start_line, end_line))
+}
+
 fn entry_matches_key(entry: &Entry<&str>, entry_key: &str, attribute_key: Option<&str>) -> bool {
     match entry {
         Entry::Message(message) if entry_key == message.id.name => {
@@ -1587,6 +1595,79 @@ fn split_fluent_key(key: &str) -> (&str, Option<&str>) {
         Some((entry, attribute)) if !attribute.is_empty() => (entry, Some(attribute)),
         _ => (key, None),
     }
+}
+
+fn selector_overrides_for_position(
+    source: &str,
+    key: &str,
+    position: Position,
+) -> HashMap<String, String> {
+    let Some(line_index) = usize::try_from(position.line).ok() else {
+        return HashMap::new();
+    };
+    let cursor_character = usize::try_from(position.character).ok().unwrap_or(0);
+    let Some((start_line, end_line)) = find_fluent_block_line_range(source, key) else {
+        return HashMap::new();
+    };
+    if line_index < start_line || line_index > end_line {
+        return HashMap::new();
+    }
+
+    let lines: Vec<&str> = source.split('\n').collect();
+    let mut selectors: Vec<ActiveSelectorContext> = Vec::new();
+    let mut same_line_closed_overrides = Vec::new();
+
+    for (index, line) in lines.iter().enumerate().take(line_index + 1).skip(start_line) {
+        let trimmed = line.trim_start();
+        let indent = leading_spaces(line);
+
+        if let Some(variant) = parse_variant_line(trimmed) {
+            if let Some(selector) = selectors.last_mut() {
+                if indent > selector.indent {
+                    selector.current_variant = Some(variant);
+                    selector.current_variant_line = Some(index);
+                }
+            }
+        }
+
+        for name in parse_select_openers(line) {
+            selectors.push(ActiveSelectorContext {
+                name,
+                indent,
+                current_variant: None,
+                current_variant_line: None,
+            });
+        }
+
+        if trimmed.starts_with('}') {
+            while selectors
+                .last()
+                .is_some_and(|selector: &ActiveSelectorContext| indent <= selector.indent)
+            {
+                let popped = selectors.pop().expect("checked by is_some_and");
+                if index == line_index && cursor_character > indent {
+                    if let Some(variant) = popped.current_variant {
+                        same_line_closed_overrides.push((popped.name, variant));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut overrides: HashMap<String, String> = selectors
+        .into_iter()
+        .filter_map(|selector| {
+            selector
+                .current_variant
+                .map(|variant| (selector.name, variant))
+        })
+        .collect();
+
+    for (name, variant) in same_line_closed_overrides {
+        overrides.insert(name, variant);
+    }
+
+    overrides
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1669,7 +1750,7 @@ fn expand_expression(
         fluent_syntax::ast::Expression::Inline(inline) => SelectorExpansion {
             items: vec![SelectorExpansionItem {
                 selectors: Vec::new(),
-                text: render_inline_expression(inline),
+                text: render_inline_expression_as_text(inline),
             }],
             total_count: 1,
         },
@@ -1710,6 +1791,10 @@ fn render_variant_key(key: &fluent_syntax::ast::VariantKey<&str>) -> String {
     }
 }
 
+fn render_inline_expression_as_text(expression: &fluent_syntax::ast::InlineExpression<&str>) -> String {
+    format!("{{ {} }}", render_inline_expression(expression))
+}
+
 fn render_inline_expression(expression: &fluent_syntax::ast::InlineExpression<&str>) -> String {
     match expression {
         fluent_syntax::ast::InlineExpression::StringLiteral { value } => format!("\"{value}\""),
@@ -1744,6 +1829,24 @@ fn render_inline_expression(expression: &fluent_syntax::ast::InlineExpression<&s
     }
 }
 
+fn render_selector_assignments(selectors: &[(String, String)]) -> String {
+    selectors
+        .iter()
+        .map(|(selector, variant)| format!("`{selector}={variant}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_ftl_block(text: &str) -> String {
+    let mut block = String::from("```ftl\n");
+    block.push_str(text);
+    if !text.ends_with('\n') {
+        block.push('\n');
+    }
+    block.push_str("```");
+    block
+}
+
 fn render_expression_summary(expression: &fluent_syntax::ast::Expression<&str>) -> String {
     match expression {
         fluent_syntax::ast::Expression::Inline(inline) => render_inline_expression(inline),
@@ -1751,12 +1854,6 @@ fn render_expression_summary(expression: &fluent_syntax::ast::Expression<&str>) 
             format!("{} -> …", render_inline_expression(selector))
         }
     }
-}
-
-fn position_to_byte_index(source: &str, position: Position) -> Option<usize> {
-    let (line, line_start) = line_at(source, position.line as usize)?;
-    let line_offset = utf16_position_to_byte_index(line, position.character as usize)?;
-    Some(line_start + line_offset)
 }
 
 fn byte_range_to_lsp_range(source: &str, span: ByteRange<usize>) -> Option<Range> {
@@ -1805,6 +1902,10 @@ fn line_at(source: &str, line_index: usize) -> Option<(&str, usize)> {
     None
 }
 
+fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|ch| *ch == ' ').count()
+}
+
 fn utf16_position_to_byte_index(line: &str, character: usize) -> Option<usize> {
     let mut utf16_seen = 0;
     for (byte_idx, ch) in line.char_indices() {
@@ -1833,10 +1934,6 @@ fn is_key_byte(byte: Option<u8>) -> bool {
 
 fn is_fluent_file(path: &Path) -> bool {
     path.extension().and_then(|ext| ext.to_str()) == Some("ftl")
-}
-
-fn byte_range_contains(span: &ByteRange<usize>, target: usize) -> bool {
-    span.start <= target && target < span.end
 }
 
 fn range_contains_position(range: &Range, position: Position) -> bool {
@@ -1900,6 +1997,16 @@ mod tests {
             extract_definition_key(source, Path::new("locales/fr/app.ftl"), Position::new(3, 6))
                 .unwrap();
         assert_eq!(attribute, "button-copy.label");
+    }
+
+    #[test]
+    fn extracts_key_inside_selector_variant_text() {
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
+
+        let key =
+            extract_definition_key(source, Path::new("locales/en/app.ftl"), Position::new(2, 18))
+                .unwrap();
+        assert_eq!(key, "install-hint");
     }
 
     #[test]
@@ -2008,7 +2115,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             rendered,
-            "Current language combinations:\n- `$gender=female`, `$count=one`\n  `Copy the download link for her account on $count device now.`\n- `$gender=female`, `$count=other`\n  `Copy the download link for her account on $count devices now.`\n- `$gender=male`, `$count=one`\n  `Copy the download link for his account on $count device now.`\n- `...`\n  3 more"
+            "Current language combinations:\n`$gender=female`, `$count=one`\n```ftl\nCopy the download link for her account on { $count } device now.\n```\n`$gender=female`, `$count=other`\n```ftl\nCopy the download link for her account on { $count } devices now.\n```\n`$gender=male`, `$count=one`\n```ftl\nCopy the download link for his account on { $count } device now.\n```\n`...`\n3 more"
         );
     }
 
@@ -2021,15 +2128,17 @@ mod tests {
     }
 
     #[test]
-    fn renders_hover_markdown_with_source_first_and_local_last_comments() {
-        let rendered = render_hover_markdown(
-            Some("### Shared menu copy\n## File menu\n# Primary action\n"),
-            Some("# Nota local para traduccion\n"),
-        )
-        .unwrap();
+    fn renders_hover_markdown_for_selector_preview() {
+        let rendered = render_hover_markdown(&MessagePreview {
+            selectors: vec![
+                ("$gender".to_string(), "female".to_string()),
+                ("$count".to_string(), "*".to_string()),
+            ],
+            text: "Copy the download link for her account on { $count } devices now.".to_string(),
+        });
         assert_eq!(
             rendered,
-            "```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```\n\n---\n\n```ftl\n# Nota local para traduccion\n```"
+            "`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```"
         );
     }
 
@@ -2054,12 +2163,94 @@ mod tests {
 
         assert_eq!(
             render_source_inlay_hint_label(source, "install-hint").unwrap(),
-            "[gender=*, count=*] Copy the download link for their account on $count devices now."
+            "[gender=*, count=*] Copy the download link for their account on { $count } devices now."
         );
         assert_eq!(
             render_source_inlay_hint_label(source, "download-action.tooltip").unwrap(),
-            "[gender=*, count=*] Install the recommended build for their account on $count devices now."
+            "[gender=*, count=*] Install the recommended build for their account on { $count } devices now."
         );
+    }
+
+    #[test]
+    fn render_message_preview_uses_selected_selector_context() {
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
+        let resource = parse_fluent_resource(source);
+        let pattern = find_fluent_pattern(&resource, "install-hint").unwrap();
+        let overrides = HashMap::from([("$gender".to_string(), "female".to_string())]);
+
+        assert_eq!(
+            render_message_preview(pattern, Some(&overrides)),
+            MessagePreview {
+                selectors: vec![
+                    ("$gender".to_string(), "female".to_string()),
+                    ("$count".to_string(), "*".to_string()),
+                ],
+                text: "Copy the download link for her account on { $count } devices now."
+                    .to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn selector_overrides_follow_active_variant_lines() {
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
+
+        assert_eq!(
+            selector_overrides_for_position(
+                source,
+                "install-hint",
+                Position::new(2, 18)
+            ),
+            HashMap::from([("$gender".to_string(), "female".to_string())])
+        );
+        assert_eq!(
+            selector_overrides_for_position(
+                source,
+                "install-hint",
+                Position::new(0, 3)
+            ),
+            HashMap::new()
+        );
+    }
+
+    #[test]
+    fn selector_overrides_preserve_variants_after_closing_brace_on_current_line() {
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
+
+        assert_eq!(
+            selector_overrides_for_position(
+                source,
+                "install-hint",
+                Position::new(5, 8)
+            ),
+            HashMap::from([("$gender".to_string(), "other".to_string())])
+        );
+    }
+
+    #[test]
+    fn selector_combination_document_omits_duplicate_source_sections_for_origin_files() {
+        let file_match = FileMatch {
+            mask_index: 0,
+            language: "en".to_string(),
+            filepath: "app".to_string(),
+        };
+        let source_render = SourceRender {
+            comments: None,
+            source: "install-hint = Example\n".to_string(),
+        };
+
+        let rendered = render_selector_combinations_document(
+            "install-hint",
+            &file_match,
+            "en",
+            Some(&source_render),
+            Some("Source language combinations:"),
+            Some(&source_render),
+            "Current language combinations:",
+        );
+        assert!(!rendered.contains("Source language:"));
+        assert!(!rendered.contains("Source language combinations:"));
+        assert_eq!(rendered.matches("Current language combinations:").count(), 1);
     }
 
     #[test]
