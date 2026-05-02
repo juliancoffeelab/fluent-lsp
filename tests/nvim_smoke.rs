@@ -11,16 +11,19 @@ fn fixture_root() -> PathBuf {
         .join("workspace")
 }
 
-#[test]
-fn nvim_definition_from_translation_jumps_into_origin_file() {
+fn run_scenario(name: &str) -> Value {
     let output_dir = tempdir().unwrap();
     let result_path = output_dir.path().join("result.json");
     let fixture = fixture_root();
+    let scenario_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("nvim")
+        .join(name);
 
     let status = Command::new("nvim")
         .arg("--headless")
         .arg("-u")
-        .arg("tests/nvim/init.lua")
+        .arg(scenario_dir.join("init.lua"))
         .arg("+lua require('smoke').run()")
         .env("FLUENT_LSP_BIN", env!("CARGO_BIN_EXE_fluent-lsp"))
         .env("FLUENT_LSP_WORKSPACE", &fixture)
@@ -31,11 +34,59 @@ fn nvim_definition_from_translation_jumps_into_origin_file() {
     assert!(status.success(), "nvim exited with {status}");
 
     let raw = std::fs::read_to_string(&result_path).unwrap();
-    let result: Value = serde_json::from_str(&raw).unwrap();
-    let file = result["file"].as_str().unwrap();
-    assert!(
-        file.ends_with("locales/en/app.ftl"),
-        "unexpected file: {file}"
-    );
-    assert_eq!(result["line"], 2);
+    serde_json::from_str(&raw).unwrap()
+}
+
+#[test]
+fn nvim_smoke_minimal_server_attach() {
+    let result = run_scenario("minimal_server_attach");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
+
+#[test]
+fn nvim_smoke_definition_translation() {
+    let result = run_scenario("definition_translation");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
+
+#[test]
+fn nvim_smoke_references_origin() {
+    let result = run_scenario("references_origin");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
+
+#[test]
+fn nvim_smoke_hover_translation() {
+    let result = run_scenario("hover_translation");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
+
+#[test]
+fn nvim_smoke_hover_selector_combinations() {
+    let result = run_scenario("hover_selector_combinations");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
+
+#[test]
+fn nvim_smoke_hover_comment_structure() {
+    let result = run_scenario("hover_comment_structure");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
+
+#[test]
+fn nvim_smoke_workspace_locale_tree() {
+    let result = run_scenario("workspace_locale_tree");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
+
+#[test]
+fn nvim_smoke_hover_origin_language() {
+    let result = run_scenario("hover_origin_language");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
+
+#[test]
+fn nvim_smoke_codelens_selector_combinations() {
+    let result = run_scenario("codelens_selector_combinations");
+    assert_eq!(result["ok"], Value::Bool(true));
 }
