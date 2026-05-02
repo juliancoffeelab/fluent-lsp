@@ -34,6 +34,12 @@ Validation:
 cargo test
 ```
 
+Try it locally from this repo:
+
+- Open the repository root as your editor workspace.
+- The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml) points at the repo-local [example/](/home/codex/workspace/fluent-lsp/example/README.md) tree.
+- Use the files under `example/locales/` to try definition, hover, references, locale-tree resolution, and CodeLens-driven selector expansion.
+
 Local fork:
 
 - `third_party/fluent-syntax/` is a path-patched local fork of `fluent-syntax 0.12.0`.
