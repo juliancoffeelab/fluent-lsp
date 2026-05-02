@@ -158,6 +158,12 @@ fn collect_files_under(root: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoverEntryRender {
+    comments: Option<String>,
+    entry: String,
+}
+
 #[derive(Default)]
 struct ServerState {
     root_dir: Option<PathBuf>,
@@ -278,10 +284,14 @@ impl Backend {
             .or_else(|| std::fs::read_to_string(&path).ok())?;
         drop(state);
 
-        let key = extract_definition_key(&source, &path, params.text_document_position_params.position)?;
+        let key = extract_definition_key(
+            &source,
+            &path,
+            params.text_document_position_params.position,
+        )?;
         let english_uri = Url::from_file_path(workspace.english_file()).ok()?;
         let english_source = self.read_document_text(&english_uri).await?;
-        let english_entry = render_fluent_entry(&english_source, &key)?;
+        let english_entry = render_fluent_hover_entry(&english_source, &key)?;
         let hover_range = find_fluent_definition(&source, &key)?;
         let hover_suffix = if workspace.hover_selector_combinations() {
             render_selector_combinations_section(
@@ -292,10 +302,7 @@ impl Backend {
         } else {
             None
         };
-        let hover_value = match hover_suffix {
-            Some(section) => format!("```ftl\n{english_entry}```\n\n{section}"),
-            None => format!("```ftl\n{english_entry}```"),
-        };
+        let hover_value = render_hover_markdown(&english_entry, hover_suffix.as_deref());
 
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -471,6 +478,103 @@ pub fn render_fluent_entry(source: &str, key: &str) -> Option<String> {
     Some(rendered)
 }
 
+fn render_fluent_hover_entry(source: &str, key: &str) -> Option<HoverEntryRender> {
+    let resource = parse_fluent_resource(source);
+    let entry_index = find_fluent_entry_index(&resource, key)?;
+    let mut comment_entries = Vec::new();
+
+    let mut comment_start = entry_index;
+    while comment_start > 0 && is_free_comment_entry(&resource.body[comment_start - 1]) {
+        comment_start -= 1;
+    }
+    for comment_entry in &resource.body[comment_start..entry_index] {
+        comment_entries.push(comment_entry.clone());
+    }
+
+    let entry = resource.body[entry_index].clone();
+    let entry = strip_inline_comment(entry, &mut comment_entries);
+    let comments = if comment_entries.is_empty() {
+        None
+    } else {
+        Some(render_hover_comments(&comment_entries))
+    };
+    let entry = serializer::serialize(&Resource { body: vec![entry] });
+
+    Some(HoverEntryRender { comments, entry })
+}
+
+fn render_hover_markdown(entry: &HoverEntryRender, hover_suffix: Option<&str>) -> String {
+    let mut sections = Vec::new();
+    if let Some(comments) = &entry.comments {
+        sections.push(format!("Comments:\n```ftl\n{comments}```"));
+    }
+    sections.push(format!("Entry:\n```ftl\n{}```", entry.entry));
+    if let Some(hover_suffix) = hover_suffix {
+        sections.push(hover_suffix.to_string());
+    }
+    sections.join("\n\n")
+}
+
+fn strip_inline_comment<'a>(
+    entry: Entry<&'a str>,
+    comment_entries: &mut Vec<Entry<&'a str>>,
+) -> Entry<&'a str> {
+    match entry {
+        Entry::Message(mut message) => {
+            if let Some(comment) = message.comment.take() {
+                comment_entries.push(Entry::Comment(comment));
+            }
+            Entry::Message(message)
+        }
+        Entry::Term(mut term) => {
+            if let Some(comment) = term.comment.take() {
+                comment_entries.push(Entry::Comment(comment));
+            }
+            Entry::Term(term)
+        }
+        other => other,
+    }
+}
+
+fn is_free_comment_entry(entry: &Entry<&str>) -> bool {
+    matches!(
+        entry,
+        Entry::Comment(_) | Entry::GroupComment(_) | Entry::ResourceComment(_)
+    )
+}
+
+fn render_hover_comments(entries: &[Entry<&str>]) -> String {
+    let mut rendered = String::new();
+    for entry in entries {
+        match entry {
+            Entry::Comment(comment) => append_comment_with_prefix(&mut rendered, comment, "#"),
+            Entry::GroupComment(comment) => {
+                append_comment_with_prefix(&mut rendered, comment, "##")
+            }
+            Entry::ResourceComment(comment) => {
+                append_comment_with_prefix(&mut rendered, comment, "###")
+            }
+            _ => {}
+        }
+    }
+    rendered
+}
+
+fn append_comment_with_prefix(
+    buffer: &mut String,
+    comment: &fluent_syntax::ast::Comment<&str>,
+    prefix: &str,
+) {
+    for line in &comment.content {
+        buffer.push_str(prefix);
+        if !line.trim().is_empty() {
+            buffer.push(' ');
+            buffer.push_str(line);
+        }
+        buffer.push('\n');
+    }
+}
+
 fn render_selector_combinations_section(source: &str, key: &str, max_items: usize) -> Option<String> {
     let resource = parse_fluent_resource(source);
     let pattern = find_fluent_pattern(&resource, key)?;
@@ -605,32 +709,40 @@ fn find_fluent_entry<'a>(resource: &'a Resource<&'a str>, key: &str) -> Option<&
     let (entry_key, attribute_key) = split_fluent_key(key);
 
     for entry in &resource.body {
-        match entry {
-            Entry::Message(message) if entry_key == message.id.name => {
-                if attribute_key.is_none()
-                    || message
-                        .attributes
-                        .iter()
-                        .any(|attribute| Some(attribute.id.name) == attribute_key)
-                {
-                    return Some(entry);
-                }
-            }
-            Entry::Term(term) if entry_key == format!("-{}", term.id.name) => {
-                if attribute_key.is_none()
-                    || term
-                        .attributes
-                        .iter()
-                        .any(|attribute| Some(attribute.id.name) == attribute_key)
-                {
-                    return Some(entry);
-                }
-            }
-            _ => {}
+        if entry_matches_key(entry, entry_key, attribute_key) {
+            return Some(entry);
         }
     }
 
     None
+}
+
+fn find_fluent_entry_index(resource: &Resource<&str>, key: &str) -> Option<usize> {
+    let (entry_key, attribute_key) = split_fluent_key(key);
+    resource
+        .body
+        .iter()
+        .position(|entry| entry_matches_key(entry, entry_key, attribute_key))
+}
+
+fn entry_matches_key(entry: &Entry<&str>, entry_key: &str, attribute_key: Option<&str>) -> bool {
+    match entry {
+        Entry::Message(message) if entry_key == message.id.name => {
+            attribute_key.is_none()
+                || message
+                    .attributes
+                    .iter()
+                    .any(|attribute| Some(attribute.id.name) == attribute_key)
+        }
+        Entry::Term(term) if entry_key == format!("-{}", term.id.name) => {
+            attribute_key.is_none()
+                || term
+                    .attributes
+                    .iter()
+                    .any(|attribute| Some(attribute.id.name) == attribute_key)
+        }
+        _ => false,
+    }
 }
 
 fn split_fluent_key(key: &str) -> (&str, Option<&str>) {
@@ -984,6 +1096,38 @@ mod tests {
             "Static combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `...`: 1 more"
         );
     }
+
+    #[test]
+    fn renders_hover_markdown_with_actual_comment_markers() {
+        let entry = HoverEntryRender {
+            comments: Some("### Shared menu copy\n## File menu\n# Primary action\n".to_string()),
+            entry: "menu-save = Save\n".to_string(),
+        };
+        let rendered = render_hover_markdown(
+            &entry,
+            Some("Static combinations:\n- `$kind=default`: `Save`"),
+        );
+        assert_eq!(
+            rendered,
+            "Comments:\n```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```\n\nEntry:\n```ftl\nmenu-save = Save\n```\n\nStatic combinations:\n- `$kind=default`: `Save`"
+        );
+    }
+
+    #[test]
+    fn renders_hover_entry_with_free_and_inline_comments() {
+        let source = "### Shared menu copy\n## File menu\n# Primary action\nmenu-save = Save\n";
+        let rendered = render_fluent_hover_entry(source, "menu-save").unwrap();
+        assert_eq!(
+            rendered,
+            HoverEntryRender {
+                comments: Some(
+                    "### Shared menu copy\n## File menu\n# Primary action\n".to_string()
+                ),
+                entry: "menu-save = Save\n".to_string(),
+            }
+        );
+    }
+
 
     #[test]
     fn local_fluent_syntax_fork_exposes_identifier_spans() {

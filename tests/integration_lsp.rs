@@ -325,7 +325,7 @@ fn hover_from_translation_shows_english_entry_and_comments() {
         21,
         &source_path,
         position_of(&source_text, "welcome-title"),
-        "```ftl\n# Shown on the welcome screen\nwelcome-title = Welcome\n```",
+        "Comments:\n```ftl\n# Shown on the welcome screen\n```\n\nEntry:\n```ftl\nwelcome-title = Welcome\n```",
         0,
         0,
     );
@@ -335,7 +335,7 @@ fn hover_from_translation_shows_english_entry_and_comments() {
         22,
         &source_path,
         position_of(&source_text, "label ="),
-        "```ftl\n# CTA copy\n# Keep it short\nbutton-copy =\n    .label = Launch\n```",
+        "Comments:\n```ftl\n# CTA copy\n# Keep it short\n```\n\nEntry:\n```ftl\nbutton-copy =\n    .label = Launch\n```",
         3,
         5,
     );
@@ -345,7 +345,7 @@ fn hover_from_translation_shows_english_entry_and_comments() {
         23,
         &source_path,
         position_of(&source_text, "install-hint"),
-        "```ftl\n# Shortcut combinations\ninstall-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + { $action ->\n        [copy] C\n       *[paste] V\n    }\n```\n\nStatic combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `...`: 1 more",
+        "Comments:\n```ftl\n# Shortcut combinations\n```\n\nEntry:\n```ftl\ninstall-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + { $action ->\n        [copy] C\n       *[paste] V\n    }\n```\n\nStatic combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `...`: 1 more",
         4,
         0,
     );
