@@ -98,6 +98,14 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
         Value::Bool(true)
     );
     assert_eq!(
+        initialize["result"]["capabilities"]["codeLensProvider"]["resolveProvider"],
+        Value::Bool(false)
+    );
+    assert_eq!(
+        initialize["result"]["capabilities"]["executeCommandProvider"]["commands"][0],
+        Value::String("fluent-lsp.showSelectorCombinations".to_string())
+    );
+    assert_eq!(
         initialize["result"]["capabilities"]["referencesProvider"],
         Value::Bool(true)
     );
@@ -458,6 +466,114 @@ fn hover_from_origin_file_shows_origin_entry_and_metadata() {
         "Comments:\n```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```\n\nEntry:\n```ftl\nmenu-save = Save\n```",
         3,
         0,
+    );
+}
+
+#[test]
+fn code_lens_shows_full_selector_combinations_via_message() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_uri = format!("file://{}", source_path.display());
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 40,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {}
+        }
+    }));
+
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], 40);
+    assert_eq!(
+        initialize["result"]["capabilities"]["codeLensProvider"]["resolveProvider"],
+        Value::Bool(false)
+    );
+    assert_eq!(
+        initialize["result"]["capabilities"]["executeCommandProvider"]["commands"][0],
+        Value::String("fluent-lsp.showSelectorCombinations".to_string())
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": source_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": source_text
+            }
+        }
+    }));
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 41,
+        "method": "textDocument/codeLens",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) }
+        }
+    }));
+
+    let lenses = lsp.recv();
+    assert_eq!(lenses["id"], 41);
+    let items = lenses["result"]
+        .as_array()
+        .expect("expected code lens array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0]["command"]["title"],
+        Value::String("Show all 4 selector combinations".to_string())
+    );
+    assert_eq!(
+        items[0]["command"]["command"],
+        Value::String("fluent-lsp.showSelectorCombinations".to_string())
+    );
+    assert_eq!(items[0]["range"]["start"]["line"], Value::from(4));
+    assert_eq!(items[0]["range"]["start"]["character"], Value::from(0));
+
+    let command = items[0]["command"].clone();
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": command["command"],
+            "arguments": command["arguments"]
+        }
+    }));
+
+    let first = lsp.recv();
+    let second = lsp.recv();
+    let (message, response) = if first["method"] == "window/showMessage" {
+        (first, second)
+    } else {
+        (second, first)
+    };
+
+    assert_eq!(response["id"], 42);
+    assert_eq!(response["result"], Value::Null);
+    assert_eq!(message["params"]["type"], Value::from(3));
+    assert_eq!(
+        message["params"]["message"],
+        Value::String(
+            "Selector combinations for install-hint\n\nStatic combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `$platform=other`, `$action=paste`: `Press Ctrl + V`".to_string()
+        )
     );
 }
 

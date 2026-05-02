@@ -9,10 +9,12 @@ use fluent_syntax::parser;
 use fluent_syntax::serializer;
 use regex::Regex;
 use serde::Deserialize;
+use serde_json::Value;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result as LspResult;
 use tower_lsp::lsp_types::{
-    DidChangeTextDocumentParams, DidOpenTextDocumentParams, GotoDefinitionParams,
+    CodeLens, CodeLensOptions, CodeLensParams, Command, DidChangeTextDocumentParams,
+    DidOpenTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, InitializeParams, InitializeResult,
     Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, Range, ReferenceParams,
     ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
@@ -21,6 +23,7 @@ use tower_lsp::{Client, LanguageServer};
 
 const CONFIG_FILE_NAMES: [&str; 2] = ["fluent-lsp.toml", ".fluent-lsp.toml"];
 const DEFAULT_HOVER_SELECTOR_COMBINATIONS_LIMIT: usize = 32;
+const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str = "fluent-lsp.showSelectorCombinations";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -436,6 +439,134 @@ impl Backend {
             range: Some(hover_range),
         })
     }
+
+    async fn code_lenses_for(&self, params: CodeLensParams) -> Option<Vec<CodeLens>> {
+        let state = self.state.read().await;
+        let workspace = state.workspace.clone()?;
+        let uri = params.text_document.uri;
+        let path = uri.to_file_path().ok()?;
+        workspace.file_match(&path)?;
+
+        let source = state
+            .open_documents
+            .get(&uri)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(&path).ok())?;
+        drop(state);
+
+        let origin_path = workspace.origin_file_for(&path)?;
+        let origin_uri = Url::from_file_path(&origin_path).ok()?;
+        let origin_source = if workspace.is_origin_file(&path) {
+            source.clone()
+        } else {
+            self.read_document_text(&origin_uri).await?
+        };
+
+        let mut lenses = Vec::new();
+        for key in collect_fluent_keys(&source) {
+            let Some(range) = find_fluent_definition(&source, &key) else {
+                continue;
+            };
+            let Some(expansion) = selector_expansion_for(&origin_source, &key, 1) else {
+                continue;
+            };
+            if expansion.items.is_empty()
+                || expansion.items.iter().all(|item| item.selectors.is_empty())
+            {
+                continue;
+            }
+            let Some(total_count) = selector_total_count_for(&origin_source, &key) else {
+                continue;
+            };
+
+            lenses.push(CodeLens {
+                range,
+                command: Some(Command {
+                    title: code_lens_title(total_count),
+                    command: SHOW_SELECTOR_COMBINATIONS_COMMAND.to_string(),
+                    arguments: Some(vec![Value::String(uri.to_string()), Value::String(key)]),
+                }),
+                data: None,
+            });
+        }
+
+        Some(lenses)
+    }
+
+    async fn execute_selector_combinations_command(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> LspResult<Option<Value>> {
+        if params.command != SHOW_SELECTOR_COMBINATIONS_COMMAND {
+            return Ok(None);
+        }
+
+        let mut arguments = params.arguments.into_iter();
+        let Some(uri_value) = arguments.next() else {
+            return Ok(None);
+        };
+        let Some(key_value) = arguments.next() else {
+            return Ok(None);
+        };
+
+        let Ok(uri) = serde_json::from_value::<String>(uri_value) else {
+            return Ok(None);
+        };
+        let Ok(key) = serde_json::from_value::<String>(key_value) else {
+            return Ok(None);
+        };
+        let Ok(uri) = Url::parse(&uri) else {
+            return Ok(None);
+        };
+        let Some(path) = uri.to_file_path().ok() else {
+            return Ok(None);
+        };
+
+        let state = self.state.read().await;
+        let Some(workspace) = state.workspace.clone() else {
+            return Ok(None);
+        };
+        if workspace.file_match(&path).is_none() {
+            return Ok(None);
+        }
+        let source = state
+            .open_documents
+            .get(&uri)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(&path).ok());
+        drop(state);
+        let Some(source) = source else {
+            return Ok(None);
+        };
+
+        let Some(origin_path) = workspace.origin_file_for(&path) else {
+            return Ok(None);
+        };
+        let Some(origin_uri) = Url::from_file_path(&origin_path).ok() else {
+            return Ok(None);
+        };
+        let origin_source = if workspace.is_origin_file(&path) {
+            source
+        } else if let Some(origin_source) = self.read_document_text(&origin_uri).await {
+            origin_source
+        } else {
+            return Ok(None);
+        };
+
+        let Some(section) = render_selector_combinations_section(&origin_source, &key, usize::MAX)
+        else {
+            return Ok(None);
+        };
+
+        self.client
+            .show_message(
+                MessageType::INFO,
+                format!("Selector combinations for {key}\n\n{section}"),
+            )
+            .await;
+
+        Ok(None)
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -464,7 +595,14 @@ impl LanguageServer for Backend {
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
+                code_lens_provider: Some(CodeLensOptions {
+                    resolve_provider: Some(false),
+                }),
                 definition_provider: Some(OneOf::Left(true)),
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: vec![SHOW_SELECTOR_COMBINATIONS_COMMAND.to_string()],
+                    work_done_progress_options: Default::default(),
+                }),
                 hover_provider: Some(tower_lsp::lsp_types::HoverProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -545,6 +683,14 @@ impl LanguageServer for Backend {
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
         Ok(self.hover_for(params).await)
+    }
+
+    async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
+        Ok(self.code_lenses_for(params).await)
+    }
+
+    async fn execute_command(&self, params: ExecuteCommandParams) -> LspResult<Option<Value>> {
+        self.execute_selector_combinations_command(params).await
     }
 }
 
@@ -704,9 +850,7 @@ fn render_selector_combinations_section(
     key: &str,
     max_items: usize,
 ) -> Option<String> {
-    let resource = parse_fluent_resource(source);
-    let pattern = find_fluent_pattern(&resource, key)?;
-    let expansion = expand_pattern(pattern, max_items);
+    let expansion = selector_expansion_for(source, key, max_items)?;
     if expansion.items.is_empty() || expansion.items.iter().all(|item| item.selectors.is_empty()) {
         return None;
     }
@@ -729,6 +873,78 @@ fn render_selector_combinations_section(
     }
 
     Some(lines.join("\n"))
+}
+
+fn selector_expansion_for(source: &str, key: &str, max_items: usize) -> Option<SelectorExpansion> {
+    let resource = parse_fluent_resource(source);
+    let pattern = find_fluent_pattern(&resource, key)?;
+    Some(expand_pattern(pattern, max_items))
+}
+
+fn selector_total_count_for(source: &str, key: &str) -> Option<usize> {
+    let resource = parse_fluent_resource(source);
+    let pattern = find_fluent_pattern(&resource, key)?;
+    Some(count_pattern_combinations(pattern))
+}
+
+fn code_lens_title(total_count: usize) -> String {
+    match total_count {
+        1 => "Show 1 selector combination".to_string(),
+        count => format!("Show all {count} selector combinations"),
+    }
+}
+
+fn collect_fluent_keys(source: &str) -> Vec<String> {
+    let resource = parse_fluent_resource(source);
+    let mut keys = Vec::new();
+
+    for entry in &resource.body {
+        match entry {
+            Entry::Message(message) => {
+                keys.push(message.id.name.to_string());
+                for attribute in &message.attributes {
+                    keys.push(format!("{}.{}", message.id.name, attribute.id.name));
+                }
+            }
+            Entry::Term(term) => {
+                keys.push(format!("-{}", term.id.name));
+                for attribute in &term.attributes {
+                    keys.push(format!("-{}.{}", term.id.name, attribute.id.name));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    keys
+}
+
+fn count_pattern_combinations(pattern: &fluent_syntax::ast::Pattern<&str>) -> usize {
+    let mut total_count = 1usize;
+    for element in &pattern.elements {
+        total_count = total_count.saturating_mul(count_pattern_element_combinations(element));
+    }
+    total_count
+}
+
+fn count_pattern_element_combinations(element: &fluent_syntax::ast::PatternElement<&str>) -> usize {
+    match element {
+        fluent_syntax::ast::PatternElement::TextElement { .. } => 1,
+        fluent_syntax::ast::PatternElement::Placeable { expression } => {
+            count_expression_combinations(expression)
+        }
+    }
+}
+
+fn count_expression_combinations(expression: &fluent_syntax::ast::Expression<&str>) -> usize {
+    match expression {
+        fluent_syntax::ast::Expression::Inline(_) => 1,
+        fluent_syntax::ast::Expression::Select { variants, .. } => {
+            variants.iter().fold(0usize, |total, variant| {
+                total.saturating_add(count_pattern_combinations(&variant.value))
+            })
+        }
+    }
 }
 
 fn parse_fluent_resource(source: &str) -> Resource<&str> {
@@ -1267,6 +1483,14 @@ mod tests {
             rendered,
             "Static combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `...`: 1 more"
         );
+    }
+
+    #[test]
+    fn counts_selector_combinations_without_truncation() {
+        let source = "install-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + { $action ->\n        [copy] C\n       *[paste] V\n    }\n";
+
+        let count = selector_total_count_for(source, "install-hint").unwrap();
+        assert_eq!(count, 4);
     }
 
     #[test]
