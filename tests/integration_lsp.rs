@@ -470,7 +470,7 @@ fn hover_from_origin_file_shows_origin_entry_and_metadata() {
 }
 
 #[test]
-fn code_lens_shows_full_selector_combinations_via_message() {
+fn code_lens_opens_full_selector_combinations_document() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
     let source_uri = format!("file://{}", source_path.display());
@@ -485,7 +485,13 @@ fn code_lens_shows_full_selector_combinations_via_message() {
         "params": {
             "processId": null,
             "rootUri": format!("file://{}", root.display()),
-            "capabilities": {}
+            "capabilities": {
+                "window": {
+                    "showDocument": {
+                        "support": true
+                    }
+                }
+            }
         }
     }));
 
@@ -558,23 +564,41 @@ fn code_lens_shows_full_selector_combinations_via_message() {
         }
     }));
 
-    let first = lsp.recv();
-    let second = lsp.recv();
-    let (message, response) = if first["method"] == "window/showMessage" {
-        (first, second)
-    } else {
-        (second, first)
-    };
+    let request = lsp.recv();
+    assert_eq!(request["method"], "window/showDocument");
+    assert_eq!(request["params"]["external"], Value::Bool(false));
+    assert_eq!(request["params"]["takeFocus"], Value::Bool(true));
+    assert_eq!(request["params"]["selection"]["start"]["line"], Value::from(0));
+    assert_eq!(request["params"]["selection"]["start"]["character"], Value::from(0));
 
+    let document_uri = request["params"]["uri"]
+        .as_str()
+        .expect("showDocument uri must be a string");
+    assert!(
+        document_uri.contains("fluent-lsp-selector-combinations-")
+            && document_uri.ends_with("-install-hint.md"),
+        "unexpected temp document uri: {document_uri}"
+    );
+    let document_path = document_uri
+        .strip_prefix("file://")
+        .expect("expected file uri for temp document");
+    let document_text = std::fs::read_to_string(document_path).expect("read temp document");
+    assert_eq!(
+        document_text,
+        "# Selector combinations for `install-hint`\n\nOrigin language: `en`\n\nLogical file: `app`\n\nComments:\n```ftl\n# Shortcut combinations\n```\n\nEntry:\n```ftl\ninstall-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + { $action ->\n        [copy] C\n       *[paste] V\n    }\n```\n\nStatic combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `$platform=other`, `$action=paste`: `Press Ctrl + V`"
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": {
+            "success": true
+        }
+    }));
+
+    let response = lsp.recv();
     assert_eq!(response["id"], 42);
     assert_eq!(response["result"], Value::Null);
-    assert_eq!(message["params"]["type"], Value::from(3));
-    assert_eq!(
-        message["params"]["message"],
-        Value::String(
-            "Selector combinations for install-hint\n\nStatic combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `$platform=other`, `$action=paste`: `Press Ctrl + V`".to_string()
-        )
-    );
 }
 
 struct ReferenceExpectation<'a> {

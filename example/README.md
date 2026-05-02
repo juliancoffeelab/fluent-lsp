@@ -10,7 +10,7 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - Go to definition on `welcome-title`, `-brand-name`, or `.label`
   - Hover `welcome-title` for origin comments and entry content
   - Hover `install-hint` for selector previews
-  - Run the CodeLens on `install-hint` to show all selector combinations
+  - Run the CodeLens on `install-hint` to open the full selector combinations document
 - `example/locales/en/app.ftl`
   - Run references from `welcome-title` or `.label`
   - Hover origin-language entries directly

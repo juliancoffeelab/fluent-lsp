@@ -18,11 +18,6 @@ function M.run()
   local workspace = assert(vim.env.FLUENT_LSP_WORKSPACE ~= "" and vim.env.FLUENT_LSP_WORKSPACE)
   local server = assert(vim.env.FLUENT_LSP_BIN ~= "" and vim.env.FLUENT_LSP_BIN)
   local result_path = assert(vim.env.FLUENT_LSP_RESULT ~= "" and vim.env.FLUENT_LSP_RESULT)
-  local shown_message = nil
-
-  vim.lsp.handlers["window/showMessage"] = function(_, params, _)
-    shown_message = params.message
-  end
 
   vim.cmd.edit(workspace .. "/locales/es/app.ftl")
   local client_id = start_client(server, workspace)
@@ -52,9 +47,15 @@ function M.run()
   vim.lsp.codelens.run({ client_id = client_id })
 
   local shown = vim.wait(5000, function()
-    return shown_message ~= nil and shown_message:match("Press Ctrl %+ V") ~= nil
+    local current = vim.api.nvim_buf_get_name(0)
+    local filename = vim.fn.fnamemodify(current, ":t")
+    if not filename:match("^fluent%-lsp%-selector%-combinations%-.+%-install%-hint%.md$") then
+      return false
+    end
+    local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+    return text:match("Press Ctrl %+ V") ~= nil
   end, 50)
-  assert(shown, "codelens did not show full selector combinations")
+  assert(shown, "codelens did not open full selector combinations document")
 
   write_result(result_path, {
     ok = true,

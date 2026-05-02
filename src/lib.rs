@@ -10,6 +10,7 @@ use fluent_syntax::serializer;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
+use tempfile::Builder as TempFileBuilder;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result as LspResult;
 use tower_lsp::lsp_types::{
@@ -17,7 +18,7 @@ use tower_lsp::lsp_types::{
     DidOpenTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, InitializeParams, InitializeResult,
     Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, Range, ReferenceParams,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    ServerCapabilities, ShowDocumentParams, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -284,6 +285,7 @@ struct ServerState {
     root_dir: Option<PathBuf>,
     workspace: Option<WorkspaceConfig>,
     open_documents: HashMap<Url, String>,
+    supports_show_document: bool,
 }
 
 pub struct Backend {
@@ -526,6 +528,7 @@ impl Backend {
         let Some(workspace) = state.workspace.clone() else {
             return Ok(None);
         };
+        let supports_show_document = state.supports_show_document;
         if workspace.file_match(&path).is_none() {
             return Ok(None);
         }
@@ -557,6 +560,35 @@ impl Backend {
         else {
             return Ok(None);
         };
+
+        if supports_show_document {
+            let Some(file_match) = workspace.file_match(&path) else {
+                return Ok(None);
+            };
+            let hover_entry = render_fluent_hover_entry(&origin_source, &key);
+            let document_text = render_selector_combinations_document(
+                &key,
+                &workspace,
+                &file_match,
+                hover_entry.as_ref(),
+                &section,
+            );
+
+            if let Some(document_uri) =
+                write_selector_combinations_temp_document(&key, &document_text)
+            {
+                let _ = self
+                    .client
+                    .show_document(ShowDocumentParams {
+                        uri: document_uri,
+                        external: Some(false),
+                        take_focus: Some(true),
+                        selection: Some(Range::new(Position::new(0, 0), Position::new(0, 0))),
+                    })
+                    .await;
+                return Ok(None);
+            }
+        }
 
         self.client
             .show_message(
@@ -591,6 +623,12 @@ impl LanguageServer for Backend {
             let mut state = self.state.write().await;
             state.root_dir = root_dir;
             state.workspace = workspace;
+            state.supports_show_document = params
+                .capabilities
+                .window
+                .and_then(|window| window.show_document)
+                .map(|capability| capability.support)
+                .unwrap_or(false);
         }
 
         Ok(InitializeResult {
@@ -785,6 +823,42 @@ fn render_hover_markdown(entry: &HoverEntryRender, hover_suffix: Option<&str>) -
     sections.join("\n\n")
 }
 
+fn render_selector_combinations_document(
+    key: &str,
+    workspace: &WorkspaceConfig,
+    file_match: &FileMatch,
+    hover_entry: Option<&HoverEntryRender>,
+    combinations_section: &str,
+) -> String {
+    let mut sections = vec![format!("# Selector combinations for `{key}`")];
+    sections.push(format!("Origin language: `{}`", workspace.origin_language()));
+    sections.push(format!("Logical file: `{}`", file_match.filepath));
+
+    if let Some(entry) = hover_entry {
+        if let Some(comments) = &entry.comments {
+            sections.push(format!("Comments:\n```ftl\n{comments}```"));
+        }
+        sections.push(format!("Entry:\n```ftl\n{}```", entry.entry));
+    }
+
+    sections.push(combinations_section.to_string());
+    sections.join("\n\n")
+}
+
+fn write_selector_combinations_temp_document(key: &str, contents: &str) -> Option<Url> {
+    let mut file = TempFileBuilder::new()
+        .prefix("fluent-lsp-selector-combinations-")
+        .suffix(&format!("-{}.md", sanitize_document_segment(key)))
+        .tempfile()
+        .ok()?;
+
+    use std::io::Write;
+    file.write_all(contents.as_bytes()).ok()?;
+    let temp_path = file.into_temp_path();
+    let path = temp_path.keep().ok()?;
+    Url::from_file_path(path).ok()
+}
+
 fn strip_inline_comment<'a>(
     entry: Entry<&'a str>,
     comment_entries: &mut Vec<Entry<&'a str>>,
@@ -891,6 +965,22 @@ fn code_lens_title(total_count: usize) -> String {
     match total_count {
         1 => "Show 1 selector combination".to_string(),
         count => format!("Show all {count} selector combinations"),
+    }
+}
+
+fn sanitize_document_segment(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
+            _ => '_',
+        })
+        .collect();
+
+    if sanitized.is_empty() {
+        "entry".to_string()
+    } else {
+        sanitized
     }
 }
 

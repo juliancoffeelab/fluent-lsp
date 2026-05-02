@@ -10,7 +10,7 @@ Current behavior:
 - Resolves `textDocument/hover` on translated Fluent entries by showing the matching origin entry with comments rendered separately from the Fluent block for subtle syntax distinction.
 - Resolves `textDocument/hover` on origin-language Fluent entries with the same metadata and selector expansion shown on translated hovers.
 - Optionally appends static selector combinations to hover when `hover_selector_combinations = true`, capped by `hover_selector_combinations_limit`.
-- Publishes standard-LSP CodeLens entries for Fluent values with selector expansions, and uses `workspace/executeCommand` plus `window/showMessage` to display the full combination list on demand.
+- Publishes standard-LSP CodeLens entries for Fluent values with selector expansions, and uses `workspace/executeCommand` plus `window/showDocument` to open a temp Markdown document with the full combination list on demand.
 - Resolves `textDocument/references` from an origin-language `.ftl` file into matching entries across translated Fluent files with the same relative locale-tree path.
 
 Config shape:

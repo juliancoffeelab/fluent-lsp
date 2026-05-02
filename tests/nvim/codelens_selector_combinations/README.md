@@ -2,15 +2,15 @@
 
 ## Feature
 
-CodeLens-triggered full selector combination display
+CodeLens-triggered full selector combination document
 
 ## Exercise
 
-Enables Neovim CodeLens, waits for the local lens on install-hint, runs it, and asserts that the resulting showMessage contains the full selector expansion set.
+Enables Neovim CodeLens, waits for the local lens on `install-hint`, runs it, and asserts that Neovim opens the temp selector-combinations Markdown document with the full expansion set.
 
 ## Assumptions
 
-Neovim CodeLens is enabled for the buffer and window/showMessage can be intercepted in the smoke script.
+Neovim supports standard LSP `window/showDocument` and focuses the opened temp document in the current window.
 
 ## Source Under Test
 
