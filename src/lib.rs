@@ -12,11 +12,12 @@ use serde::Deserialize;
 use serde_json::Value;
 use tempfile::Builder as TempFileBuilder;
 use tokio::sync::RwLock;
-use tower_lsp::jsonrpc::Result as LspResult;
+use tower_lsp::jsonrpc::{Error as LspError, Result as LspResult};
 use tower_lsp::lsp_types::{
     CodeLens, CodeLensOptions, CodeLensParams, Command, DidChangeTextDocumentParams,
     DidOpenTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, InitializeParams, InitializeResult,
+    InlayHint, InlayHintLabel, InlayHintOptions, InlayHintParams, InlayHintServerCapabilities,
     Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, Range, ReferenceParams,
     ServerCapabilities, ShowDocumentParams, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
 };
@@ -275,9 +276,15 @@ fn collect_files_under(root: &Path, files: &mut Vec<PathBuf>) {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HoverEntryRender {
+struct SourceRender {
     comments: Option<String>,
-    entry: String,
+    source: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct DefaultPreview {
+    selectors: Vec<(String, String)>,
+    text: String,
 }
 
 #[derive(Default)]
@@ -308,6 +315,32 @@ impl Backend {
 
         let path = uri.to_file_path().ok()?;
         tokio::fs::read_to_string(path).await.ok()
+    }
+
+    async fn read_document_text_required(&self, uri: &Url) -> LspResult<String> {
+        if let Some(text) = self.state.read().await.open_documents.get(uri).cloned() {
+            return Ok(text);
+        }
+
+        let path = uri
+            .to_file_path()
+            .map_err(|()| LspError::invalid_params("expected a file URI"))?;
+        tokio::fs::read_to_string(&path).await.map_err(|error| {
+            internal_error_with_message(format!("failed to read {}: {error}", path.display()))
+        })
+    }
+
+    async fn respond_to_clicked_command_with_error<M>(
+        &self,
+        error: LspError,
+        message_type: MessageType,
+        message: M,
+    ) -> LspResult<Option<Value>>
+    where
+        M: Into<String>,
+    {
+        self.client.show_message(message_type, message.into()).await;
+        Err(error)
     }
 
     async fn definition_for(&self, params: GotoDefinitionParams) -> Option<Location> {
@@ -394,82 +427,115 @@ impl Backend {
         Some(references)
     }
 
-    async fn hover_for(&self, params: HoverParams) -> Option<Hover> {
+    async fn hover_for(&self, params: HoverParams) -> LspResult<Option<Hover>> {
         let state = self.state.read().await;
-        let workspace = state.workspace.clone()?;
+        let Some(workspace) = state.workspace.clone() else {
+            return Ok(None);
+        };
         let uri = params.text_document_position_params.text_document.uri;
-        let path = uri.to_file_path().ok()?;
-        workspace.file_match(&path)?;
+        let path = uri
+            .to_file_path()
+            .map_err(|()| LspError::invalid_params("expected a file URI"))?;
+        if workspace.file_match(&path).is_none() {
+            return Ok(None);
+        }
 
         let source = state
             .open_documents
             .get(&uri)
             .cloned()
-            .or_else(|| std::fs::read_to_string(&path).ok())?;
+            .or_else(|| std::fs::read_to_string(&path).ok())
+            .ok_or_else(|| {
+                internal_error_with_message(format!("failed to read {}", path.display()))
+            })?;
         drop(state);
 
-        let key = extract_definition_key(
+        let Some(key) = extract_definition_key(
             &source,
             &path,
             params.text_document_position_params.position,
-        )?;
-        let origin_path = workspace.origin_file_for(&path)?;
-        let origin_uri = Url::from_file_path(&origin_path).ok()?;
+        ) else {
+            return Ok(None);
+        };
+        let origin_path = workspace.origin_file_for(&path).ok_or_else(|| {
+            internal_error_with_message(format!(
+                "failed to resolve origin counterpart for {}",
+                path.display()
+            ))
+        })?;
+        let origin_uri = Url::from_file_path(&origin_path).map_err(|()| {
+            internal_error_with_message(format!(
+                "failed to convert origin path to URI: {}",
+                origin_path.display()
+            ))
+        })?;
+        let source_render = if workspace.is_origin_file(&path) {
+            None
+        } else {
+            render_fluent_source(&source, &key)
+        };
         let origin_source = if workspace.is_origin_file(&path) {
             source.clone()
         } else {
-            self.read_document_text(&origin_uri).await?
+            self.read_document_text_required(&origin_uri).await?
         };
-        let origin_entry = render_fluent_hover_entry(&origin_source, &key)?;
-        let hover_range = find_fluent_definition(&source, &key)?;
-        let hover_suffix = if workspace.hover_selector_combinations() {
-            render_selector_combinations_section(
-                &origin_source,
-                &key,
-                workspace.hover_selector_combinations_limit(),
-            )
-        } else {
-            None
+        let Some(origin_render) = render_fluent_source(&origin_source, &key) else {
+            return Ok(None);
         };
-        let hover_value = render_hover_markdown(&origin_entry, hover_suffix.as_deref());
+        let Some(hover_range) = find_fluent_definition(&source, &key) else {
+            return Ok(None);
+        };
+        let hover_value = render_hover_markdown(
+            origin_render.comments.as_deref(),
+            source_render
+                .as_ref()
+                .and_then(|render| render.comments.as_deref()),
+        );
+        let Some(hover_value) = hover_value else {
+            return Ok(None);
+        };
 
-        Some(Hover {
+        Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: hover_value,
             }),
             range: Some(hover_range),
-        })
+        }))
     }
 
-    async fn code_lenses_for(&self, params: CodeLensParams) -> Option<Vec<CodeLens>> {
+    async fn code_lenses_for(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
         let state = self.state.read().await;
-        let workspace = state.workspace.clone()?;
+        let Some(workspace) = state.workspace.clone() else {
+            return Ok(None);
+        };
         let uri = params.text_document.uri;
-        let path = uri.to_file_path().ok()?;
-        workspace.file_match(&path)?;
+        let path = uri
+            .to_file_path()
+            .map_err(|()| LspError::invalid_params("expected a file URI"))?;
+        if workspace.file_match(&path).is_none() {
+            return Ok(None);
+        }
 
         let source = state
             .open_documents
             .get(&uri)
             .cloned()
-            .or_else(|| std::fs::read_to_string(&path).ok())?;
+            .or_else(|| std::fs::read_to_string(&path).ok())
+            .ok_or_else(|| {
+                internal_error_with_message(format!("failed to read {}", path.display()))
+            })?;
         drop(state);
-
-        let origin_path = workspace.origin_file_for(&path)?;
-        let origin_uri = Url::from_file_path(&origin_path).ok()?;
-        let origin_source = if workspace.is_origin_file(&path) {
-            source.clone()
-        } else {
-            self.read_document_text(&origin_uri).await?
-        };
+        if !workspace.hover_selector_combinations() {
+            return Ok(None);
+        }
 
         let mut lenses = Vec::new();
         for key in collect_fluent_keys(&source) {
             let Some(range) = find_fluent_definition(&source, &key) else {
                 continue;
             };
-            let Some(expansion) = selector_expansion_for(&origin_source, &key, 1) else {
+            let Some(expansion) = selector_expansion_for(&source, &key, 1) else {
                 continue;
             };
             if expansion.items.is_empty()
@@ -477,7 +543,7 @@ impl Backend {
             {
                 continue;
             }
-            let Some(total_count) = selector_total_count_for(&origin_source, &key) else {
+            let Some(total_count) = selector_total_count_for(&source, &key) else {
                 continue;
             };
 
@@ -492,7 +558,82 @@ impl Backend {
             });
         }
 
-        Some(lenses)
+        if lenses.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(lenses))
+        }
+    }
+
+    async fn inlay_hints_for(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
+        let state = self.state.read().await;
+        let Some(workspace) = state.workspace.clone() else {
+            return Ok(None);
+        };
+        let uri = params.text_document.uri;
+        let path = uri
+            .to_file_path()
+            .map_err(|()| LspError::invalid_params("expected a file URI"))?;
+        if workspace.file_match(&path).is_none() {
+            return Ok(None);
+        }
+
+        let source = state
+            .open_documents
+            .get(&uri)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(&path).ok())
+            .ok_or_else(|| {
+                internal_error_with_message(format!("failed to read {}", path.display()))
+            })?;
+        drop(state);
+
+        let origin_source = if workspace.is_origin_file(&path) {
+            source.clone()
+        } else {
+            let origin_path = workspace.origin_file_for(&path).ok_or_else(|| {
+                internal_error_with_message(format!(
+                    "failed to resolve origin counterpart for {}",
+                    path.display()
+                ))
+            })?;
+            let origin_uri = Url::from_file_path(&origin_path).map_err(|()| {
+                internal_error_with_message(format!(
+                    "failed to convert origin path to URI: {}",
+                    origin_path.display()
+                ))
+            })?;
+            self.read_document_text_required(&origin_uri).await?
+        };
+
+        let mut hints = Vec::new();
+        for key in collect_fluent_keys(&source) {
+            let Some(position) = find_fluent_hint_position(&source, &key) else {
+                continue;
+            };
+            if !range_contains_position(&params.range, position) {
+                continue;
+            }
+            let Some(label) = render_source_inlay_hint_label(&origin_source, &key) else {
+                continue;
+            };
+            hints.push(InlayHint {
+                position,
+                label: InlayHintLabel::String(label),
+                kind: None,
+                text_edits: None,
+                tooltip: None,
+                padding_left: Some(true),
+                padding_right: None,
+                data: None,
+            });
+        }
+
+        if hints.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(hints))
+        }
     }
 
     async fn execute_selector_combinations_command(
@@ -500,36 +641,105 @@ impl Backend {
         params: ExecuteCommandParams,
     ) -> LspResult<Option<Value>> {
         if params.command != SHOW_SELECTOR_COMBINATIONS_COMMAND {
-            return Ok(None);
+            return self
+                .respond_to_clicked_command_with_error(
+                    LspError::invalid_params(format!("unknown command: {}", params.command)),
+                    MessageType::ERROR,
+                    format!("Unknown command: {}", params.command),
+                )
+                .await;
         }
 
         let mut arguments = params.arguments.into_iter();
         let Some(uri_value) = arguments.next() else {
-            return Ok(None);
+            return self
+                .respond_to_clicked_command_with_error(
+                    LspError::invalid_params("missing document URI argument"),
+                    MessageType::ERROR,
+                    "Missing document URI for selector combinations command",
+                )
+                .await;
         };
         let Some(key_value) = arguments.next() else {
-            return Ok(None);
+            return self
+                .respond_to_clicked_command_with_error(
+                    LspError::invalid_params("missing Fluent key argument"),
+                    MessageType::ERROR,
+                    "Missing Fluent key for selector combinations command",
+                )
+                .await;
         };
 
         let Ok(uri) = serde_json::from_value::<String>(uri_value) else {
-            return Ok(None);
+            return self
+                .respond_to_clicked_command_with_error(
+                    LspError::invalid_params("document URI argument must be a string"),
+                    MessageType::ERROR,
+                    "Selector combinations command received an invalid document URI",
+                )
+                .await;
         };
         let Ok(key) = serde_json::from_value::<String>(key_value) else {
-            return Ok(None);
+            return self
+                .respond_to_clicked_command_with_error(
+                    LspError::invalid_params("Fluent key argument must be a string"),
+                    MessageType::ERROR,
+                    "Selector combinations command received an invalid Fluent key",
+                )
+                .await;
         };
         let Ok(uri) = Url::parse(&uri) else {
-            return Ok(None);
+            return self
+                .respond_to_clicked_command_with_error(
+                    LspError::invalid_params("document URI argument must be a valid URI"),
+                    MessageType::ERROR,
+                    "Selector combinations command received an invalid document URI",
+                )
+                .await;
         };
         let Some(path) = uri.to_file_path().ok() else {
-            return Ok(None);
+            return self
+                .respond_to_clicked_command_with_error(
+                    LspError::invalid_params("document URI must point to a file"),
+                    MessageType::ERROR,
+                    "Selector combinations command expected a file-backed document",
+                )
+                .await;
         };
 
         let state = self.state.read().await;
         let Some(workspace) = state.workspace.clone() else {
-            return Ok(None);
+            return self
+                .respond_to_clicked_command_with_error(
+                    internal_error_with_message("no fluent-lsp workspace is loaded"),
+                    MessageType::ERROR,
+                    "fluent-lsp is not configured for this workspace",
+                )
+                .await;
         };
         let supports_show_document = state.supports_show_document;
         if workspace.file_match(&path).is_none() {
+            return self
+                .respond_to_clicked_command_with_error(
+                    LspError::invalid_params(format!(
+                        "selector combinations are unavailable for {}",
+                        path.display()
+                    )),
+                    MessageType::ERROR,
+                    format!(
+                        "Selector combinations are unavailable for {}",
+                        path.display()
+                    ),
+                )
+                .await;
+        }
+        if !workspace.hover_selector_combinations() {
+            self.client
+                .show_message(
+                    MessageType::WARNING,
+                    "Selector combinations are disabled in fluent-lsp.toml",
+                )
+                .await;
             return Ok(None);
         }
         let source = state
@@ -539,55 +749,79 @@ impl Backend {
             .or_else(|| std::fs::read_to_string(&path).ok());
         drop(state);
         let Some(source) = source else {
-            return Ok(None);
+            return self
+                .respond_to_clicked_command_with_error(
+                    internal_error_with_message(format!("failed to read {}", path.display())),
+                    MessageType::ERROR,
+                    format!("Failed to read {}", path.display()),
+                )
+                .await;
         };
 
-        let Some(origin_path) = workspace.origin_file_for(&path) else {
-            return Ok(None);
-        };
-        let Some(origin_uri) = Url::from_file_path(&origin_path).ok() else {
-            return Ok(None);
-        };
-        let origin_source = if workspace.is_origin_file(&path) {
-            source
-        } else if let Some(origin_source) = self.read_document_text(&origin_uri).await {
-            origin_source
+        let max_items = if supports_show_document {
+            usize::MAX
         } else {
-            return Ok(None);
+            workspace.hover_selector_combinations_limit()
         };
-
-        let Some(section) = render_selector_combinations_section(&origin_source, &key, usize::MAX)
-        else {
+        let Some(section) = render_selector_combinations_section(&source, &key, max_items) else {
+            self.client
+                .show_message(
+                    MessageType::INFO,
+                    format!("No selector combinations available for `{key}`"),
+                )
+                .await;
             return Ok(None);
         };
 
         if supports_show_document {
             let Some(file_match) = workspace.file_match(&path) else {
-                return Ok(None);
+                return self
+                    .respond_to_clicked_command_with_error(
+                        internal_error_with_message(format!(
+                            "failed to resolve file metadata for {}",
+                            path.display()
+                        )),
+                        MessageType::ERROR,
+                        format!("Failed to resolve file metadata for {}", path.display()),
+                    )
+                    .await;
             };
-            let hover_entry = render_fluent_hover_entry(&origin_source, &key);
+            let source_render = render_fluent_source(&source, &key);
             let document_text = render_selector_combinations_document(
                 &key,
-                &workspace,
                 &file_match,
-                hover_entry.as_ref(),
+                source_render.as_ref(),
                 &section,
             );
 
-            if let Some(document_uri) =
-                write_selector_combinations_temp_document(&key, &document_text)
-            {
-                let _ = self
-                    .client
-                    .show_document(ShowDocumentParams {
-                        uri: document_uri,
-                        external: Some(false),
-                        take_focus: Some(true),
-                        selection: Some(Range::new(Position::new(0, 0), Position::new(0, 0))),
-                    })
-                    .await;
+            let document_uri = write_selector_combinations_temp_document(&key, &document_text)
+                .map_err(|message| internal_error_with_message(message.clone()))?;
+            let opened = self
+                .client
+                .show_document(ShowDocumentParams {
+                    uri: document_uri,
+                    external: Some(false),
+                    take_focus: Some(true),
+                    selection: Some(Range::new(Position::new(0, 0), Position::new(0, 0))),
+                })
+                .await
+                .map_err(|error| {
+                    internal_error_with_message(format!(
+                        "failed to open selector combinations document: {error}"
+                    ))
+                })?;
+            if opened {
                 return Ok(None);
             }
+            return self
+                .respond_to_clicked_command_with_error(
+                    internal_error_with_message(
+                        "client declined to show the selector combinations document",
+                    ),
+                    MessageType::ERROR,
+                    "The editor refused to open the selector combinations document",
+                )
+                .await;
         }
 
         self.client
@@ -642,6 +876,12 @@ impl LanguageServer for Backend {
                     work_done_progress_options: Default::default(),
                 }),
                 hover_provider: Some(tower_lsp::lsp_types::HoverProviderCapability::Simple(true)),
+                inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
+                    InlayHintOptions {
+                        resolve_provider: Some(false),
+                        work_done_progress_options: Default::default(),
+                    },
+                ))),
                 references_provider: Some(OneOf::Left(true)),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
@@ -720,11 +960,15 @@ impl LanguageServer for Backend {
     }
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
-        Ok(self.hover_for(params).await)
+        self.hover_for(params).await
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
+        self.inlay_hints_for(params).await
     }
 
     async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
-        Ok(self.code_lenses_for(params).await)
+        self.code_lenses_for(params).await
     }
 
     async fn execute_command(&self, params: ExecuteCommandParams) -> LspResult<Option<Value>> {
@@ -786,7 +1030,7 @@ pub fn render_fluent_entry(source: &str, key: &str) -> Option<String> {
     Some(rendered)
 }
 
-fn render_fluent_hover_entry(source: &str, key: &str) -> Option<HoverEntryRender> {
+fn render_fluent_source(source: &str, key: &str) -> Option<SourceRender> {
     let resource = parse_fluent_resource(source);
     let entry_index = find_fluent_entry_index(&resource, key)?;
     let mut comment_entries = Vec::new();
@@ -806,57 +1050,204 @@ fn render_fluent_hover_entry(source: &str, key: &str) -> Option<HoverEntryRender
     } else {
         Some(render_hover_comments(&comment_entries))
     };
-    let entry = serializer::serialize(&Resource { body: vec![entry] });
+    let source = render_entry_source(&entry, key)?;
 
-    Some(HoverEntryRender { comments, entry })
+    Some(SourceRender { comments, source })
 }
 
-fn render_hover_markdown(entry: &HoverEntryRender, hover_suffix: Option<&str>) -> String {
+fn render_hover_markdown(
+    source_comments: Option<&str>,
+    local_comments: Option<&str>,
+) -> Option<String> {
     let mut sections = Vec::new();
-    if let Some(comments) = &entry.comments {
-        sections.push(format!("Comments:\n```ftl\n{comments}```"));
+    if let Some(comments) = source_comments {
+        sections.push(format!("```ftl\n{comments}```"));
     }
-    sections.push(format!("Entry:\n```ftl\n{}```", entry.entry));
-    if let Some(hover_suffix) = hover_suffix {
-        sections.push(hover_suffix.to_string());
+    if let Some(comments) = local_comments {
+        if !sections.is_empty() {
+            sections.push("---".to_string());
+        }
+        sections.push(format!("```ftl\n{comments}```"));
     }
-    sections.join("\n\n")
+    if sections.is_empty() {
+        None
+    } else {
+        Some(sections.join("\n\n"))
+    }
 }
 
 fn render_selector_combinations_document(
     key: &str,
-    workspace: &WorkspaceConfig,
     file_match: &FileMatch,
-    hover_entry: Option<&HoverEntryRender>,
+    source_render: Option<&SourceRender>,
     combinations_section: &str,
 ) -> String {
     let mut sections = vec![format!("# Selector combinations for `{key}`")];
-    sections.push(format!("Origin language: `{}`", workspace.origin_language()));
+    sections.push(format!("Language: `{}`", file_match.language));
     sections.push(format!("Logical file: `{}`", file_match.filepath));
 
-    if let Some(entry) = hover_entry {
-        if let Some(comments) = &entry.comments {
-            sections.push(format!("Comments:\n```ftl\n{comments}```"));
+    if let Some(source_render) = source_render {
+        if let Some(comments) = &source_render.comments {
+            sections.push(format!("```ftl\n{comments}```"));
         }
-        sections.push(format!("Entry:\n```ftl\n{}```", entry.entry));
+        sections.push(format!("Source:\n```ftl\n{}```", source_render.source));
     }
 
     sections.push(combinations_section.to_string());
     sections.join("\n\n")
 }
 
-fn write_selector_combinations_temp_document(key: &str, contents: &str) -> Option<Url> {
+fn write_selector_combinations_temp_document(key: &str, contents: &str) -> Result<Url, String> {
     let mut file = TempFileBuilder::new()
         .prefix("fluent-lsp-selector-combinations-")
         .suffix(&format!("-{}.md", sanitize_document_segment(key)))
         .tempfile()
-        .ok()?;
+        .map_err(|error| format!("failed to create temp selector document: {error}"))?;
 
     use std::io::Write;
-    file.write_all(contents.as_bytes()).ok()?;
+    file.write_all(contents.as_bytes())
+        .map_err(|error| format!("failed to write temp selector document: {error}"))?;
     let temp_path = file.into_temp_path();
-    let path = temp_path.keep().ok()?;
-    Url::from_file_path(path).ok()
+    let path = temp_path
+        .keep()
+        .map_err(|error| format!("failed to persist temp selector document: {error}"))?;
+    Url::from_file_path(&path)
+        .map_err(|()| format!("failed to convert temp path to URI: {}", path.display()))
+}
+
+fn render_entry_source(entry: &Entry<&str>, key: &str) -> Option<String> {
+    let (_, attribute_key) = split_fluent_key(key);
+    if let Some(attribute_key) = attribute_key {
+        return render_attribute_source(attribute_key, entry);
+    }
+
+    Some(serializer::serialize(&Resource {
+        body: vec![entry.clone()],
+    }))
+}
+
+fn render_attribute_source(attribute_key: &str, entry: &Entry<&str>) -> Option<String> {
+    let attribute = match entry {
+        Entry::Message(message) => message
+            .attributes
+            .iter()
+            .find(|attribute| attribute.id.name == attribute_key)?,
+        Entry::Term(term) => term
+            .attributes
+            .iter()
+            .find(|attribute| attribute.id.name == attribute_key)?,
+        _ => return None,
+    };
+
+    let synthetic = Entry::Message(fluent_syntax::ast::Message {
+        id: fluent_syntax::ast::Identifier {
+            name: "__hover",
+            span: 0..7,
+        },
+        value: None,
+        attributes: vec![attribute.clone()],
+        comment: None,
+    });
+    let rendered = serializer::serialize(&Resource {
+        body: vec![synthetic],
+    });
+    Some(strip_attribute_container(&rendered))
+}
+
+fn strip_attribute_container(rendered: &str) -> String {
+    rendered
+        .lines()
+        .skip(1)
+        .map(|line| line.strip_prefix("    ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn render_source_inlay_hint_label(source: &str, key: &str) -> Option<String> {
+    let resource = parse_fluent_resource(source);
+    let pattern = find_fluent_pattern(&resource, key)?;
+    let preview = render_default_preview(pattern);
+    let (_, attribute_key) = split_fluent_key(key);
+    let prefix = if let Some(attribute_key) = attribute_key {
+        format!(".{attribute_key} = ")
+    } else {
+        String::new()
+    };
+
+    if preview.selectors.is_empty() {
+        Some(format!("src: {prefix}{}", preview.text))
+    } else {
+        let selectors = preview
+            .selectors
+            .iter()
+            .map(|(selector, variant)| format!("{selector}={variant}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!("src [{selectors}]: {prefix}{}", preview.text))
+    }
+}
+
+fn render_default_preview(pattern: &fluent_syntax::ast::Pattern<&str>) -> DefaultPreview {
+    let mut preview = DefaultPreview::default();
+    for element in &pattern.elements {
+        let element_preview = render_default_pattern_element_preview(element);
+        preview.selectors.extend(element_preview.selectors);
+        preview.text.push_str(&element_preview.text);
+    }
+    preview
+}
+
+fn render_default_pattern_element_preview(
+    element: &fluent_syntax::ast::PatternElement<&str>,
+) -> DefaultPreview {
+    match element {
+        fluent_syntax::ast::PatternElement::TextElement { value } => DefaultPreview {
+            selectors: Vec::new(),
+            text: (*value).to_string(),
+        },
+        fluent_syntax::ast::PatternElement::Placeable { expression } => {
+            render_default_expression_preview(expression)
+        }
+    }
+}
+
+fn render_default_expression_preview(
+    expression: &fluent_syntax::ast::Expression<&str>,
+) -> DefaultPreview {
+    match expression {
+        fluent_syntax::ast::Expression::Inline(inline) => DefaultPreview {
+            selectors: Vec::new(),
+            text: render_inline_expression(inline),
+        },
+        fluent_syntax::ast::Expression::Select { selector, variants } => {
+            let default_variant = variants
+                .iter()
+                .find(|variant| variant.default)
+                .or_else(|| variants.first());
+            let Some(default_variant) = default_variant else {
+                return DefaultPreview::default();
+            };
+
+            let mut preview = render_default_preview(&default_variant.value);
+            preview.selectors.insert(
+                0,
+                (
+                    normalize_selector_name(&render_inline_expression(selector)),
+                    if default_variant.default {
+                        "*".to_string()
+                    } else {
+                        render_variant_key(&default_variant.key)
+                    },
+                ),
+            );
+            preview
+        }
+    }
+}
+
+fn normalize_selector_name(selector: &str) -> String {
+    selector.strip_prefix('$').unwrap_or(selector).to_string()
 }
 
 fn strip_inline_comment<'a>(
@@ -1144,14 +1535,10 @@ fn find_fluent_definition_span(resource: &Resource<&str>, key: &str) -> Option<B
 
 fn find_fluent_entry<'a>(resource: &'a Resource<&'a str>, key: &str) -> Option<&'a Entry<&'a str>> {
     let (entry_key, attribute_key) = split_fluent_key(key);
-
-    for entry in &resource.body {
-        if entry_matches_key(entry, entry_key, attribute_key) {
-            return Some(entry);
-        }
-    }
-
-    None
+    resource
+        .body
+        .iter()
+        .find(|entry| entry_matches_key(entry, entry_key, attribute_key))
 }
 
 fn find_fluent_entry_index(resource: &Resource<&str>, key: &str) -> Option<usize> {
@@ -1439,6 +1826,31 @@ fn byte_range_contains(span: &ByteRange<usize>, target: usize) -> bool {
     span.start <= target && target < span.end
 }
 
+fn range_contains_position(range: &Range, position: Position) -> bool {
+    (range.start.line < position.line
+        || (range.start.line == position.line && range.start.character <= position.character))
+        && (position.line < range.end.line
+            || (position.line == range.end.line && position.character <= range.end.character))
+}
+
+fn internal_error_with_message<M>(message: M) -> LspError
+where
+    M: Into<std::borrow::Cow<'static, str>>,
+{
+    let mut error = LspError::internal_error();
+    error.message = message.into();
+    error
+}
+
+fn find_fluent_hint_position(source: &str, key: &str) -> Option<Position> {
+    let key_range = find_fluent_definition(source, key)?;
+    let (line, _) = line_at(source, key_range.start.line as usize)?;
+    Some(Position::new(
+        key_range.start.line,
+        line.encode_utf16().count() as u32,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1566,51 +1978,62 @@ mod tests {
 
     #[test]
     fn renders_selector_combinations_section() {
-        let source = "install-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + { $action ->\n        [copy] C\n       *[paste] V\n    }\n";
+        let source = "install-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + C { $tone ->\n        [calm] to copy the download link.\n       *[direct] to copy the download link now.\n    }\n";
 
         let rendered = render_selector_combinations_section(source, "install-hint", 3).unwrap();
         assert_eq!(
             rendered,
-            "Static combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `...`: 1 more"
+            "Static combinations:\n- `$platform=macos`, `$tone=calm`: `Press Command + C to copy the download link.`\n- `$platform=macos`, `$tone=direct`: `Press Command + C to copy the download link now.`\n- `$platform=other`, `$tone=calm`: `Press Ctrl + C to copy the download link.`\n- `...`: 1 more"
         );
     }
 
     #[test]
     fn counts_selector_combinations_without_truncation() {
-        let source = "install-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + { $action ->\n        [copy] C\n       *[paste] V\n    }\n";
+        let source = "install-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + C { $tone ->\n        [calm] to copy the download link.\n       *[direct] to copy the download link now.\n    }\n";
 
         let count = selector_total_count_for(source, "install-hint").unwrap();
         assert_eq!(count, 4);
     }
 
     #[test]
-    fn renders_hover_markdown_with_actual_comment_markers() {
-        let entry = HoverEntryRender {
-            comments: Some("### Shared menu copy\n## File menu\n# Primary action\n".to_string()),
-            entry: "menu-save = Save\n".to_string(),
-        };
+    fn renders_hover_markdown_with_source_first_and_local_last_comments() {
         let rendered = render_hover_markdown(
-            &entry,
-            Some("Static combinations:\n- `$kind=default`: `Save`"),
-        );
+            Some("### Shared menu copy\n## File menu\n# Primary action\n"),
+            Some("# Nota local para traduccion\n"),
+        )
+        .unwrap();
         assert_eq!(
             rendered,
-            "Comments:\n```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```\n\nEntry:\n```ftl\nmenu-save = Save\n```\n\nStatic combinations:\n- `$kind=default`: `Save`"
+            "```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```\n\n---\n\n```ftl\n# Nota local para traduccion\n```"
         );
     }
 
     #[test]
-    fn renders_hover_entry_with_free_and_inline_comments() {
-        let source = "### Shared menu copy\n## File menu\n# Primary action\nmenu-save = Save\n";
-        let rendered = render_fluent_hover_entry(source, "menu-save").unwrap();
+    fn renders_fluent_source_with_free_and_inline_comments() {
+        let source = "### Shared menu copy\n## File menu\n# Primary action\nmenu-save =\n    .label = Save\n";
+        let rendered = render_fluent_source(source, "menu-save.label").unwrap();
         assert_eq!(
             rendered,
-            HoverEntryRender {
+            SourceRender {
                 comments: Some(
                     "### Shared menu copy\n## File menu\n# Primary action\n".to_string()
                 ),
-                entry: "menu-save = Save\n".to_string(),
+                source: ".label = Save\n".to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn renders_source_inlay_hint_label_for_message_and_attribute_selectors() {
+        let source = "install-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + C { $tone ->\n        [calm] to copy the download link.\n       *[direct] to copy the download link now.\n    }\n\ndownload-action =\n    .tooltip =\n        { $platform ->\n            [macos] Install the signed macOS build\n           *[other] Install the latest desktop build\n        } { $tone ->\n            [calm] when you are ready.\n           *[direct] now.\n        }\n";
+
+        assert_eq!(
+            render_source_inlay_hint_label(source, "install-hint").unwrap(),
+            "src [platform=*, tone=*]: Press Ctrl + C to copy the download link now."
+        );
+        assert_eq!(
+            render_source_inlay_hint_label(source, "download-action.tooltip").unwrap(),
+            "src [platform=*, tone=*]: .tooltip = Install the latest desktop build now."
         );
     }
 

@@ -98,6 +98,10 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
         Value::Bool(true)
     );
     assert_eq!(
+        initialize["result"]["capabilities"]["inlayHintProvider"]["resolveProvider"],
+        Value::Bool(false)
+    );
+    assert_eq!(
         initialize["result"]["capabilities"]["codeLensProvider"]["resolveProvider"],
         Value::Bool(false)
     );
@@ -146,9 +150,9 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
         &mut lsp,
         3,
         &source_path,
-        position_of(&source_text, "brand-name"),
+        position_of(&source_text, "brand-name ="),
         &root.join("locales/en/app.ftl"),
-        5,
+        8,
         1,
     );
 
@@ -156,9 +160,9 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
         &mut lsp,
         4,
         &source_path,
-        position_of(&source_text, "label ="),
+        position_of(&source_text, "label = Lanzar"),
         &root.join("locales/en/app.ftl"),
-        10,
+        13,
         5,
     );
 
@@ -183,10 +187,10 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
         &mut lsp,
         5,
         &nested_path,
-        position_of(&nested_text, "menu-save"),
+        position_of(&nested_text, "label = Guardar"),
         &root.join("locales/en/dialogs/menu.ftl"),
-        3,
-        0,
+        4,
+        5,
     );
 }
 
@@ -279,7 +283,7 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
         &source_path,
         position_of(&source_text, "welcome-title"),
         &[
-            ReferenceExpectation::new("locales/es/app.ftl", 0, 0),
+            ReferenceExpectation::new("locales/es/app.ftl", 1, 0),
             ReferenceExpectation::new("locales/fr/app.ftl", 0, 0),
         ],
     );
@@ -288,10 +292,10 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
         &mut lsp,
         12,
         &source_path,
-        position_of(&source_text, "brand-name"),
+        position_of(&source_text, "brand-name ="),
         &[
-            ReferenceExpectation::new("locales/es/app.ftl", 1, 1),
-            ReferenceExpectation::new("locales/fr/app.ftl", 1, 1),
+            ReferenceExpectation::new("locales/es/app.ftl", 3, 1),
+            ReferenceExpectation::new("locales/fr/app.ftl", 2, 1),
         ],
     );
 
@@ -299,10 +303,10 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
         &mut lsp,
         13,
         &source_path,
-        position_of(&source_text, "label ="),
+        position_of(&source_text, "label = Launch"),
         &[
-            ReferenceExpectation::new("locales/es/app.ftl", 3, 5),
-            ReferenceExpectation::new("locales/fr/app.ftl", 3, 5),
+            ReferenceExpectation::new("locales/es/app.ftl", 5, 5),
+            ReferenceExpectation::new("locales/fr/app.ftl", 4, 5),
         ],
     );
 
@@ -327,16 +331,16 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
         &mut lsp,
         14,
         &nested_path,
-        position_of(&nested_text, "menu-save"),
+        position_of(&nested_text, "label = Save"),
         &[
-            ReferenceExpectation::new("locales/es/dialogs/menu.ftl", 0, 0),
-            ReferenceExpectation::new("locales/fr/dialogs/menu.ftl", 0, 0),
+            ReferenceExpectation::new("locales/es/dialogs/menu.ftl", 1, 5),
+            ReferenceExpectation::new("locales/fr/dialogs/menu.ftl", 1, 5),
         ],
     );
 }
 
 #[test]
-fn hover_from_translation_shows_origin_entry_and_comments() {
+fn hover_from_translation_shows_source_and_local_comments_only() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
     let source_uri = format!("file://{}", source_path.display());
@@ -388,8 +392,8 @@ fn hover_from_translation_shows_origin_entry_and_comments() {
         21,
         &source_path,
         position_of(&source_text, "welcome-title"),
-        "Comments:\n```ftl\n# Shown on the welcome screen\n```\n\nEntry:\n```ftl\nwelcome-title = Welcome\n```",
-        0,
+        "```ftl\n# Shown on the welcome screen\n```\n\n---\n\n```ftl\n# Texto que ve la persona usuaria al entrar\n```",
+        1,
         0,
     );
 
@@ -397,25 +401,15 @@ fn hover_from_translation_shows_origin_entry_and_comments() {
         &mut lsp,
         22,
         &source_path,
-        position_of(&source_text, "label ="),
-        "Comments:\n```ftl\n# CTA copy\n# Keep it short\n```\n\nEntry:\n```ftl\nbutton-copy =\n    .label = Launch\n```",
-        3,
+        position_of(&source_text, "tooltip =\n        { $platform ->"),
+        "```ftl\n# Primary install action in the downloads panel\n```\n\n---\n\n```ftl\n# Accion principal en la pantalla de descargas\n```",
+        20,
         5,
-    );
-
-    assert_hover(
-        &mut lsp,
-        23,
-        &source_path,
-        position_of(&source_text, "install-hint"),
-        "Comments:\n```ftl\n# Shortcut combinations\n```\n\nEntry:\n```ftl\ninstall-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + { $action ->\n        [copy] C\n       *[paste] V\n    }\n```\n\nStatic combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `...`: 1 more",
-        4,
-        0,
     );
 }
 
 #[test]
-fn hover_from_origin_file_shows_origin_entry_and_metadata() {
+fn hover_from_origin_file_shows_origin_comments_only() {
     let root = fixture_root();
     let source_path = root.join("locales/en/dialogs/menu.ftl");
     let source_uri = format!("file://{}", source_path.display());
@@ -462,11 +456,172 @@ fn hover_from_origin_file_shows_origin_entry_and_metadata() {
         &mut lsp,
         31,
         &source_path,
-        position_of(&source_text, "menu-save"),
-        "Comments:\n```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```\n\nEntry:\n```ftl\nmenu-save = Save\n```",
-        3,
-        0,
+        position_of(&source_text, "label = Save"),
+        "```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```",
+        4,
+        5,
     );
+}
+
+#[test]
+fn inlay_hints_show_source_previews_for_messages_and_attributes() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_uri = format!("file://{}", source_path.display());
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_path = root.join("locales/en/app.ftl");
+    let origin_uri = format!("file://{}", origin_path.display());
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 35,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {}
+        }
+    }));
+
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], 35);
+    assert_eq!(
+        initialize["result"]["capabilities"]["inlayHintProvider"]["resolveProvider"],
+        Value::Bool(false)
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": source_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": source_text
+            }
+        }
+    }));
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": origin_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": origin_text
+            }
+        }
+    }));
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 36,
+        "method": "textDocument/inlayHint",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 40, "character": 0 }
+            }
+        }
+    }));
+
+    let hints = lsp.recv();
+    assert_eq!(hints["id"], 36);
+    let items = hints["result"]
+        .as_array()
+        .expect("expected inlay hint array");
+    assert!(items.iter().any(|item| {
+        item["label"] == Value::String("src: Welcome".to_string())
+            && item["position"]["line"].as_u64() == Some(1)
+            && item["position"]["character"].as_u64() == Some(26)
+    }));
+    assert!(items.iter().any(|item| {
+        item["label"] == Value::String("src: .label = Launch".to_string())
+            && item["position"]["line"].as_u64() == Some(5)
+            && item["position"]["character"].as_u64() == Some(19)
+    }));
+    assert!(items.iter().any(|item| {
+        item["label"]
+            == Value::String(
+                "src [platform=*, tone=*]: Press Ctrl + C to copy the download link now."
+                    .to_string(),
+            )
+            && item["position"]["line"].as_u64() == Some(8)
+            && item["position"]["character"].as_u64() == Some(14)
+    }));
+    assert!(items.iter().any(|item| {
+        item["label"]
+            == Value::String(
+                "src [platform=*, tone=*]: .tooltip = Install the latest desktop build now."
+                    .to_string(),
+            )
+            && item["position"]["line"].as_u64() == Some(20)
+            && item["position"]["character"].as_u64() == Some(14)
+    }));
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 37,
+        "method": "textDocument/inlayHint",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": 8, "character": 14 },
+                "end": { "line": 8, "character": 15 }
+            }
+        }
+    }));
+
+    let filtered_hints = lsp.recv();
+    assert_eq!(filtered_hints["id"], 37);
+    let filtered_items = filtered_hints["result"]
+        .as_array()
+        .expect("expected filtered inlay hint array");
+    assert_eq!(filtered_items.len(), 1);
+    assert_eq!(
+        filtered_items[0]["label"],
+        Value::String(
+            "src [platform=*, tone=*]: Press Ctrl + C to copy the download link now.".to_string(),
+        )
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 38,
+        "method": "textDocument/inlayHint",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 40, "character": 0 }
+            }
+        }
+    }));
+
+    let origin_hints = lsp.recv();
+    assert_eq!(origin_hints["id"], 38);
+    let origin_items = origin_hints["result"]
+        .as_array()
+        .expect("expected origin inlay hint array");
+    assert!(origin_items.iter().any(|item| {
+        item["label"] == Value::String("src: Welcome".to_string())
+            && item["position"]["line"].as_u64() == Some(1)
+            && item["position"]["character"].as_u64() == Some(23)
+    }));
 }
 
 #[test]
@@ -541,19 +696,25 @@ fn code_lens_opens_full_selector_combinations_document() {
     let items = lenses["result"]
         .as_array()
         .expect("expected code lens array");
-    assert_eq!(items.len(), 1);
+    assert!(items.len() >= 3);
+    let install_hint_lens = items
+        .iter()
+        .find(|item| item["range"]["start"]["line"].as_u64() == Some(8))
+        .expect("missing install-hint codelens");
     assert_eq!(
-        items[0]["command"]["title"],
+        install_hint_lens["command"]["title"],
         Value::String("Show all 4 selector combinations".to_string())
     );
     assert_eq!(
-        items[0]["command"]["command"],
+        install_hint_lens["command"]["command"],
         Value::String("fluent-lsp.showSelectorCombinations".to_string())
     );
-    assert_eq!(items[0]["range"]["start"]["line"], Value::from(4));
-    assert_eq!(items[0]["range"]["start"]["character"], Value::from(0));
+    assert_eq!(
+        install_hint_lens["range"]["start"]["character"],
+        Value::from(0)
+    );
 
-    let command = items[0]["command"].clone();
+    let command = install_hint_lens["command"].clone();
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 42,
@@ -568,8 +729,14 @@ fn code_lens_opens_full_selector_combinations_document() {
     assert_eq!(request["method"], "window/showDocument");
     assert_eq!(request["params"]["external"], Value::Bool(false));
     assert_eq!(request["params"]["takeFocus"], Value::Bool(true));
-    assert_eq!(request["params"]["selection"]["start"]["line"], Value::from(0));
-    assert_eq!(request["params"]["selection"]["start"]["character"], Value::from(0));
+    assert_eq!(
+        request["params"]["selection"]["start"]["line"],
+        Value::from(0)
+    );
+    assert_eq!(
+        request["params"]["selection"]["start"]["character"],
+        Value::from(0)
+    );
 
     let document_uri = request["params"]["uri"]
         .as_str()
@@ -585,7 +752,7 @@ fn code_lens_opens_full_selector_combinations_document() {
     let document_text = std::fs::read_to_string(document_path).expect("read temp document");
     assert_eq!(
         document_text,
-        "# Selector combinations for `install-hint`\n\nOrigin language: `en`\n\nLogical file: `app`\n\nComments:\n```ftl\n# Shortcut combinations\n```\n\nEntry:\n```ftl\ninstall-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + { $action ->\n        [copy] C\n       *[paste] V\n    }\n```\n\nStatic combinations:\n- `$platform=macos`, `$action=copy`: `Press Command + C`\n- `$platform=macos`, `$action=paste`: `Press Command + V`\n- `$platform=other`, `$action=copy`: `Press Ctrl + C`\n- `$platform=other`, `$action=paste`: `Press Ctrl + V`"
+        "# Selector combinations for `install-hint`\n\nLanguage: `es`\n\nLogical file: `app`\n\nSource:\n```ftl\ninstall-hint =\n    { $platform ->\n        [macos] Presiona Command\n       *[other] Presiona Ctrl\n    } + C { $tone ->\n        [calm] para copiar el enlace de descarga.\n       *[direct] para copiar el enlace de descarga ahora.\n    }\n```\n\nStatic combinations:\n- `$platform=macos`, `$tone=calm`: `Presiona Command + C para copiar el enlace de descarga.`\n- `$platform=macos`, `$tone=direct`: `Presiona Command + C para copiar el enlace de descarga ahora.`\n- `$platform=other`, `$tone=calm`: `Presiona Ctrl + C para copiar el enlace de descarga.`\n- `$platform=other`, `$tone=direct`: `Presiona Ctrl + C para copiar el enlace de descarga ahora.`"
     );
 
     lsp.send(&json!({
@@ -598,6 +765,117 @@ fn code_lens_opens_full_selector_combinations_document() {
 
     let response = lsp.recv();
     assert_eq!(response["id"], 42);
+    assert_eq!(response["result"], Value::Null);
+}
+
+#[test]
+fn code_lens_opens_full_selector_combinations_document_for_attribute() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_uri = format!("file://{}", source_path.display());
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 50,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {
+                "window": {
+                    "showDocument": {
+                        "support": true
+                    }
+                }
+            }
+        }
+    }));
+
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], 50);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": source_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": source_text
+            }
+        }
+    }));
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 51,
+        "method": "textDocument/codeLens",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) }
+        }
+    }));
+
+    let lenses = lsp.recv();
+    assert_eq!(lenses["id"], 51);
+    let items = lenses["result"]
+        .as_array()
+        .expect("expected code lens array");
+    let attribute_lens = items
+        .iter()
+        .find(|item| item["range"]["start"]["line"].as_u64() == Some(20))
+        .expect("missing download-action.tooltip codelens");
+
+    let command = attribute_lens["command"].clone();
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 52,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": command["command"],
+            "arguments": command["arguments"]
+        }
+    }));
+
+    let request = lsp.recv();
+    assert_eq!(request["method"], "window/showDocument");
+    let document_uri = request["params"]["uri"]
+        .as_str()
+        .expect("showDocument uri must be a string");
+    assert!(
+        document_uri.ends_with("-download-action_tooltip.md"),
+        "unexpected temp document uri: {document_uri}"
+    );
+    let document_path = document_uri
+        .strip_prefix("file://")
+        .expect("expected file uri for temp document");
+    let document_text = std::fs::read_to_string(document_path).expect("read temp document");
+    assert_eq!(
+        document_text,
+        "# Selector combinations for `download-action.tooltip`\n\nLanguage: `es`\n\nLogical file: `app`\n\n```ftl\n# Accion principal en la pantalla de descargas\n```\n\nSource:\n```ftl\n.tooltip =\n    { $platform ->\n        [macos] Instala la build firmada para macOS\n       *[other] Instala la build de escritorio mas reciente\n    } { $tone ->\n        [calm] cuando te venga bien.\n       *[direct] ahora.\n    }\n```\n\nStatic combinations:\n- `$platform=macos`, `$tone=calm`: `Instala la build firmada para macOS cuando te venga bien.`\n- `$platform=macos`, `$tone=direct`: `Instala la build firmada para macOS ahora.`\n- `$platform=other`, `$tone=calm`: `Instala la build de escritorio mas reciente cuando te venga bien.`\n- `$platform=other`, `$tone=direct`: `Instala la build de escritorio mas reciente ahora.`"
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": {
+            "success": true
+        }
+    }));
+
+    let response = lsp.recv();
+    assert_eq!(response["id"], 52);
     assert_eq!(response["result"], Value::Null);
 }
 

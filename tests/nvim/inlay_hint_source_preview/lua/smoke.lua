@@ -24,6 +24,20 @@ local function range_params(start_line, start_character, end_line, end_character
   }
 end
 
+local function rendered_hints_by_label()
+  local rendered_hints = vim.lsp.inlay_hint.get({ bufnr = 0 })
+  local rendered_labels = {}
+  local rendered_positions = {}
+  for _, item in ipairs(rendered_hints) do
+    local hint = item.inlay_hint
+    if type(hint.label) == "string" then
+      table.insert(rendered_labels, hint.label)
+      rendered_positions[hint.label] = hint.position
+    end
+  end
+  return table.concat(rendered_labels, "\n"), rendered_positions
+end
+
 function M.run()
   local workspace = assert(vim.env.FLUENT_LSP_WORKSPACE ~= "" and vim.env.FLUENT_LSP_WORKSPACE)
   local server = assert(vim.env.FLUENT_LSP_BIN ~= "" and vim.env.FLUENT_LSP_BIN)
@@ -48,17 +62,7 @@ function M.run()
   end, 50)
   assert(rendered_ready, "neovim did not materialize rendered inlay hints")
 
-  local rendered_hints = vim.lsp.inlay_hint.get({ bufnr = 0 })
-  local rendered_labels = {}
-  local rendered_positions = {}
-  for _, item in ipairs(rendered_hints) do
-    local hint = item.inlay_hint
-    if type(hint.label) == "string" then
-      table.insert(rendered_labels, hint.label)
-      rendered_positions[hint.label] = hint.position
-    end
-  end
-  local rendered_joined = table.concat(rendered_labels, "\n")
+  local rendered_joined, rendered_positions = rendered_hints_by_label()
   assert(rendered_joined:match("src: Welcome"), "missing rendered plain source preview")
   assert(rendered_joined:match("src: %.label = Launch"), "missing rendered attribute source preview")
   assert(rendered_joined:match("src %[%s*platform=%*, tone=%*%s*%]: Press Ctrl %+ C to copy the download link now%."), "missing rendered selector source preview")
@@ -111,6 +115,17 @@ function M.run()
     filtered_hints[1].label == "src [platform=*, tone=*]: Press Ctrl + C to copy the download link now.",
     "filtered range returned the wrong inlay hint"
   )
+
+  vim.cmd.edit(workspace .. "/locales/en/app.ftl")
+  vim.lsp.buf_attach_client(0, client_id)
+  vim.lsp.inlay_hint.enable(true, { bufnr = 0 })
+  local origin_rendered_ready = vim.wait(5000, function()
+    return #vim.lsp.inlay_hint.get({ bufnr = 0 }) >= 4
+  end, 50)
+  assert(origin_rendered_ready, "neovim did not materialize origin-file inlay hints")
+  local origin_joined, origin_positions = rendered_hints_by_label()
+  assert(origin_joined:match("src: Welcome"), "missing origin-file source preview")
+  assert(origin_positions["src: Welcome"] and origin_positions["src: Welcome"].character == 23, "origin-file preview placed at wrong column")
 
   write_result(result_path, {
     ok = true,
