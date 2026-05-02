@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 fluent-syntax = "0.12.0"
-globset = "0.4"
+regex = "1.12"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.48", features = ["fs", "io-std", "macros", "rt-multi-thread", "sync"] }
 toml = "0.9"

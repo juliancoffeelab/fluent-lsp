@@ -7,15 +7,15 @@ use anyhow::{Context, Result};
 use fluent_syntax::ast::{Entry, Resource};
 use fluent_syntax::parser;
 use fluent_syntax::serializer;
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use regex::Regex;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result as LspResult;
 use tower_lsp::lsp_types::{
     DidChangeTextDocumentParams, DidOpenTextDocumentParams, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverContents, HoverParams, InitializeParams,
-    InitializeResult, Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, Range,
-    ReferenceParams, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams, InitializeParams, InitializeResult,
+    Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, Range, ReferenceParams,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -24,7 +24,7 @@ const DEFAULT_HOVER_SELECTOR_COMBINATIONS_LIMIT: usize = 32;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
-    pub english_file: PathBuf,
+    pub origin_language: String,
     #[serde(default)]
     pub file_masks: Vec<String>,
     #[serde(default)]
@@ -36,11 +36,23 @@ pub struct Config {
 #[derive(Debug, Clone)]
 pub struct WorkspaceConfig {
     root_dir: PathBuf,
-    english_file: PathBuf,
-    file_masks: Vec<String>,
+    origin_language: String,
+    file_masks: Vec<FileMask>,
     hover_selector_combinations: bool,
     hover_selector_combinations_limit: usize,
-    matcher: Option<GlobSet>,
+}
+
+#[derive(Debug, Clone)]
+struct FileMask {
+    raw: String,
+    matcher: Regex,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileMatch {
+    mask_index: usize,
+    language: String,
+    filepath: String,
 }
 
 impl WorkspaceConfig {
@@ -64,56 +76,116 @@ impl WorkspaceConfig {
             .with_context(|| format!("failed to read {}", config_path.display()))?;
         let config: Config = toml::from_str(&raw)
             .with_context(|| format!("failed to parse {}", config_path.display()))?;
-        let english_file = root_dir.join(&config.english_file);
+        let origin_language = config.origin_language.trim().to_string();
+        if origin_language.is_empty() {
+            anyhow::bail!("origin_language must not be empty");
+        }
 
-        let matcher = compile_globs(&config.file_masks)?;
+        let file_masks = compile_file_masks(&config.file_masks)?;
+        if file_masks.is_empty() {
+            anyhow::bail!(
+                "file_masks must include at least one template containing {{lang}} and {{filepath}}"
+            );
+        }
 
         Ok(Self {
             root_dir,
-            english_file,
-            file_masks: config.file_masks,
+            origin_language,
+            file_masks,
             hover_selector_combinations: config.hover_selector_combinations,
             hover_selector_combinations_limit: config.hover_selector_combinations_limit.max(1),
-            matcher,
         })
     }
 
-    pub fn english_file(&self) -> &Path {
-        &self.english_file
+    fn origin_language(&self) -> &str {
+        &self.origin_language
     }
 
-    pub fn is_english_file(&self, path: &Path) -> bool {
-        path == self.english_file
-    }
-
-    pub fn matches_translation_file(&self, path: &Path) -> bool {
-        if path == self.english_file || !is_fluent_file(path) {
-            return false;
+    fn file_match(&self, path: &Path) -> Option<FileMatch> {
+        if !is_fluent_file(path) {
+            return None;
         }
 
-        match &self.matcher {
-            Some(matcher) => {
-                let relative = path.strip_prefix(&self.root_dir).unwrap_or(path);
-                matcher.is_match(relative)
-            }
-            None => true,
+        let relative = self.relative_path(path)?;
+        for (mask_index, mask) in self.file_masks.iter().enumerate() {
+            let captures = match mask.matcher.captures(&relative) {
+                Some(captures) => captures,
+                None => continue,
+            };
+            let language = captures.name("lang")?.as_str().to_string();
+            let filepath = captures.name("filepath")?.as_str().to_string();
+            return Some(FileMatch {
+                mask_index,
+                language,
+                filepath,
+            });
         }
+
+        None
     }
 
-    pub fn describe_masks(&self) -> String {
+    fn is_origin_file(&self, path: &Path) -> bool {
+        self.file_match(path)
+            .map(|file_match| file_match.language == self.origin_language)
+            .unwrap_or(false)
+    }
+
+    fn matches_translation_file(&self, path: &Path) -> bool {
+        self.file_match(path)
+            .map(|file_match| file_match.language != self.origin_language)
+            .unwrap_or(false)
+    }
+
+    fn origin_file_for(&self, path: &Path) -> Option<PathBuf> {
+        let file_match = self.file_match(path)?;
+        Some(self.render_path(
+            file_match.mask_index,
+            &self.origin_language,
+            &file_match.filepath,
+        ))
+    }
+
+    fn matches_origin_counterpart(&self, path: &Path, origin_match: &FileMatch) -> bool {
+        self.file_match(path)
+            .map(|candidate| {
+                candidate.mask_index == origin_match.mask_index
+                    && candidate.filepath == origin_match.filepath
+                    && candidate.language != self.origin_language
+            })
+            .unwrap_or(false)
+    }
+
+    fn describe_masks(&self) -> String {
         if self.file_masks.is_empty() {
-            "*".to_string()
+            "<none>".to_string()
         } else {
-            self.file_masks.join(", ")
+            self.file_masks
+                .iter()
+                .map(|mask| mask.raw.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
         }
     }
 
-    pub fn hover_selector_combinations(&self) -> bool {
+    fn hover_selector_combinations(&self) -> bool {
         self.hover_selector_combinations
     }
 
-    pub fn hover_selector_combinations_limit(&self) -> usize {
+    fn hover_selector_combinations_limit(&self) -> usize {
         self.hover_selector_combinations_limit
+    }
+
+    fn render_path(&self, mask_index: usize, language: &str, filepath: &str) -> PathBuf {
+        let relative = self.file_masks[mask_index]
+            .raw
+            .replace("{lang}", language)
+            .replace("{filepath}", filepath);
+        self.root_dir.join(relative)
+    }
+
+    fn relative_path(&self, path: &Path) -> Option<String> {
+        let relative = path.strip_prefix(&self.root_dir).ok()?;
+        Some(relative.to_string_lossy().replace('\\', "/"))
     }
 }
 
@@ -121,17 +193,57 @@ fn default_hover_selector_combinations_limit() -> usize {
     DEFAULT_HOVER_SELECTOR_COMBINATIONS_LIMIT
 }
 
-fn compile_globs(globs: &[String]) -> Result<Option<GlobSet>> {
-    if globs.is_empty() {
-        return Ok(None);
+fn compile_file_masks(masks: &[String]) -> Result<Vec<FileMask>> {
+    let mut compiled = Vec::with_capacity(masks.len());
+
+    for mask in masks {
+        if mask.matches("{lang}").count() != 1 || mask.matches("{filepath}").count() != 1 {
+            anyhow::bail!(
+                "invalid file mask `{mask}`: expected exactly one {{lang}} and one {{filepath}} placeholder"
+            );
+        }
+
+        let lang_offset = mask
+            .find("{lang}")
+            .with_context(|| format!("invalid file mask `{mask}`: missing {{lang}}"))?;
+        let filepath_offset = mask
+            .find("{filepath}")
+            .with_context(|| format!("invalid file mask `{mask}`: missing {{filepath}}"))?;
+        let (first_offset, first_placeholder, second_offset, second_placeholder) =
+            if lang_offset < filepath_offset {
+                (lang_offset, "{lang}", filepath_offset, "{filepath}")
+            } else {
+                (filepath_offset, "{filepath}", lang_offset, "{lang}")
+            };
+
+        let mut pattern = String::from("^");
+        pattern.push_str(&regex::escape(&mask[..first_offset]));
+        pattern.push_str(match first_placeholder {
+            "{lang}" => "(?P<lang>[^/]+)",
+            "{filepath}" => "(?P<filepath>.+)",
+            _ => unreachable!(),
+        });
+        pattern.push_str(&regex::escape(
+            &mask[first_offset + first_placeholder.len()..second_offset],
+        ));
+        pattern.push_str(match second_placeholder {
+            "{lang}" => "(?P<lang>[^/]+)",
+            "{filepath}" => "(?P<filepath>.+)",
+            _ => unreachable!(),
+        });
+        pattern.push_str(&regex::escape(
+            &mask[second_offset + second_placeholder.len()..],
+        ));
+        pattern.push('$');
+
+        compiled.push(FileMask {
+            raw: mask.clone(),
+            matcher: Regex::new(&pattern)
+                .with_context(|| format!("invalid file mask regex generated from `{mask}`"))?,
+        });
     }
 
-    let mut builder = GlobSetBuilder::new();
-    for glob in globs {
-        builder.add(Glob::new(glob).with_context(|| format!("invalid glob: {glob}"))?);
-    }
-
-    Ok(Some(builder.build()?))
+    Ok(compiled)
 }
 
 fn collect_translation_files(workspace: &WorkspaceConfig) -> Vec<PathBuf> {
@@ -209,13 +321,18 @@ impl Backend {
             .or_else(|| std::fs::read_to_string(&path).ok())?;
         drop(state);
 
-        let key = extract_definition_key(&source, &path, params.text_document_position_params.position)?;
-        let english_uri = Url::from_file_path(workspace.english_file()).ok()?;
-        let english_source = self.read_document_text(&english_uri).await?;
+        let key = extract_definition_key(
+            &source,
+            &path,
+            params.text_document_position_params.position,
+        )?;
+        let origin_path = workspace.origin_file_for(&path)?;
+        let origin_uri = Url::from_file_path(&origin_path).ok()?;
+        let origin_source = self.read_document_text(&origin_uri).await?;
 
-        let definition = find_fluent_definition(&english_source, &key)?;
+        let definition = find_fluent_definition(&origin_source, &key)?;
         Some(Location {
-            uri: english_uri,
+            uri: origin_uri,
             range: definition,
         })
     }
@@ -225,9 +342,10 @@ impl Backend {
         let workspace = state.workspace.clone()?;
         let uri = params.text_document_position.text_document.uri;
         let path = uri.to_file_path().ok()?;
-        if !workspace.is_english_file(&path) {
+        if !workspace.is_origin_file(&path) {
             return None;
         }
+        let origin_match = workspace.file_match(&path)?;
 
         let source = state
             .open_documents
@@ -248,6 +366,9 @@ impl Backend {
         }
 
         for translation_path in collect_translation_files(&workspace) {
+            if !workspace.matches_origin_counterpart(&translation_path, &origin_match) {
+                continue;
+            }
             let translation_uri = match Url::from_file_path(&translation_path) {
                 Ok(uri) => uri,
                 Err(()) => continue,
@@ -289,20 +410,21 @@ impl Backend {
             &path,
             params.text_document_position_params.position,
         )?;
-        let english_uri = Url::from_file_path(workspace.english_file()).ok()?;
-        let english_source = self.read_document_text(&english_uri).await?;
-        let english_entry = render_fluent_hover_entry(&english_source, &key)?;
+        let origin_path = workspace.origin_file_for(&path)?;
+        let origin_uri = Url::from_file_path(&origin_path).ok()?;
+        let origin_source = self.read_document_text(&origin_uri).await?;
+        let origin_entry = render_fluent_hover_entry(&origin_source, &key)?;
         let hover_range = find_fluent_definition(&source, &key)?;
         let hover_suffix = if workspace.hover_selector_combinations() {
             render_selector_combinations_section(
-                &english_source,
+                &origin_source,
                 &key,
                 workspace.hover_selector_combinations_limit(),
             )
         } else {
             None
         };
-        let hover_value = render_hover_markdown(&english_entry, hover_suffix.as_deref());
+        let hover_value = render_hover_markdown(&origin_entry, hover_suffix.as_deref());
 
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -360,8 +482,8 @@ impl LanguageServer for Backend {
                     .log_message(
                         MessageType::INFO,
                         format!(
-                            "loaded {} with masks [{}]",
-                            workspace.english_file().display(),
+                            "loaded origin language {} with masks [{}]",
+                            workspace.origin_language(),
                             workspace.describe_masks()
                         ),
                     )
@@ -575,7 +697,11 @@ fn append_comment_with_prefix(
     }
 }
 
-fn render_selector_combinations_section(source: &str, key: &str, max_items: usize) -> Option<String> {
+fn render_selector_combinations_section(
+    source: &str,
+    key: &str,
+    max_items: usize,
+) -> Option<String> {
     let resource = parse_fluent_resource(source);
     let pattern = find_fluent_pattern(&resource, key)?;
     let expansion = expand_pattern(pattern, max_items);
@@ -645,7 +771,10 @@ fn extract_fluent_key_at_position(source: &str, position: Position) -> Option<St
     None
 }
 
-fn find_fluent_pattern<'a>(resource: &'a Resource<&'a str>, key: &str) -> Option<&'a fluent_syntax::ast::Pattern<&'a str>> {
+fn find_fluent_pattern<'a>(
+    resource: &'a Resource<&'a str>,
+    key: &str,
+) -> Option<&'a fluent_syntax::ast::Pattern<&'a str>> {
     let entry = find_fluent_entry(resource, key)?;
     let (entry_key, attribute_key) = split_fluent_key(key);
 
@@ -764,7 +893,10 @@ struct SelectorExpansionItem {
     text: String,
 }
 
-fn expand_pattern(pattern: &fluent_syntax::ast::Pattern<&str>, max_items: usize) -> SelectorExpansion {
+fn expand_pattern(
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    max_items: usize,
+) -> SelectorExpansion {
     let mut items = vec![SelectorExpansionItem::default()];
     let mut total_count = 1usize;
 
@@ -815,11 +947,16 @@ fn expand_pattern_element(
             }],
             total_count: 1,
         },
-        fluent_syntax::ast::PatternElement::Placeable { expression } => expand_expression(expression, max_items),
+        fluent_syntax::ast::PatternElement::Placeable { expression } => {
+            expand_expression(expression, max_items)
+        }
     }
 }
 
-fn expand_expression(expression: &fluent_syntax::ast::Expression<&str>, max_items: usize) -> SelectorExpansion {
+fn expand_expression(
+    expression: &fluent_syntax::ast::Expression<&str>,
+    max_items: usize,
+) -> SelectorExpansion {
     match expression {
         fluent_syntax::ast::Expression::Inline(inline) => SelectorExpansion {
             items: vec![SelectorExpansionItem {
@@ -835,7 +972,7 @@ fn expand_expression(expression: &fluent_syntax::ast::Expression<&str>, max_item
 
             for variant in variants {
                 let nested = expand_pattern(&variant.value, max_items);
-                 total_count = total_count.saturating_add(nested.total_count);
+                total_count = total_count.saturating_add(nested.total_count);
                 let variant_name = render_variant_key(&variant.key);
                 for item in nested.items {
                     if items.len() >= max_items {
@@ -869,8 +1006,11 @@ fn render_inline_expression(expression: &fluent_syntax::ast::InlineExpression<&s
     match expression {
         fluent_syntax::ast::InlineExpression::StringLiteral { value } => format!("\"{value}\""),
         fluent_syntax::ast::InlineExpression::NumberLiteral { value } => (*value).to_string(),
-        fluent_syntax::ast::InlineExpression::FunctionReference { id, .. } => format!("{}()", id.name),
-        fluent_syntax::ast::InlineExpression::MessageReference { id, attribute } => match attribute {
+        fluent_syntax::ast::InlineExpression::FunctionReference { id, .. } => {
+            format!("{}()", id.name)
+        }
+        fluent_syntax::ast::InlineExpression::MessageReference { id, attribute } => match attribute
+        {
             Some(attribute) => format!("{}.{}", id.name, attribute.name),
             None => id.name.to_string(),
         },
@@ -1004,20 +1144,27 @@ mod tests {
 
     #[test]
     fn extracts_key_from_fluent_message_term_and_attribute() {
-        let source = "welcome-title = Salut\n-brand-name = Nocturne\nbutton-copy =\n    .label = Lancer\n";
+        let source =
+            "welcome-title = Salut\n-brand-name = Nocturne\nbutton-copy =\n    .label = Lancer\n";
 
-        let message = extract_definition_key(source, Path::new("locales/fr/app.ftl"), Position::new(0, 4)).unwrap();
+        let message =
+            extract_definition_key(source, Path::new("locales/fr/app.ftl"), Position::new(0, 4))
+                .unwrap();
         assert_eq!(message, "welcome-title");
 
-        let term = extract_definition_key(source, Path::new("locales/fr/app.ftl"), Position::new(1, 2)).unwrap();
+        let term =
+            extract_definition_key(source, Path::new("locales/fr/app.ftl"), Position::new(1, 2))
+                .unwrap();
         assert_eq!(term, "-brand-name");
 
-        let attribute = extract_definition_key(source, Path::new("locales/fr/app.ftl"), Position::new(3, 6)).unwrap();
+        let attribute =
+            extract_definition_key(source, Path::new("locales/fr/app.ftl"), Position::new(3, 6))
+                .unwrap();
         assert_eq!(attribute, "button-copy.label");
     }
 
     #[test]
-    fn collects_translation_files_without_english() {
+    fn collects_translation_files_without_origin_language_files() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("fixtures")
@@ -1039,8 +1186,28 @@ mod tests {
             relative,
             vec![
                 "locales/es/app.ftl".to_string(),
+                "locales/es/dialogs/menu.ftl".to_string(),
                 "locales/fr/app.ftl".to_string(),
+                "locales/fr/dialogs/menu.ftl".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn resolves_origin_file_from_nested_translation_path() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("workspace");
+        let workspace = WorkspaceConfig::load(root.clone()).unwrap();
+        let translation = root.join("locales/es/dialogs/menu.ftl");
+
+        let file_match = workspace.file_match(&translation).unwrap();
+        assert_eq!(file_match.language, "es");
+        assert_eq!(file_match.filepath, "dialogs/menu");
+        assert_eq!(
+            workspace.origin_file_for(&translation).unwrap(),
+            root.join("locales/en/dialogs/menu.ftl")
         );
     }
 
@@ -1077,7 +1244,10 @@ mod tests {
         let source = "# Shown on first launch\nwelcome-title = Welcome\n# Product naming\n# Keep in title case\n-brand-name = Nightly\n";
 
         let message = render_fluent_entry(source, "welcome-title").unwrap();
-        assert_eq!(message, "# Shown on first launch\nwelcome-title = Welcome\n");
+        assert_eq!(
+            message,
+            "# Shown on first launch\nwelcome-title = Welcome\n"
+        );
 
         let term = render_fluent_entry(source, "-brand-name").unwrap();
         assert_eq!(
@@ -1127,7 +1297,6 @@ mod tests {
             }
         );
     }
-
 
     #[test]
     fn local_fluent_syntax_fork_exposes_identifier_spans() {

@@ -68,7 +68,7 @@ impl Drop for LspProcess {
 }
 
 #[test]
-fn goto_definition_from_translation_resolves_to_english_fluent_file() {
+fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
     let source_uri = format!("file://{}", source_path.display());
@@ -153,6 +153,33 @@ fn goto_definition_from_translation_resolves_to_english_fluent_file() {
         10,
         5,
     );
+
+    let nested_path = root.join("locales/es/dialogs/menu.ftl");
+    let nested_text = std::fs::read_to_string(&nested_path).unwrap();
+    let nested_uri = format!("file://{}", nested_path.display());
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": nested_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": nested_text
+            }
+        }
+    }));
+
+    assert_definition(
+        &mut lsp,
+        5,
+        &nested_path,
+        position_of(&nested_text, "menu-save"),
+        &root.join("locales/en/dialogs/menu.ftl"),
+        3,
+        0,
+    );
 }
 
 fn assert_definition(
@@ -191,7 +218,7 @@ fn assert_definition(
 }
 
 #[test]
-fn references_from_english_resolve_to_translated_fluent_files() {
+fn references_from_origin_resolve_to_translated_fluent_files() {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");
     let source_uri = format!("file://{}", source_path.display());
@@ -270,10 +297,38 @@ fn references_from_english_resolve_to_translated_fluent_files() {
             ReferenceExpectation::new("locales/fr/app.ftl", 3, 5),
         ],
     );
+
+    let nested_path = root.join("locales/en/dialogs/menu.ftl");
+    let nested_text = std::fs::read_to_string(&nested_path).unwrap();
+    let nested_uri = format!("file://{}", nested_path.display());
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": nested_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": nested_text
+            }
+        }
+    }));
+
+    assert_references(
+        &mut lsp,
+        14,
+        &nested_path,
+        position_of(&nested_text, "menu-save"),
+        &[
+            ReferenceExpectation::new("locales/es/dialogs/menu.ftl", 0, 0),
+            ReferenceExpectation::new("locales/fr/dialogs/menu.ftl", 0, 0),
+        ],
+    );
 }
 
 #[test]
-fn hover_from_translation_shows_english_entry_and_comments() {
+fn hover_from_translation_shows_origin_entry_and_comments() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
     let source_uri = format!("file://{}", source_path.display());
@@ -387,7 +442,9 @@ fn assert_references(
 
     let references = lsp.recv();
     assert_eq!(references["id"], request_id);
-    let items = references["result"].as_array().expect("expected references array");
+    let items = references["result"]
+        .as_array()
+        .expect("expected references array");
     assert_eq!(items.len(), expected.len());
 
     for (item, expected) in items.iter().zip(expected.iter()) {
@@ -425,7 +482,10 @@ fn assert_hover(
 
     let hover = lsp.recv();
     assert_eq!(hover["id"], request_id);
-    assert_eq!(hover["result"]["contents"]["kind"], Value::String("markdown".to_string()));
+    assert_eq!(
+        hover["result"]["contents"]["kind"],
+        Value::String("markdown".to_string())
+    );
     assert_eq!(
         hover["result"]["contents"]["value"],
         Value::String(expected_value.to_string())

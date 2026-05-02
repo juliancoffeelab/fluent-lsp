@@ -5,17 +5,17 @@ Minimal Fluent-focused language server.
 Current behavior:
 
 - Reads `fluent-lsp.toml` or `.fluent-lsp.toml` from the workspace root.
-- Restricts lookup to translated `.ftl` files matched by `file_masks`.
-- Resolves `textDocument/definition` by extracting the message, term, or attribute under the cursor from a translated Fluent file and jumping to the matching entry in the configured English `.ftl` file.
-- Resolves `textDocument/hover` on translated Fluent entries by showing the matching English entry, including its attached comments.
+- Tracks localized `.ftl` files through templated `file_masks` that include `{lang}` and `{filepath}`, so nested locale trees resolve back to the matching origin-language file.
+- Resolves `textDocument/definition` by extracting the message, term, or attribute under the cursor from a translated Fluent file and jumping to the matching origin-language `.ftl` file.
+- Resolves `textDocument/hover` on translated Fluent entries by showing the matching origin entry with comments rendered separately from the Fluent block for subtle syntax distinction.
 - Optionally appends static selector combinations to hover when `hover_selector_combinations = true`, capped by `hover_selector_combinations_limit`.
-- Resolves `textDocument/references` from the configured English `.ftl` file into matching entries across translated Fluent files.
+- Resolves `textDocument/references` from an origin-language `.ftl` file into matching entries across translated Fluent files with the same relative locale-tree path.
 
 Config shape:
 
 ```toml
-english_file = "locales/en/app.ftl"
-file_masks = ["locales/**/*.ftl"]
+origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
 hover_selector_combinations = true
 hover_selector_combinations_limit = 32
 ```
@@ -42,14 +42,5 @@ The test suite includes:
 - direct LSP JSON-RPC integration coverage
 - a headless Neovim smoke test with a mock config under `tests/nvim/`
 
-
 # TODO
-- It would be nice to have some sort of subtle syntax higlighting in on hover,
-at least on comments vs strings. But that's it. Nothing more probably.
-- It should work with trees of files. There shouldn't be english_file, there
-should be just origin language
-- File masks potentially should be /path/to/{lang}/{filepath} and then just
-you know resolve the thing.
-- Hover should work on english too, and show you all the stuff hovers for
-translations work, but like, ouroboros thing, where it just shows english +
-usual meta.
+- Hover should work on the origin-language file too, and show the same entry metadata there.
