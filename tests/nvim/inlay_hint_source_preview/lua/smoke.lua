@@ -63,20 +63,20 @@ function M.run()
   assert(rendered_ready, "neovim did not materialize rendered inlay hints")
 
   local rendered_joined, rendered_positions = rendered_hints_by_label()
-  assert(rendered_joined:match("src: Welcome"), "missing rendered plain source preview")
-  assert(rendered_joined:match("src: %.label = Launch"), "missing rendered attribute source preview")
-  assert(rendered_joined:match("src %[%s*platform=%*, tone=%*%s*%]: Press Ctrl %+ C to copy the download link now%."), "missing rendered selector source preview")
-  assert(rendered_joined:match("src %[%s*platform=%*, tone=%*%s*%]: %.tooltip = Install the latest desktop build now%."), "missing rendered attribute selector source preview")
-  assert(rendered_positions["src: Welcome"] and rendered_positions["src: Welcome"].character == 26, "rendered plain preview placed at wrong column")
-  assert(rendered_positions["src: .label = Launch"] and rendered_positions["src: .label = Launch"].character == 19, "rendered attribute preview placed at wrong column")
+  assert(rendered_joined:match("Welcome"), "missing rendered plain source preview")
+  assert(rendered_joined:match("Launch"), "missing rendered attribute source preview")
+  assert(rendered_joined:match("%[gender=%*, count=%*%] Copy the download link for their account on multiple devices now%."), "missing rendered selector source preview")
+  assert(rendered_joined:match("%[gender=%*, count=%*%] Install the recommended build for their account on multiple devices now%."), "missing rendered attribute selector source preview")
+  assert(rendered_positions["Welcome"] and rendered_positions["Welcome"].character == 16, "rendered plain preview placed at wrong column")
+  assert(rendered_positions["Launch"] and rendered_positions["Launch"].character == 13, "rendered attribute preview placed at wrong column")
   assert(
-    rendered_positions["src [platform=*, tone=*]: Press Ctrl + C to copy the download link now."]
-      and rendered_positions["src [platform=*, tone=*]: Press Ctrl + C to copy the download link now."].character == 14,
+    rendered_positions["[gender=*, count=*] Copy the download link for their account on multiple devices now."]
+      and rendered_positions["[gender=*, count=*] Copy the download link for their account on multiple devices now."].character == 14,
     "rendered selector preview placed at wrong column"
   )
   assert(
-    rendered_positions["src [platform=*, tone=*]: .tooltip = Install the latest desktop build now."]
-      and rendered_positions["src [platform=*, tone=*]: .tooltip = Install the latest desktop build now."].character == 14,
+    rendered_positions["[gender=*, count=*] Install the recommended build for their account on multiple devices now."]
+      and rendered_positions["[gender=*, count=*] Install the recommended build for their account on multiple devices now."].character == 14,
     "rendered attribute selector preview placed at wrong column"
   )
 
@@ -91,20 +91,20 @@ function M.run()
     end
   end
   local joined = table.concat(labels, "\n")
-  assert(joined:match("src: Welcome"), "missing plain source preview")
-  assert(joined:match("src: %.label = Launch"), "missing attribute source preview")
-  assert(joined:match("src %[%s*platform=%*, tone=%*%s*%]: Press Ctrl %+ C to copy the download link now%."), "missing selector source preview")
-  assert(joined:match("src %[%s*platform=%*, tone=%*%s*%]: %.tooltip = Install the latest desktop build now%."), "missing attribute selector source preview")
-  assert(positions["src: Welcome"] and positions["src: Welcome"].character == 26, "plain preview placed at wrong column")
-  assert(positions["src: .label = Launch"] and positions["src: .label = Launch"].character == 19, "attribute preview placed at wrong column")
+  assert(joined:match("Welcome"), "missing plain source preview")
+  assert(joined:match("Launch"), "missing attribute source preview")
+  assert(joined:match("%[gender=%*, count=%*%] Copy the download link for their account on multiple devices now%."), "missing selector source preview")
+  assert(joined:match("%[gender=%*, count=%*%] Install the recommended build for their account on multiple devices now%."), "missing attribute selector source preview")
+  assert(positions["Welcome"] and positions["Welcome"].character == 16, "plain preview placed at wrong column")
+  assert(positions["Launch"] and positions["Launch"].character == 13, "attribute preview placed at wrong column")
   assert(
-    positions["src [platform=*, tone=*]: Press Ctrl + C to copy the download link now."]
-      and positions["src [platform=*, tone=*]: Press Ctrl + C to copy the download link now."].character == 14,
+    positions["[gender=*, count=*] Copy the download link for their account on multiple devices now."]
+      and positions["[gender=*, count=*] Copy the download link for their account on multiple devices now."].character == 14,
     "selector preview placed at wrong column"
   )
   assert(
-    positions["src [platform=*, tone=*]: .tooltip = Install the latest desktop build now."]
-      and positions["src [platform=*, tone=*]: .tooltip = Install the latest desktop build now."].character == 14,
+    positions["[gender=*, count=*] Install the recommended build for their account on multiple devices now."]
+      and positions["[gender=*, count=*] Install the recommended build for their account on multiple devices now."].character == 14,
     "attribute selector preview placed at wrong column"
   )
 
@@ -112,7 +112,7 @@ function M.run()
   local filtered_hints = assert(filtered[client_id] and filtered[client_id].result, "missing filtered inlay hints")
   assert(#filtered_hints == 1, "expected one filtered inlay hint")
   assert(
-    filtered_hints[1].label == "src [platform=*, tone=*]: Press Ctrl + C to copy the download link now.",
+    filtered_hints[1].label == "[gender=*, count=*] Copy the download link for their account on multiple devices now.",
     "filtered range returned the wrong inlay hint"
   )
 
@@ -124,8 +124,8 @@ function M.run()
   end, 50)
   assert(origin_rendered_ready, "neovim did not materialize origin-file inlay hints")
   local origin_joined, origin_positions = rendered_hints_by_label()
-  assert(origin_joined:match("src: Welcome"), "missing origin-file source preview")
-  assert(origin_positions["src: Welcome"] and origin_positions["src: Welcome"].character == 23, "origin-file preview placed at wrong column")
+  assert(origin_joined:match("Welcome"), "missing origin-file source preview")
+  assert(origin_positions["Welcome"] and origin_positions["Welcome"].character == 16, "origin-file preview placed at wrong column")
 
   write_result(result_path, {
     ok = true,

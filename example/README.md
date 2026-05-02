@@ -8,21 +8,22 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
 
 - `example/locales/es/app.ftl`
   - Go to definition on `welcome-title`, `-brand-name`, or `.label`
-  - Hover `welcome-title` for origin comments and entry content
-  - Hover `install-hint` for selector previews
-  - Run the CodeLens on `install-hint` to open the full selector combinations document
+  - Hover `welcome-title` for source-first and local-last comments only
+  - Check inlay hints on `welcome-title`, `install-hint`, and `download-action.tooltip` for source previews
+  - Run the CodeLens on `install-hint` to open the full selector combinations document in Spanish
+  - Run the CodeLens on `download-action.tooltip` to verify attribute-level selector combinations
 - `example/locales/en/app.ftl`
   - Run references from `welcome-title` or `.label`
-  - Hover origin-language entries directly
-  - This is the simpler top-level file: entry comments, attributes, and selector expansions, but no resource/group comment stack
+  - Hover origin-language entries directly for comments-only output
+  - This is the denser top-level file: terms, message values, multiple attributes, and both message-level and attribute-level selectors
 - `example/locales/fr/app.ftl`
   - Extra translation target for references and locale comparisons
 - `example/locales/uk/app.ftl`
   - Extra translation target for references and locale comparisons
 - `example/locales/es/dialogs/menu.ftl`
-  - Go to definition on `menu-save` to verify locale-tree resolution
+  - Go to definition on `menu-save.label` to verify locale-tree resolution for nested attributes
 - `example/locales/en/dialogs/menu.ftl`
-  - Hover `menu-save` to verify `###`, `##`, and `#` comment preservation
+  - Hover `menu-save.label` to verify `###`, `##`, and `#` comment preservation on a nested attribute
   - This is the file with top-level comment structure
 - `example/locales/fr/dialogs/menu.ftl`
   - Extra nested translation target
@@ -33,5 +34,5 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
 
 - Your editor opens this repository root as the workspace root.
 - The LSP client reads `fluent-lsp.toml` from the repo root.
-- The client supports standard LSP hover, definition, references, and CodeLens.
+- The client supports standard LSP hover, definition, references, inlay hints, and CodeLens.
 - This example workspace is intentionally small, but it keeps multiple translation targets where they are useful for trying references and cross-locale behavior.

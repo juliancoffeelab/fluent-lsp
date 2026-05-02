@@ -1168,15 +1168,8 @@ fn render_source_inlay_hint_label(source: &str, key: &str) -> Option<String> {
     let resource = parse_fluent_resource(source);
     let pattern = find_fluent_pattern(&resource, key)?;
     let preview = render_default_preview(pattern);
-    let (_, attribute_key) = split_fluent_key(key);
-    let prefix = if let Some(attribute_key) = attribute_key {
-        format!(".{attribute_key} = ")
-    } else {
-        String::new()
-    };
-
     if preview.selectors.is_empty() {
-        Some(format!("src: {prefix}{}", preview.text))
+        Some(preview.text)
     } else {
         let selectors = preview
             .selectors
@@ -1184,7 +1177,7 @@ fn render_source_inlay_hint_label(source: &str, key: &str) -> Option<String> {
             .map(|(selector, variant)| format!("{selector}={variant}"))
             .collect::<Vec<_>>()
             .join(", ");
-        Some(format!("src [{selectors}]: {prefix}{}", preview.text))
+        Some(format!("[{selectors}] {}", preview.text))
     }
 }
 
@@ -1845,9 +1838,15 @@ where
 fn find_fluent_hint_position(source: &str, key: &str) -> Option<Position> {
     let key_range = find_fluent_definition(source, key)?;
     let (line, _) = line_at(source, key_range.start.line as usize)?;
+    let equals_index = line.find('=')?;
+    let value_start = line[equals_index + 1..]
+        .chars()
+        .take_while(|ch| ch.is_whitespace())
+        .map(|ch| ch.len_utf16() as u32)
+        .sum::<u32>();
     Some(Position::new(
         key_range.start.line,
-        line.encode_utf16().count() as u32,
+        equals_index as u32 + 1 + value_start,
     ))
 }
 
@@ -1978,21 +1977,21 @@ mod tests {
 
     #[test]
     fn renders_selector_combinations_section() {
-        let source = "install-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + C { $tone ->\n        [calm] to copy the download link.\n       *[direct] to copy the download link now.\n    }\n";
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count ->\n        [one] one device\n       *[other] multiple devices\n    } now.\n";
 
         let rendered = render_selector_combinations_section(source, "install-hint", 3).unwrap();
         assert_eq!(
             rendered,
-            "Static combinations:\n- `$platform=macos`, `$tone=calm`: `Press Command + C to copy the download link.`\n- `$platform=macos`, `$tone=direct`: `Press Command + C to copy the download link now.`\n- `$platform=other`, `$tone=calm`: `Press Ctrl + C to copy the download link.`\n- `...`: 1 more"
+            "Static combinations:\n- `$gender=female`, `$count=one`: `Copy the download link for her account on one device now.`\n- `$gender=female`, `$count=other`: `Copy the download link for her account on multiple devices now.`\n- `$gender=male`, `$count=one`: `Copy the download link for his account on one device now.`\n- `...`: 3 more"
         );
     }
 
     #[test]
     fn counts_selector_combinations_without_truncation() {
-        let source = "install-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + C { $tone ->\n        [calm] to copy the download link.\n       *[direct] to copy the download link now.\n    }\n";
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count ->\n        [one] one device\n       *[other] multiple devices\n    } now.\n";
 
         let count = selector_total_count_for(source, "install-hint").unwrap();
-        assert_eq!(count, 4);
+        assert_eq!(count, 6);
     }
 
     #[test]
@@ -2025,15 +2024,15 @@ mod tests {
 
     #[test]
     fn renders_source_inlay_hint_label_for_message_and_attribute_selectors() {
-        let source = "install-hint =\n    { $platform ->\n        [macos] Press Command\n       *[other] Press Ctrl\n    } + C { $tone ->\n        [calm] to copy the download link.\n       *[direct] to copy the download link now.\n    }\n\ndownload-action =\n    .tooltip =\n        { $platform ->\n            [macos] Install the signed macOS build\n           *[other] Install the latest desktop build\n        } { $tone ->\n            [calm] when you are ready.\n           *[direct] now.\n        }\n";
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count ->\n        [one] one device\n       *[other] multiple devices\n    } now.\n\ndownload-action =\n    .tooltip =\n        Install the recommended build for { $gender ->\n            [female] her\n            [male] his\n           *[other] their\n        } account on { $count ->\n            [one] one device\n           *[other] multiple devices\n        } now.\n";
 
         assert_eq!(
             render_source_inlay_hint_label(source, "install-hint").unwrap(),
-            "src [platform=*, tone=*]: Press Ctrl + C to copy the download link now."
+            "[gender=*, count=*] Copy the download link for their account on multiple devices now."
         );
         assert_eq!(
             render_source_inlay_hint_label(source, "download-action.tooltip").unwrap(),
-            "src [platform=*, tone=*]: .tooltip = Install the latest desktop build now."
+            "[gender=*, count=*] Install the recommended build for their account on multiple devices now."
         );
     }
 

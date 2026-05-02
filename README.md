@@ -7,10 +7,10 @@ Current behavior:
 - Reads `fluent-lsp.toml` or `.fluent-lsp.toml` from the workspace root.
 - Tracks localized `.ftl` files through templated `file_masks` that include `{lang}` and `{filepath}`, so nested locale trees resolve back to the matching origin-language file.
 - Resolves `textDocument/definition` by extracting the message, term, or attribute under the cursor from a translated Fluent file and jumping to the matching origin-language `.ftl` file.
-- Resolves `textDocument/hover` on translated Fluent entries by showing the matching origin entry with comments rendered separately from the Fluent block for subtle syntax distinction.
-- Resolves `textDocument/hover` on origin-language Fluent entries with the same metadata and selector expansion shown on translated hovers.
-- Optionally appends static selector combinations to hover when `hover_selector_combinations = true`, capped by `hover_selector_combinations_limit`.
-- Publishes standard-LSP CodeLens entries for Fluent values with selector expansions, and uses `workspace/executeCommand` plus `window/showDocument` to open a temp Markdown document with the full combination list on demand.
+- Resolves `textDocument/hover` as comments-only output: origin comments first, then local translation comments after `---` when both exist.
+- Publishes `textDocument/inlayHint` source previews for matched Fluent messages, terms, and attributes, anchored at the local value start.
+- Resolves selector-bearing inlay hints through the Fluent default branch for each selector and labels the chosen branches with `*`.
+- Publishes standard-LSP CodeLens entries for selector-bearing Fluent values, and uses `workspace/executeCommand` plus `window/showDocument` to open a temp Markdown document with the full combination list in the current document language.
 - Resolves `textDocument/references` from an origin-language `.ftl` file into matching entries across translated Fluent files with the same relative locale-tree path.
 
 Config shape:
@@ -21,6 +21,8 @@ file_masks = ["locales/{lang}/{filepath}.ftl"]
 hover_selector_combinations = true
 hover_selector_combinations_limit = 32
 ```
+
+`hover_selector_combinations` enables selector-combination CodeLens output. The limit is used only for the fallback `window/showMessage` path when `window/showDocument` is unavailable.
 
 Run it over stdio:
 
@@ -38,7 +40,7 @@ Try it locally from this repo:
 
 - Open the repository root as your editor workspace.
 - The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml) points at the repo-local [example/](/home/codex/workspace/fluent-lsp/example/README.md) tree.
-- Use the files under `example/locales/` to try definition, hover, references, locale-tree resolution, and CodeLens-driven selector expansion.
+- Use the files under `example/locales/` to try definition, comments-only hover, source-preview inlay hints, locale-tree resolution, and CodeLens-driven selector expansion.
 
 Local fork:
 
@@ -48,4 +50,4 @@ Local fork:
 The test suite includes:
 
 - direct LSP JSON-RPC integration coverage
-- a headless Neovim smoke test with a mock config under `tests/nvim/`
+- dedicated headless Neovim smoke scenarios under `tests/nvim/`

@@ -401,9 +401,12 @@ fn hover_from_translation_shows_source_and_local_comments_only() {
         &mut lsp,
         22,
         &source_path,
-        position_of(&source_text, "tooltip =\n        { $platform ->"),
+        position_of(
+            &source_text,
+            "tooltip =\n        Instala la build recomendada",
+        ),
         "```ftl\n# Primary install action in the downloads panel\n```\n\n---\n\n```ftl\n# Accion principal en la pantalla de descargas\n```",
-        20,
+        21,
         5,
     );
 }
@@ -545,19 +548,19 @@ fn inlay_hints_show_source_previews_for_messages_and_attributes() {
         .as_array()
         .expect("expected inlay hint array");
     assert!(items.iter().any(|item| {
-        item["label"] == Value::String("src: Welcome".to_string())
+        item["label"] == Value::String("Welcome".to_string())
             && item["position"]["line"].as_u64() == Some(1)
-            && item["position"]["character"].as_u64() == Some(26)
+            && item["position"]["character"].as_u64() == Some(16)
     }));
     assert!(items.iter().any(|item| {
-        item["label"] == Value::String("src: .label = Launch".to_string())
+        item["label"] == Value::String("Launch".to_string())
             && item["position"]["line"].as_u64() == Some(5)
-            && item["position"]["character"].as_u64() == Some(19)
+            && item["position"]["character"].as_u64() == Some(13)
     }));
     assert!(items.iter().any(|item| {
         item["label"]
             == Value::String(
-                "src [platform=*, tone=*]: Press Ctrl + C to copy the download link now."
+                "[gender=*, count=*] Copy the download link for their account on multiple devices now."
                     .to_string(),
             )
             && item["position"]["line"].as_u64() == Some(8)
@@ -566,10 +569,10 @@ fn inlay_hints_show_source_previews_for_messages_and_attributes() {
     assert!(items.iter().any(|item| {
         item["label"]
             == Value::String(
-                "src [platform=*, tone=*]: .tooltip = Install the latest desktop build now."
+                "[gender=*, count=*] Install the recommended build for their account on multiple devices now."
                     .to_string(),
             )
-            && item["position"]["line"].as_u64() == Some(20)
+            && item["position"]["line"].as_u64() == Some(21)
             && item["position"]["character"].as_u64() == Some(14)
     }));
 
@@ -595,7 +598,8 @@ fn inlay_hints_show_source_previews_for_messages_and_attributes() {
     assert_eq!(
         filtered_items[0]["label"],
         Value::String(
-            "src [platform=*, tone=*]: Press Ctrl + C to copy the download link now.".to_string(),
+            "[gender=*, count=*] Copy the download link for their account on multiple devices now."
+                .to_string(),
         )
     );
 
@@ -618,9 +622,9 @@ fn inlay_hints_show_source_previews_for_messages_and_attributes() {
         .as_array()
         .expect("expected origin inlay hint array");
     assert!(origin_items.iter().any(|item| {
-        item["label"] == Value::String("src: Welcome".to_string())
+        item["label"] == Value::String("Welcome".to_string())
             && item["position"]["line"].as_u64() == Some(1)
-            && item["position"]["character"].as_u64() == Some(23)
+            && item["position"]["character"].as_u64() == Some(16)
     }));
 }
 
@@ -703,7 +707,7 @@ fn code_lens_opens_full_selector_combinations_document() {
         .expect("missing install-hint codelens");
     assert_eq!(
         install_hint_lens["command"]["title"],
-        Value::String("Show all 4 selector combinations".to_string())
+        Value::String("Show all 6 selector combinations".to_string())
     );
     assert_eq!(
         install_hint_lens["command"]["command"],
@@ -752,7 +756,7 @@ fn code_lens_opens_full_selector_combinations_document() {
     let document_text = std::fs::read_to_string(document_path).expect("read temp document");
     assert_eq!(
         document_text,
-        "# Selector combinations for `install-hint`\n\nLanguage: `es`\n\nLogical file: `app`\n\nSource:\n```ftl\ninstall-hint =\n    { $platform ->\n        [macos] Presiona Command\n       *[other] Presiona Ctrl\n    } + C { $tone ->\n        [calm] para copiar el enlace de descarga.\n       *[direct] para copiar el enlace de descarga ahora.\n    }\n```\n\nStatic combinations:\n- `$platform=macos`, `$tone=calm`: `Presiona Command + C para copiar el enlace de descarga.`\n- `$platform=macos`, `$tone=direct`: `Presiona Command + C para copiar el enlace de descarga ahora.`\n- `$platform=other`, `$tone=calm`: `Presiona Ctrl + C para copiar el enlace de descarga.`\n- `$platform=other`, `$tone=direct`: `Presiona Ctrl + C para copiar el enlace de descarga ahora.`"
+        "# Selector combinations for `install-hint`\n\nLanguage: `es`\n\nLogical file: `app`\n\nSource:\n```ftl\ninstall-hint =\n    Copia el enlace de descarga para la cuenta de { $gender ->\n        [female] ella\n        [male] el\n       *[other] elle\n    } en { $count ->\n        [one] un dispositivo\n       *[other] varios dispositivos\n    } ahora.\n```\n\nStatic combinations:\n- `$gender=female`, `$count=one`: `Copia el enlace de descarga para la cuenta de ella en un dispositivo ahora.`\n- `$gender=female`, `$count=other`: `Copia el enlace de descarga para la cuenta de ella en varios dispositivos ahora.`\n- `$gender=male`, `$count=one`: `Copia el enlace de descarga para la cuenta de el en un dispositivo ahora.`\n- `$gender=male`, `$count=other`: `Copia el enlace de descarga para la cuenta de el en varios dispositivos ahora.`\n- `$gender=other`, `$count=one`: `Copia el enlace de descarga para la cuenta de elle en un dispositivo ahora.`\n- `$gender=other`, `$count=other`: `Copia el enlace de descarga para la cuenta de elle en varios dispositivos ahora.`"
     );
 
     lsp.send(&json!({
@@ -834,7 +838,7 @@ fn code_lens_opens_full_selector_combinations_document_for_attribute() {
         .expect("expected code lens array");
     let attribute_lens = items
         .iter()
-        .find(|item| item["range"]["start"]["line"].as_u64() == Some(20))
+        .find(|item| item["range"]["start"]["line"].as_u64() == Some(21))
         .expect("missing download-action.tooltip codelens");
 
     let command = attribute_lens["command"].clone();
@@ -863,7 +867,7 @@ fn code_lens_opens_full_selector_combinations_document_for_attribute() {
     let document_text = std::fs::read_to_string(document_path).expect("read temp document");
     assert_eq!(
         document_text,
-        "# Selector combinations for `download-action.tooltip`\n\nLanguage: `es`\n\nLogical file: `app`\n\n```ftl\n# Accion principal en la pantalla de descargas\n```\n\nSource:\n```ftl\n.tooltip =\n    { $platform ->\n        [macos] Instala la build firmada para macOS\n       *[other] Instala la build de escritorio mas reciente\n    } { $tone ->\n        [calm] cuando te venga bien.\n       *[direct] ahora.\n    }\n```\n\nStatic combinations:\n- `$platform=macos`, `$tone=calm`: `Instala la build firmada para macOS cuando te venga bien.`\n- `$platform=macos`, `$tone=direct`: `Instala la build firmada para macOS ahora.`\n- `$platform=other`, `$tone=calm`: `Instala la build de escritorio mas reciente cuando te venga bien.`\n- `$platform=other`, `$tone=direct`: `Instala la build de escritorio mas reciente ahora.`"
+        "# Selector combinations for `download-action.tooltip`\n\nLanguage: `es`\n\nLogical file: `app`\n\n```ftl\n# Accion principal en la pantalla de descargas\n```\n\nSource:\n```ftl\n.tooltip =\n    Instala la build recomendada para la cuenta de { $gender ->\n        [female] ella\n        [male] el\n       *[other] elle\n    } en { $count ->\n        [one] un dispositivo\n       *[other] varios dispositivos\n    } ahora.\n```\n\nStatic combinations:\n- `$gender=female`, `$count=one`: `Instala la build recomendada para la cuenta de ella en un dispositivo ahora.`\n- `$gender=female`, `$count=other`: `Instala la build recomendada para la cuenta de ella en varios dispositivos ahora.`\n- `$gender=male`, `$count=one`: `Instala la build recomendada para la cuenta de el en un dispositivo ahora.`\n- `$gender=male`, `$count=other`: `Instala la build recomendada para la cuenta de el en varios dispositivos ahora.`\n- `$gender=other`, `$count=one`: `Instala la build recomendada para la cuenta de elle en un dispositivo ahora.`\n- `$gender=other`, `$count=other`: `Instala la build recomendada para la cuenta de elle en varios dispositivos ahora.`"
     );
 
     lsp.send(&json!({
