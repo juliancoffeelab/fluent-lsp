@@ -394,9 +394,7 @@ impl Backend {
         let workspace = state.workspace.clone()?;
         let uri = params.text_document_position_params.text_document.uri;
         let path = uri.to_file_path().ok()?;
-        if !workspace.matches_translation_file(&path) {
-            return None;
-        }
+        workspace.file_match(&path)?;
 
         let source = state
             .open_documents
@@ -412,7 +410,11 @@ impl Backend {
         )?;
         let origin_path = workspace.origin_file_for(&path)?;
         let origin_uri = Url::from_file_path(&origin_path).ok()?;
-        let origin_source = self.read_document_text(&origin_uri).await?;
+        let origin_source = if workspace.is_origin_file(&path) {
+            source.clone()
+        } else {
+            self.read_document_text(&origin_uri).await?
+        };
         let origin_entry = render_fluent_hover_entry(&origin_source, &key)?;
         let hover_range = find_fluent_definition(&source, &key)?;
         let hover_suffix = if workspace.hover_selector_combinations() {

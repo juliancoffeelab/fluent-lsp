@@ -8,6 +8,7 @@ Current behavior:
 - Tracks localized `.ftl` files through templated `file_masks` that include `{lang}` and `{filepath}`, so nested locale trees resolve back to the matching origin-language file.
 - Resolves `textDocument/definition` by extracting the message, term, or attribute under the cursor from a translated Fluent file and jumping to the matching origin-language `.ftl` file.
 - Resolves `textDocument/hover` on translated Fluent entries by showing the matching origin entry with comments rendered separately from the Fluent block for subtle syntax distinction.
+- Resolves `textDocument/hover` on origin-language Fluent entries with the same metadata and selector expansion shown on translated hovers.
 - Optionally appends static selector combinations to hover when `hover_selector_combinations = true`, capped by `hover_selector_combinations_limit`.
 - Resolves `textDocument/references` from an origin-language `.ftl` file into matching entries across translated Fluent files with the same relative locale-tree path.
 
@@ -41,6 +42,3 @@ The test suite includes:
 
 - direct LSP JSON-RPC integration coverage
 - a headless Neovim smoke test with a mock config under `tests/nvim/`
-
-# TODO
-- Hover should work on the origin-language file too, and show the same entry metadata there.

@@ -406,6 +406,61 @@ fn hover_from_translation_shows_origin_entry_and_comments() {
     );
 }
 
+#[test]
+fn hover_from_origin_file_shows_origin_entry_and_metadata() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/dialogs/menu.ftl");
+    let source_uri = format!("file://{}", source_path.display());
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 30,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {}
+        }
+    }));
+
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], 30);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": source_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": source_text
+            }
+        }
+    }));
+
+    assert_hover(
+        &mut lsp,
+        31,
+        &source_path,
+        position_of(&source_text, "menu-save"),
+        "Comments:\n```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```\n\nEntry:\n```ftl\nmenu-save = Save\n```",
+        3,
+        0,
+    );
+}
+
 struct ReferenceExpectation<'a> {
     relative_path: &'a str,
     line: u32,
