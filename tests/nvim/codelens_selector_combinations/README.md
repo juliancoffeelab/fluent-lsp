@@ -6,7 +6,7 @@ CodeLens-triggered full selector combination document
 
 ## Exercise
 
-Enables Neovim CodeLens, waits for the local lens on `install-hint`, runs it, and asserts that Neovim opens the temp selector-combinations Markdown document with the full expansion set.
+Enables Neovim CodeLens, waits for the local selector lenses, runs both the `install-hint` message lens and the `download-action.tooltip` attribute lens, and asserts that Neovim opens the temp selector-combinations Markdown documents with the full local-language expansion set.
 
 ## Assumptions
 

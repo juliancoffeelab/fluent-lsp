@@ -14,6 +14,25 @@ local function start_client(server, workspace)
   return client_id
 end
 
+local function run_selector_lens(client_id, source_buf, needle, filename_pattern, expected_text)
+  vim.api.nvim_set_current_buf(source_buf)
+  local found = vim.fn.searchpos(needle, "n")
+  assert(found[1] > 0, "missing selector target: " .. needle)
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  vim.lsp.codelens.run({ client_id = client_id })
+
+  local shown = vim.wait(5000, function()
+    local current = vim.api.nvim_buf_get_name(0)
+    local filename = vim.fn.fnamemodify(current, ":t")
+    if not filename:match(filename_pattern) then
+      return false
+    end
+    local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+    return text:match(expected_text) ~= nil
+  end, 50)
+  assert(shown, "codelens did not open expected selector combinations document for " .. needle)
+end
+
 function M.run()
   local workspace = assert(vim.env.FLUENT_LSP_WORKSPACE ~= "" and vim.env.FLUENT_LSP_WORKSPACE)
   local server = assert(vim.env.FLUENT_LSP_BIN ~= "" and vim.env.FLUENT_LSP_BIN)
@@ -39,23 +58,23 @@ function M.run()
   assert(ready, "codelens did not populate")
 
   local lenses = vim.lsp.codelens.get({ bufnr = 0, client_id = client_id })
-  assert(#lenses == 1, "expected exactly one codelens")
-  assert(lenses[1].lens.command.title == "Show all 4 selector combinations", "unexpected codelens title")
+  assert(#lenses >= 3, "expected selector codelenses for message and attribute values")
+  local source_buf = vim.api.nvim_get_current_buf()
 
-  local found = vim.fn.searchpos("install-hint", "n")
-  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
-  vim.lsp.codelens.run({ client_id = client_id })
-
-  local shown = vim.wait(5000, function()
-    local current = vim.api.nvim_buf_get_name(0)
-    local filename = vim.fn.fnamemodify(current, ":t")
-    if not filename:match("^fluent%-lsp%-selector%-combinations%-.+%-install%-hint%.md$") then
-      return false
-    end
-    local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
-    return text:match("Press Ctrl %+ V") ~= nil
-  end, 50)
-  assert(shown, "codelens did not open full selector combinations document")
+  run_selector_lens(
+    client_id,
+    source_buf,
+    "install-hint",
+    "^fluent%-lsp%-selector%-combinations%-.+%-install%-hint%.md$",
+    "Presiona Ctrl %+ C para copiar el enlace de descarga ahora%."
+  )
+  run_selector_lens(
+    client_id,
+    source_buf,
+    "tooltip =",
+    "^fluent%-lsp%-selector%-combinations%-.+%-download%-action_tooltip%.md$",
+    "Instala la build de escritorio mas reciente ahora%."
+  )
 
   write_result(result_path, {
     ok = true,
