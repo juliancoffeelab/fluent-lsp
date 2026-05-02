@@ -560,7 +560,7 @@ fn inlay_hints_show_source_previews_for_messages_and_attributes() {
     assert!(items.iter().any(|item| {
         item["label"]
             == Value::String(
-                "[gender=*, count=*] Copy the download link for their account on multiple devices now."
+                "[gender=*, count=*] Copy the download link for their account on $count devices now."
                     .to_string(),
             )
             && item["position"]["line"].as_u64() == Some(8)
@@ -569,7 +569,7 @@ fn inlay_hints_show_source_previews_for_messages_and_attributes() {
     assert!(items.iter().any(|item| {
         item["label"]
             == Value::String(
-                "[gender=*, count=*] Install the recommended build for their account on multiple devices now."
+                "[gender=*, count=*] Install the recommended build for their account on $count devices now."
                     .to_string(),
             )
             && item["position"]["line"].as_u64() == Some(21)
@@ -598,7 +598,7 @@ fn inlay_hints_show_source_previews_for_messages_and_attributes() {
     assert_eq!(
         filtered_items[0]["label"],
         Value::String(
-            "[gender=*, count=*] Copy the download link for their account on multiple devices now."
+            "[gender=*, count=*] Copy the download link for their account on $count devices now."
                 .to_string(),
         )
     );
@@ -754,10 +754,16 @@ fn code_lens_opens_full_selector_combinations_document() {
         .strip_prefix("file://")
         .expect("expected file uri for temp document");
     let document_text = std::fs::read_to_string(document_path).expect("read temp document");
-    assert_eq!(
-        document_text,
-        "# Selector combinations for `install-hint`\n\nLanguage: `es`\n\nLogical file: `app`\n\nSource:\n```ftl\ninstall-hint =\n    Copia el enlace de descarga para la cuenta de { $gender ->\n        [female] ella\n        [male] el\n       *[other] elle\n    } en { $count ->\n        [one] un dispositivo\n       *[other] varios dispositivos\n    } ahora.\n```\n\nStatic combinations:\n- `$gender=female`, `$count=one`: `Copia el enlace de descarga para la cuenta de ella en un dispositivo ahora.`\n- `$gender=female`, `$count=other`: `Copia el enlace de descarga para la cuenta de ella en varios dispositivos ahora.`\n- `$gender=male`, `$count=one`: `Copia el enlace de descarga para la cuenta de el en un dispositivo ahora.`\n- `$gender=male`, `$count=other`: `Copia el enlace de descarga para la cuenta de el en varios dispositivos ahora.`\n- `$gender=other`, `$count=one`: `Copia el enlace de descarga para la cuenta de elle en un dispositivo ahora.`\n- `$gender=other`, `$count=other`: `Copia el enlace de descarga para la cuenta de elle en varios dispositivos ahora.`"
-    );
+    assert!(document_text.contains("Current language: `es`"));
+    assert!(document_text.contains("Source language: `en`"));
+    assert!(document_text.contains("Source text:"));
+    assert!(document_text.contains("Current text:"));
+    assert!(document_text.contains("Source language combinations:"));
+    assert!(document_text.contains("Current language combinations:"));
+    assert!(document_text.contains("Copy the download link for their account"));
+    assert!(document_text.contains("Copia el enlace de descarga para la cuenta de elle"));
+    assert!(document_text.contains("- `$gender=other`, `$count=other`\n  `Copy the download link for their account on $count devices now.`"));
+    assert!(document_text.contains("- `$gender=other`, `$count=other`\n  `Copia el enlace de descarga para la cuenta de elle en $count dispositivos ahora.`"));
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -865,10 +871,14 @@ fn code_lens_opens_full_selector_combinations_document_for_attribute() {
         .strip_prefix("file://")
         .expect("expected file uri for temp document");
     let document_text = std::fs::read_to_string(document_path).expect("read temp document");
-    assert_eq!(
-        document_text,
-        "# Selector combinations for `download-action.tooltip`\n\nLanguage: `es`\n\nLogical file: `app`\n\n```ftl\n# Accion principal en la pantalla de descargas\n```\n\nSource:\n```ftl\n.tooltip =\n    Instala la build recomendada para la cuenta de { $gender ->\n        [female] ella\n        [male] el\n       *[other] elle\n    } en { $count ->\n        [one] un dispositivo\n       *[other] varios dispositivos\n    } ahora.\n```\n\nStatic combinations:\n- `$gender=female`, `$count=one`: `Instala la build recomendada para la cuenta de ella en un dispositivo ahora.`\n- `$gender=female`, `$count=other`: `Instala la build recomendada para la cuenta de ella en varios dispositivos ahora.`\n- `$gender=male`, `$count=one`: `Instala la build recomendada para la cuenta de el en un dispositivo ahora.`\n- `$gender=male`, `$count=other`: `Instala la build recomendada para la cuenta de el en varios dispositivos ahora.`\n- `$gender=other`, `$count=one`: `Instala la build recomendada para la cuenta de elle en un dispositivo ahora.`\n- `$gender=other`, `$count=other`: `Instala la build recomendada para la cuenta de elle en varios dispositivos ahora.`"
-    );
+    assert!(document_text.contains("Current language: `es`"));
+    assert!(document_text.contains("Source language: `en`"));
+    assert!(document_text.contains("Source language combinations:"));
+    assert!(document_text.contains("Current language combinations:"));
+    assert!(document_text.contains("Install the recommended build for their account"));
+    assert!(document_text.contains("Instala la build recomendada para la cuenta de elle"));
+    assert!(document_text.contains("- `$gender=other`, `$count=other`\n  `Install the recommended build for their account on $count devices now.`"));
+    assert!(document_text.contains("- `$gender=other`, `$count=other`\n  `Instala la build recomendada para la cuenta de elle en $count dispositivos ahora.`"));
 
     lsp.send(&json!({
         "jsonrpc": "2.0",

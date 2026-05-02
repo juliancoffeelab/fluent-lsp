@@ -10,9 +10,9 @@ install-hint =
         [female] elle
         [male] lui
        *[other] iel
-    } sur { $count ->
-        [one] un appareil
-       *[other] plusieurs appareils
+    } sur { $count } { $count ->
+        [one] appareil
+       *[other] appareils
     } maintenant.
 download-action =
     .label = Installer la build
@@ -22,13 +22,13 @@ download-action =
             [female] elle
             [male] lui
            *[other] iel
-        } sur { $count ->
-            [one] un appareil
-           *[other] plusieurs appareils
+        } sur { $count } { $count ->
+            [one] appareil
+           *[other] appareils
         } maintenant.
 sync-status =
     { $count ->
-        [one] 1 telechargement est pret.
-       *[other] Plusieurs telechargements sont prets.
+        [one] { $count } telechargement est pret.
+       *[other] { $count } telechargements sont prets.
     }
 secondary-copy = Plus de texte

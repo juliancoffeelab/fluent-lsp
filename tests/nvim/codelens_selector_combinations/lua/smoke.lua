@@ -66,14 +66,14 @@ function M.run()
     source_buf,
     "install-hint",
     "^fluent%-lsp%-selector%-combinations%-.+%-install%-hint%.md$",
-    "Copia el enlace de descarga para la cuenta de elle en varios dispositivos ahora%."
+    "Copia el enlace de descarga para la cuenta de elle en %$count dispositivos ahora%."
   )
   run_selector_lens(
     client_id,
     source_buf,
     "tooltip =",
     "^fluent%-lsp%-selector%-combinations%-.+%-download%-action_tooltip%.md$",
-    "Instala la build recomendada para la cuenta de elle en varios dispositivos ahora%."
+    "Install the recommended build for their account on %$count devices now%."
   )
 
   write_result(result_path, {

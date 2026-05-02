@@ -11,9 +11,9 @@ install-hint =
         [female] ella
         [male] el
        *[other] elle
-    } en { $count ->
-        [one] un dispositivo
-       *[other] varios dispositivos
+    } en { $count } { $count ->
+        [one] dispositivo
+       *[other] dispositivos
     } ahora.
 # Accion principal en la pantalla de descargas
 download-action =
@@ -24,13 +24,13 @@ download-action =
             [female] ella
             [male] el
            *[other] elle
-        } en { $count ->
-            [one] un dispositivo
-           *[other] varios dispositivos
+        } en { $count } { $count ->
+            [one] dispositivo
+           *[other] dispositivos
         } ahora.
 sync-status =
     { $count ->
-        [one] Hay 1 descarga lista.
-       *[other] Hay varias descargas listas.
+        [one] Hay { $count } descarga lista.
+       *[other] Hay { $count } descargas listas.
     }
 secondary-copy = Mas texto

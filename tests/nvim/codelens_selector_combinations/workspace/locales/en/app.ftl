@@ -21,9 +21,9 @@ install-hint =
         [female] her
         [male] his
        *[other] their
-    } account on { $count ->
-        [one] one device
-       *[other] multiple devices
+    } account on { $count } { $count ->
+        [one] device
+       *[other] devices
     } now.
 
 # Primary install action in the downloads panel
@@ -35,16 +35,16 @@ download-action =
             [female] her
             [male] his
            *[other] their
-        } account on { $count ->
-            [one] one device
-           *[other] multiple devices
+        } account on { $count } { $count ->
+            [one] device
+           *[other] devices
         } now.
 
 # Status summary above the downloads list
 sync-status =
     { $count ->
-        [one] 1 download is ready.
-       *[other] Multiple downloads are ready.
+        [one] { $count } download is ready.
+       *[other] { $count } downloads are ready.
     }
 
 secondary-copy = More text

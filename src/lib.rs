@@ -763,7 +763,12 @@ impl Backend {
         } else {
             workspace.hover_selector_combinations_limit()
         };
-        let Some(section) = render_selector_combinations_section(&source, &key, max_items) else {
+        let Some(current_section) = render_selector_combinations_section(
+            "Current language combinations:",
+            &source,
+            &key,
+            max_items,
+        ) else {
             self.client
                 .show_message(
                     MessageType::INFO,
@@ -786,12 +791,43 @@ impl Backend {
                     )
                     .await;
             };
-            let source_render = render_fluent_source(&source, &key);
+            let origin_source = if workspace.is_origin_file(&path) {
+                source.clone()
+            } else {
+                let origin_path = workspace.origin_file_for(&path).ok_or_else(|| {
+                    internal_error_with_message(format!(
+                        "failed to resolve origin counterpart for {}",
+                        path.display()
+                    ))
+                })?;
+                let origin_uri = Url::from_file_path(&origin_path).map_err(|()| {
+                    internal_error_with_message(format!(
+                        "failed to convert origin path to URI: {}",
+                        origin_path.display()
+                    ))
+                })?;
+                self.read_document_text_required(&origin_uri).await?
+            };
+            let current_render = render_fluent_source(&source, &key);
+            let origin_render = render_fluent_source(&origin_source, &key);
+            let origin_section = if workspace.is_origin_file(&path) {
+                None
+            } else {
+                render_selector_combinations_section(
+                    "Source language combinations:",
+                    &origin_source,
+                    &key,
+                    max_items,
+                )
+            };
             let document_text = render_selector_combinations_document(
                 &key,
                 &file_match,
-                source_render.as_ref(),
-                &section,
+                workspace.origin_language(),
+                origin_render.as_ref(),
+                origin_section.as_deref(),
+                current_render.as_ref(),
+                &current_section,
             );
 
             let document_uri = write_selector_combinations_temp_document(&key, &document_text)
@@ -827,7 +863,7 @@ impl Backend {
         self.client
             .show_message(
                 MessageType::INFO,
-                format!("Selector combinations for {key}\n\n{section}"),
+                format!("Selector combinations for {key}\n\n{current_section}"),
             )
             .await;
 
@@ -1079,21 +1115,37 @@ fn render_hover_markdown(
 fn render_selector_combinations_document(
     key: &str,
     file_match: &FileMatch,
-    source_render: Option<&SourceRender>,
-    combinations_section: &str,
+    origin_language: &str,
+    origin_render: Option<&SourceRender>,
+    origin_combinations_section: Option<&str>,
+    current_render: Option<&SourceRender>,
+    current_combinations_section: &str,
 ) -> String {
     let mut sections = vec![format!("# Selector combinations for `{key}`")];
-    sections.push(format!("Language: `{}`", file_match.language));
+    sections.push(format!("Current language: `{}`", file_match.language));
+    sections.push(format!("Source language: `{origin_language}`"));
     sections.push(format!("Logical file: `{}`", file_match.filepath));
 
-    if let Some(source_render) = source_render {
-        if let Some(comments) = &source_render.comments {
+    if let Some(origin_render) = origin_render {
+        sections.push("Source text:".to_string());
+        if let Some(comments) = &origin_render.comments {
             sections.push(format!("```ftl\n{comments}```"));
         }
-        sections.push(format!("Source:\n```ftl\n{}```", source_render.source));
+        sections.push(format!("```ftl\n{}```", origin_render.source));
+    }
+    if let Some(origin_combinations_section) = origin_combinations_section {
+        sections.push(origin_combinations_section.to_string());
     }
 
-    sections.push(combinations_section.to_string());
+    if let Some(current_render) = current_render {
+        sections.push("Current text:".to_string());
+        if let Some(comments) = &current_render.comments {
+            sections.push(format!("```ftl\n{comments}```"));
+        }
+        sections.push(format!("```ftl\n{}```", current_render.source));
+    }
+
+    sections.push(current_combinations_section.to_string());
     sections.join("\n\n")
 }
 
@@ -1304,6 +1356,7 @@ fn append_comment_with_prefix(
 }
 
 fn render_selector_combinations_section(
+    heading: &str,
     source: &str,
     key: &str,
     max_items: usize,
@@ -1314,7 +1367,7 @@ fn render_selector_combinations_section(
     }
 
     let rendered_count = expansion.items.len();
-    let mut lines = vec!["Static combinations:".to_string()];
+    let mut lines = vec![heading.to_string()];
     for item in expansion.items {
         let selectors = item
             .selectors
@@ -1323,11 +1376,11 @@ fn render_selector_combinations_section(
             .collect::<Vec<_>>()
             .join(", ");
         let text = item.text.replace('\n', "\\n");
-        lines.push(format!("- {selectors}: `{text}`"));
+        lines.push(format!("- {selectors}\n  `{text}`"));
     }
     let omitted = expansion.total_count.saturating_sub(rendered_count);
     if omitted > 0 {
-        lines.push(format!("- `...`: {omitted} more"));
+        lines.push(format!("- `...`\n  {omitted} more"));
     }
 
     Some(lines.join("\n"))
@@ -1977,18 +2030,24 @@ mod tests {
 
     #[test]
     fn renders_selector_combinations_section() {
-        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count ->\n        [one] one device\n       *[other] multiple devices\n    } now.\n";
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
 
-        let rendered = render_selector_combinations_section(source, "install-hint", 3).unwrap();
+        let rendered = render_selector_combinations_section(
+            "Current language combinations:",
+            source,
+            "install-hint",
+            3,
+        )
+        .unwrap();
         assert_eq!(
             rendered,
-            "Static combinations:\n- `$gender=female`, `$count=one`: `Copy the download link for her account on one device now.`\n- `$gender=female`, `$count=other`: `Copy the download link for her account on multiple devices now.`\n- `$gender=male`, `$count=one`: `Copy the download link for his account on one device now.`\n- `...`: 3 more"
+            "Current language combinations:\n- `$gender=female`, `$count=one`\n  `Copy the download link for her account on $count device now.`\n- `$gender=female`, `$count=other`\n  `Copy the download link for her account on $count devices now.`\n- `$gender=male`, `$count=one`\n  `Copy the download link for his account on $count device now.`\n- `...`\n  3 more"
         );
     }
 
     #[test]
     fn counts_selector_combinations_without_truncation() {
-        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count ->\n        [one] one device\n       *[other] multiple devices\n    } now.\n";
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
 
         let count = selector_total_count_for(source, "install-hint").unwrap();
         assert_eq!(count, 6);
@@ -2024,15 +2083,15 @@ mod tests {
 
     #[test]
     fn renders_source_inlay_hint_label_for_message_and_attribute_selectors() {
-        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count ->\n        [one] one device\n       *[other] multiple devices\n    } now.\n\ndownload-action =\n    .tooltip =\n        Install the recommended build for { $gender ->\n            [female] her\n            [male] his\n           *[other] their\n        } account on { $count ->\n            [one] one device\n           *[other] multiple devices\n        } now.\n";
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n\ndownload-action =\n    .tooltip =\n        Install the recommended build for { $gender ->\n            [female] her\n            [male] his\n           *[other] their\n        } account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n";
 
         assert_eq!(
             render_source_inlay_hint_label(source, "install-hint").unwrap(),
-            "[gender=*, count=*] Copy the download link for their account on multiple devices now."
+            "[gender=*, count=*] Copy the download link for their account on $count devices now."
         );
         assert_eq!(
             render_source_inlay_hint_label(source, "download-action.tooltip").unwrap(),
-            "[gender=*, count=*] Install the recommended build for their account on multiple devices now."
+            "[gender=*, count=*] Install the recommended build for their account on $count devices now."
         );
     }
 

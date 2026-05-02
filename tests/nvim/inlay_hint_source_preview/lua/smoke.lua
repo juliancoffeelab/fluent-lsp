@@ -65,18 +65,18 @@ function M.run()
   local rendered_joined, rendered_positions = rendered_hints_by_label()
   assert(rendered_joined:match("Welcome"), "missing rendered plain source preview")
   assert(rendered_joined:match("Launch"), "missing rendered attribute source preview")
-  assert(rendered_joined:match("%[gender=%*, count=%*%] Copy the download link for their account on multiple devices now%."), "missing rendered selector source preview")
-  assert(rendered_joined:match("%[gender=%*, count=%*%] Install the recommended build for their account on multiple devices now%."), "missing rendered attribute selector source preview")
+  assert(rendered_joined:match("%[gender=%*, count=%*%] Copy the download link for their account on %$count devices now%."), "missing rendered selector source preview")
+  assert(rendered_joined:match("%[gender=%*, count=%*%] Install the recommended build for their account on %$count devices now%."), "missing rendered attribute selector source preview")
   assert(rendered_positions["Welcome"] and rendered_positions["Welcome"].character == 16, "rendered plain preview placed at wrong column")
   assert(rendered_positions["Launch"] and rendered_positions["Launch"].character == 13, "rendered attribute preview placed at wrong column")
   assert(
-    rendered_positions["[gender=*, count=*] Copy the download link for their account on multiple devices now."]
-      and rendered_positions["[gender=*, count=*] Copy the download link for their account on multiple devices now."].character == 14,
+    rendered_positions["[gender=*, count=*] Copy the download link for their account on $count devices now."]
+      and rendered_positions["[gender=*, count=*] Copy the download link for their account on $count devices now."].character == 14,
     "rendered selector preview placed at wrong column"
   )
   assert(
-    rendered_positions["[gender=*, count=*] Install the recommended build for their account on multiple devices now."]
-      and rendered_positions["[gender=*, count=*] Install the recommended build for their account on multiple devices now."].character == 14,
+    rendered_positions["[gender=*, count=*] Install the recommended build for their account on $count devices now."]
+      and rendered_positions["[gender=*, count=*] Install the recommended build for their account on $count devices now."].character == 14,
     "rendered attribute selector preview placed at wrong column"
   )
 
@@ -93,18 +93,18 @@ function M.run()
   local joined = table.concat(labels, "\n")
   assert(joined:match("Welcome"), "missing plain source preview")
   assert(joined:match("Launch"), "missing attribute source preview")
-  assert(joined:match("%[gender=%*, count=%*%] Copy the download link for their account on multiple devices now%."), "missing selector source preview")
-  assert(joined:match("%[gender=%*, count=%*%] Install the recommended build for their account on multiple devices now%."), "missing attribute selector source preview")
+  assert(joined:match("%[gender=%*, count=%*%] Copy the download link for their account on %$count devices now%."), "missing selector source preview")
+  assert(joined:match("%[gender=%*, count=%*%] Install the recommended build for their account on %$count devices now%."), "missing attribute selector source preview")
   assert(positions["Welcome"] and positions["Welcome"].character == 16, "plain preview placed at wrong column")
   assert(positions["Launch"] and positions["Launch"].character == 13, "attribute preview placed at wrong column")
   assert(
-    positions["[gender=*, count=*] Copy the download link for their account on multiple devices now."]
-      and positions["[gender=*, count=*] Copy the download link for their account on multiple devices now."].character == 14,
+    positions["[gender=*, count=*] Copy the download link for their account on $count devices now."]
+      and positions["[gender=*, count=*] Copy the download link for their account on $count devices now."].character == 14,
     "selector preview placed at wrong column"
   )
   assert(
-    positions["[gender=*, count=*] Install the recommended build for their account on multiple devices now."]
-      and positions["[gender=*, count=*] Install the recommended build for their account on multiple devices now."].character == 14,
+    positions["[gender=*, count=*] Install the recommended build for their account on $count devices now."]
+      and positions["[gender=*, count=*] Install the recommended build for their account on $count devices now."].character == 14,
     "attribute selector preview placed at wrong column"
   )
 
@@ -112,7 +112,7 @@ function M.run()
   local filtered_hints = assert(filtered[client_id] and filtered[client_id].result, "missing filtered inlay hints")
   assert(#filtered_hints == 1, "expected one filtered inlay hint")
   assert(
-    filtered_hints[1].label == "[gender=*, count=*] Copy the download link for their account on multiple devices now.",
+    filtered_hints[1].label == "[gender=*, count=*] Copy the download link for their account on $count devices now.",
     "filtered range returned the wrong inlay hint"
   )
 
