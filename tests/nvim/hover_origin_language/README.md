@@ -6,7 +6,7 @@ Hover directly on the origin-language file
 
 ## Exercise
 
-Requests hover on an origin-language menu entry and asserts that origin comments and entry text are shown.
+Requests hover on an origin-language menu attribute and asserts that only origin comments are shown.
 
 ## Assumptions
 

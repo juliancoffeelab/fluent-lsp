@@ -6,7 +6,7 @@ Hover from translation showing origin entry and comments
 
 ## Exercise
 
-Requests hover on a translated entry and asserts that the returned hover text includes the origin-language message and comment content.
+Requests hover on a translated entry and asserts that the returned hover text contains source comments first, local comments last, and no source-body duplication.
 
 ## Assumptions
 

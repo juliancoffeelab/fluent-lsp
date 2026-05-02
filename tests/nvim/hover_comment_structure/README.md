@@ -6,7 +6,7 @@ Hover comment structure preservation
 
 ## Exercise
 
-Requests hover on a nested origin-language menu entry and asserts that resource, group, and regular comments are preserved in the hover output.
+Requests hover on a nested origin-language menu attribute and asserts that resource, group, and regular comments are preserved in the hover output without any source-body block.
 
 ## Assumptions
 

@@ -40,14 +40,15 @@ function M.run()
   end, 50)
   assert(attached, "hover provider not ready")
 
-  local found = vim.fn.searchpos("menu-save", "n")
+  local found = vim.fn.searchpos("label = Save", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
   local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
   local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
   local value = hover.contents.value
-  assert(value:match("menu%-save = Save"), "missing origin entry text")
   assert(value:match("### Shared menu copy"), "missing origin hover comments")
+  assert(not value:match("Source:"), "hover should not include source body")
+  assert(not value:match("label = Save"), "hover should not include origin source body")
 
   write_result(result_path, {
     ok = true,

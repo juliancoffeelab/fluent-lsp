@@ -40,14 +40,17 @@ function M.run()
   end, 50)
   assert(attached, "hover provider not ready")
 
-  local found = vim.fn.searchpos("welcome-title", "n")
+  local found = vim.fn.searchpos("download-action", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
   local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
   local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
   local value = hover.contents.value
-  assert(value:match("welcome%-title = Welcome"), "missing English entry in hover")
-  assert(value:match("# Shown on the welcome screen"), "missing hover comment")
+  assert(value:match("# Primary install action in the downloads panel"), "missing source hover comment")
+  assert(value:match("%-%-%-"), "missing source/local separator")
+  assert(value:match("# Accion principal en la pantalla de descargas"), "missing local hover comment")
+  assert(not value:match("Source:"), "hover should not include source body")
+  assert(not value:match("Instalar build"), "hover should not include local source body")
 
   write_result(result_path, {
     ok = true,

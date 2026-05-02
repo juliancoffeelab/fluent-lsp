@@ -36,6 +36,7 @@ function M.run()
 
   assert(client.server_capabilities.definitionProvider, "missing definitionProvider")
   assert(client.server_capabilities.hoverProvider, "missing hoverProvider")
+  assert(client.server_capabilities.inlayHintProvider, "missing inlayHintProvider")
   assert(client.server_capabilities.referencesProvider, "missing referencesProvider")
   assert(client.server_capabilities.codeLensProvider, "missing codeLensProvider")
   assert(client.server_capabilities.executeCommandProvider, "missing executeCommandProvider")
