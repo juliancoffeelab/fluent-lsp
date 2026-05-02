@@ -893,6 +893,108 @@ fn code_lens_opens_full_selector_combinations_document_for_attribute() {
     assert_eq!(response["result"], Value::Null);
 }
 
+#[test]
+fn code_lens_falls_back_to_show_message_with_fixed_selector_limit() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_uri = format!("file://{}", source_path.display());
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 60,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {}
+        }
+    }));
+
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], 60);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": source_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": source_text
+            }
+        }
+    }));
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 61,
+        "method": "textDocument/codeLens",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) }
+        }
+    }));
+
+    let lenses = lsp.recv();
+    assert_eq!(lenses["id"], 61);
+    let items = lenses["result"]
+        .as_array()
+        .expect("expected code lens array");
+    let rollout_lens = items
+        .iter()
+        .find(|item| {
+            item["command"]["arguments"][1] == Value::String("audience-rollout".to_string())
+        })
+        .expect("missing audience-rollout codelens");
+    assert_eq!(
+        rollout_lens["command"]["title"],
+        Value::String("Show all 12 selector combinations".to_string())
+    );
+
+    let command = rollout_lens["command"].clone();
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 62,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": command["command"],
+            "arguments": command["arguments"]
+        }
+    }));
+
+    let first = lsp.recv();
+    let second = lsp.recv();
+    let (response, notification) = if first["id"] == Value::from(62) {
+        (first, second)
+    } else {
+        (second, first)
+    };
+
+    assert_eq!(response["id"], 62);
+    assert_eq!(response["result"], Value::Null);
+
+    assert_eq!(notification["method"], "window/showMessage");
+    let message = notification["params"]["message"]
+        .as_str()
+        .expect("showMessage payload must be a string");
+    assert!(message.contains("Selector combinations for audience-rollout"));
+    assert!(message.contains("Current language combinations:"));
+    assert_eq!(message.matches("\n- `").count(), 11);
+    assert!(message.contains("- `...`\n  2 more"));
+    assert!(!message.contains("`Resumen para otras personas en movil con $count elementos.`"));
+}
+
 struct ReferenceExpectation<'a> {
     relative_path: &'a str,
     line: u32,

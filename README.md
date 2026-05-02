@@ -18,11 +18,9 @@ Config shape:
 ```toml
 origin_language = "en"
 file_masks = ["locales/{lang}/{filepath}.ftl"]
-hover_selector_combinations = true
-hover_selector_combinations_limit = 32
 ```
 
-`hover_selector_combinations` enables selector-combination CodeLens output. The limit is used only for the fallback `window/showMessage` path when `window/showDocument` is unavailable.
+Selector-combination CodeLens output is always enabled for selector-bearing Fluent values. When the client does not support `window/showDocument`, the fallback `window/showMessage` path truncates the rendered combination list to 10 items.
 
 Run it over stdio:
 

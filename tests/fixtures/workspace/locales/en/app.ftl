@@ -48,3 +48,16 @@ sync-status =
     }
 
 secondary-copy = More text
+
+audience-rollout =
+    Summary for { $audience ->
+        [admins] admins
+        [members] members
+       *[others] other people
+    } on { $platform ->
+        [desktop] desktop
+       *[mobile] mobile
+    } with { $count } { $count ->
+        [one] item
+       *[other] items
+    }.

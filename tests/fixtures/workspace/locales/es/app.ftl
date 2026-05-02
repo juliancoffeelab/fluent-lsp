@@ -34,3 +34,16 @@ sync-status =
        *[other] Hay { $count } descargas listas.
     }
 secondary-copy = Mas texto
+
+audience-rollout =
+    Resumen para { $audience ->
+        [admins] administradores
+        [members] miembros
+       *[others] otras personas
+    } en { $platform ->
+        [desktop] escritorio
+       *[mobile] movil
+    } con { $count } { $count ->
+        [one] elemento
+       *[other] elementos
+    }.

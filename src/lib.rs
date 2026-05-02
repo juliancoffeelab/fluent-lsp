@@ -24,7 +24,7 @@ use tower_lsp::lsp_types::{
 use tower_lsp::{Client, LanguageServer};
 
 const CONFIG_FILE_NAMES: [&str; 2] = ["fluent-lsp.toml", ".fluent-lsp.toml"];
-const DEFAULT_HOVER_SELECTOR_COMBINATIONS_LIMIT: usize = 32;
+const SHOW_MESSAGE_SELECTOR_COMBINATIONS_LIMIT: usize = 10;
 const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str = "fluent-lsp.showSelectorCombinations";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -32,10 +32,6 @@ pub struct Config {
     pub origin_language: String,
     #[serde(default)]
     pub file_masks: Vec<String>,
-    #[serde(default)]
-    pub hover_selector_combinations: bool,
-    #[serde(default = "default_hover_selector_combinations_limit")]
-    pub hover_selector_combinations_limit: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -43,8 +39,6 @@ pub struct WorkspaceConfig {
     root_dir: PathBuf,
     origin_language: String,
     file_masks: Vec<FileMask>,
-    hover_selector_combinations: bool,
-    hover_selector_combinations_limit: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -97,8 +91,6 @@ impl WorkspaceConfig {
             root_dir,
             origin_language,
             file_masks,
-            hover_selector_combinations: config.hover_selector_combinations,
-            hover_selector_combinations_limit: config.hover_selector_combinations_limit.max(1),
         })
     }
 
@@ -172,14 +164,6 @@ impl WorkspaceConfig {
         }
     }
 
-    fn hover_selector_combinations(&self) -> bool {
-        self.hover_selector_combinations
-    }
-
-    fn hover_selector_combinations_limit(&self) -> usize {
-        self.hover_selector_combinations_limit
-    }
-
     fn render_path(&self, mask_index: usize, language: &str, filepath: &str) -> PathBuf {
         let relative = self.file_masks[mask_index]
             .raw
@@ -192,10 +176,6 @@ impl WorkspaceConfig {
         let relative = path.strip_prefix(&self.root_dir).ok()?;
         Some(relative.to_string_lossy().replace('\\', "/"))
     }
-}
-
-fn default_hover_selector_combinations_limit() -> usize {
-    DEFAULT_HOVER_SELECTOR_COMBINATIONS_LIMIT
 }
 
 fn compile_file_masks(masks: &[String]) -> Result<Vec<FileMask>> {
@@ -526,10 +506,6 @@ impl Backend {
                 internal_error_with_message(format!("failed to read {}", path.display()))
             })?;
         drop(state);
-        if !workspace.hover_selector_combinations() {
-            return Ok(None);
-        }
-
         let mut lenses = Vec::new();
         for key in collect_fluent_keys(&source) {
             let Some(range) = find_fluent_definition(&source, &key) else {
@@ -733,15 +709,6 @@ impl Backend {
                 )
                 .await;
         }
-        if !workspace.hover_selector_combinations() {
-            self.client
-                .show_message(
-                    MessageType::WARNING,
-                    "Selector combinations are disabled in fluent-lsp.toml",
-                )
-                .await;
-            return Ok(None);
-        }
         let source = state
             .open_documents
             .get(&uri)
@@ -761,7 +728,7 @@ impl Backend {
         let max_items = if supports_show_document {
             usize::MAX
         } else {
-            workspace.hover_selector_combinations_limit()
+            SHOW_MESSAGE_SELECTOR_COMBINATIONS_LIMIT
         };
         let Some(current_section) = render_selector_combinations_section(
             "Current language combinations:",

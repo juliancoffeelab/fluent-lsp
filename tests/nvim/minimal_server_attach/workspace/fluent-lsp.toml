@@ -1,4 +1,2 @@
 origin_language = "en"
 file_masks = ["locales/{lang}/{filepath}.ftl"]
-hover_selector_combinations = true
-hover_selector_combinations_limit = 3
