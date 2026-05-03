@@ -30,7 +30,7 @@ function M.run()
   vim.cmd.edit(workspace .. "/locales/es/app.ftl")
   local client_id = start_client(server, workspace)
 
-  local attached = vim.wait(5000, function()
+  local attached = vim.wait(3000, function()
     for _, client in ipairs(vim.lsp.get_clients({ bufnr = 0 })) do
       if client.id == client_id and client.server_capabilities.hoverProvider then
         return true
@@ -43,7 +43,7 @@ function M.run()
   local found = vim.fn.searchpos("welcome-title", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
   local hover = assert(responses[client_id] and responses[client_id].result, "missing plain hover")
   local value = hover.contents.value
   assert(value == "```ftl\nBienvenido\n```", "unexpected plain hover preview: " .. value)
@@ -51,7 +51,7 @@ function M.run()
   found = vim.fn.searchpos("Abre la build mas reciente de", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
   hover = assert(responses[client_id] and responses[client_id].result, "missing plain value hover")
   value = hover.contents.value
   assert(value:match("^```ftl\nOpen the latest { %-brand%-name } build and pick up where you left off%.\n```\n\n---\n\n```ftl\nAbre la build mas reciente de { %-brand%-name } y sigue donde lo dejaste%.\n```$"), "missing separator-delimited plain value preview")
@@ -59,7 +59,7 @@ function M.run()
   found = vim.fn.searchpos("\\[female\\] ella", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
   hover = assert(responses[client_id] and responses[client_id].result, "missing selector hover")
   value = hover.contents.value
   assert(value:match("^`%$gender=female`, `%$count=%*`\n\n```ftl\nCopy the download link for her account on { %$count } devices now%.\n```\n\n---\n\n`%$gender=female`, `%$count=%*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { %$count } dispositivos ahora%.\n```$"), "missing separator-delimited selector preview")
@@ -68,7 +68,7 @@ function M.run()
   found = vim.fn.searchpos("Instala la build recomendada para la cuenta de", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
   hover = assert(responses[client_id] and responses[client_id].result, "missing translated attribute hover")
   value = hover.contents.value
   assert(value:match("^`%$gender=%*`, `%$count=%*`\n\n```ftl\nInstall the recommended build for their account on { %$count } devices now%.\n```\n\n---\n\n`%$gender=%*`, `%$count=%*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en { %$count } dispositivos ahora%.\n```$"), "missing separator-delimited translated attribute preview")
@@ -77,7 +77,7 @@ function M.run()
   found = vim.fn.searchpos("en { $count } { $count ->", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
   hover = assert(responses[client_id] and responses[client_id].result, "missing post-selector hover")
   value = hover.contents.value
   assert(value:match("^`%$gender=other`, `%$count=%*`\n\n```ftl\nCopy the download link for their account on { %$count } devices now%.\n```\n\n---\n\n`%$gender=other`, `%$count=%*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { %$count } dispositivos ahora%.\n```$"), "missing post-selector formatted preview")
@@ -86,7 +86,7 @@ function M.run()
   found = vim.fn.searchpos("\\[one\\] dispositivo", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
   hover = assert(responses[client_id] and responses[client_id].result, "missing second-selector hover")
   value = hover.contents.value
   assert(value:match("^`%$gender=other`, `%$count=one`\n\n```ftl\nCopy the download link for their account on { %$count } device now%.\n```\n\n---\n\n`%$gender=other`, `%$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { %$count } dispositivo ahora%.\n```$"), "missing concatenated selector formatted preview")

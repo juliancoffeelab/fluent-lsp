@@ -21,7 +21,7 @@ local function run_selector_lens(client_id, source_buf, needle, filename_pattern
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
   vim.lsp.codelens.run({ client_id = client_id })
 
-  local shown = vim.wait(5000, function()
+  local shown = vim.wait(3000, function()
     local current = vim.api.nvim_buf_get_name(0)
     local filename = vim.fn.fnamemodify(current, ":t")
     if not filename:match(filename_pattern) then
@@ -40,7 +40,7 @@ local function run_origin_selector_lens(client_id, source_buf, needle, filename_
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
   vim.lsp.codelens.run({ client_id = client_id })
 
-  local shown = vim.wait(5000, function()
+  local shown = vim.wait(3000, function()
     local current = vim.api.nvim_buf_get_name(0)
     local filename = vim.fn.fnamemodify(current, ":t")
     if not filename:match(filename_pattern) then
@@ -63,7 +63,7 @@ function M.run()
   vim.cmd.edit(workspace .. "/locales/es/app.ftl")
   local client_id = start_client(server, workspace)
 
-  local attached = vim.wait(5000, function()
+  local attached = vim.wait(3000, function()
     for _, client in ipairs(vim.lsp.get_clients({ bufnr = 0 })) do
       if client.id == client_id and client.server_capabilities.codeLensProvider then
         return true
@@ -74,7 +74,7 @@ function M.run()
   assert(attached, "codelens provider not ready")
 
   vim.lsp.codelens.enable(true, { bufnr = 0 })
-  local ready = vim.wait(5000, function()
+  local ready = vim.wait(3000, function()
     return #vim.lsp.codelens.get({ bufnr = 0, client_id = client_id }) > 0
   end, 50)
   assert(ready, "codelens did not populate")
@@ -101,7 +101,7 @@ function M.run()
   vim.cmd.edit(workspace .. "/locales/en/app.ftl")
   vim.lsp.buf_attach_client(0, client_id)
   vim.lsp.codelens.enable(true, { bufnr = 0 })
-  local origin_ready = vim.wait(5000, function()
+  local origin_ready = vim.wait(3000, function()
     return #vim.lsp.codelens.get({ bufnr = 0, client_id = client_id }) > 0
   end, 50)
   assert(origin_ready, "origin codelens did not populate")

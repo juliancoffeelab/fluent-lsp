@@ -23,7 +23,7 @@ local function start_client(server, workspace)
 end
 
 local function wait_for_client(client_id, capability)
-  local ready = vim.wait(5000, function()
+  local ready = vim.wait(3000, function()
     for _, client in ipairs(vim.lsp.get_clients({ bufnr = 0 })) do
       if client.id == client_id and client.server_capabilities[capability] then
         return true
@@ -49,14 +49,14 @@ local function code_action_params()
 end
 
 local function request_code_actions(client_id)
-  local responses = vim.lsp.buf_request_sync(0, "textDocument/codeAction", code_action_params(), 5000)
+  local responses = vim.lsp.buf_request_sync(0, "textDocument/codeAction", code_action_params(), 3000)
   local result = assert(responses[client_id] and responses[client_id].result, "missing code actions")
   assert(#result > 0, "expected at least one code action")
   return result
 end
 
 local function request_code_actions_allow_empty(client_id)
-  local responses = vim.lsp.buf_request_sync(0, "textDocument/codeAction", code_action_params(), 5000)
+  local responses = vim.lsp.buf_request_sync(0, "textDocument/codeAction", code_action_params(), 3000)
   local result = responses[client_id] and responses[client_id].result
   if result == nil then
     return {}
@@ -75,7 +75,7 @@ end
 
 local function stop_client(client_id)
   vim.lsp.stop_client(client_id, true)
-  vim.wait(5000, function()
+  vim.wait(3000, function()
     for _, client in ipairs(vim.lsp.get_clients()) do
       if client.id == client_id then
         return false

@@ -15,7 +15,7 @@ local function start_client(server, workspace)
 end
 
 local function wait_for_client(client_id)
-  local ready = vim.wait(5000, function()
+  local ready = vim.wait(3000, function()
     for _, client in ipairs(vim.lsp.get_clients({ bufnr = 0 })) do
       if client.id == client_id then
         return true
@@ -31,7 +31,7 @@ local function diagnostics_for_current_buffer()
 end
 
 local function wait_for_diagnostics_count(expected)
-  local ready = vim.wait(5000, function()
+  local ready = vim.wait(3000, function()
     return #diagnostics_for_current_buffer() == expected
   end, 50)
   assert(ready, "unexpected diagnostic count: " .. #diagnostics_for_current_buffer())
@@ -40,7 +40,7 @@ end
 
 local function stop_client(client_id)
   vim.lsp.stop_client(client_id, true)
-  vim.wait(5000, function()
+  vim.wait(3000, function()
     for _, client in ipairs(vim.lsp.get_clients()) do
       if client.id == client_id then
         return false
@@ -48,6 +48,15 @@ local function stop_client(client_id)
     end
     return true
   end, 50)
+end
+
+local function save_current_buffer(client)
+  client.notify("textDocument/didSave", {
+    textDocument = {
+      uri = vim.uri_from_bufnr(0),
+    },
+    text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n"),
+  })
 end
 
 function M.run()
@@ -77,6 +86,7 @@ function M.run()
       },
     },
   })
+  save_current_buffer(client)
 
   diagnostics = wait_for_diagnostics_count(4)
   local messages = {}
@@ -102,6 +112,7 @@ function M.run()
   vim.lsp.buf_attach_client(0, client_id)
   wait_for_client(client_id)
   client = assert(vim.lsp.get_client_by_id(client_id), "missing client after buffer switch")
+  save_current_buffer(client)
   diagnostics = wait_for_diagnostics_count(1)
   assert(diagnostics[1].message == "Numeric selector for `uk` is missing category `one`", "unexpected Ukrainian diagnostics")
   assert(not diagnostics[1].message:find("few", 1, true), "Ukrainian `few` should be supported")
@@ -120,6 +131,7 @@ function M.run()
       },
     },
   })
+  save_current_buffer(client)
 
   diagnostics = wait_for_diagnostics_count(4)
   local style_messages = {}
@@ -157,13 +169,14 @@ function M.run()
       },
     },
   })
+  save_current_buffer(client)
   diagnostics = wait_for_diagnostics_count(0)
   assert(#diagnostics == 0, "matching whole selector should stay quiet")
 
   local en_buf = vim.api.nvim_get_current_buf()
   vim.cmd.enew()
   vim.api.nvim_buf_delete(en_buf, { force = true })
-  local cleared = vim.wait(5000, function()
+  local cleared = vim.wait(3000, function()
     for _, diagnostic in ipairs(vim.diagnostic.get()) do
       if diagnostic.bufnr == en_buf then
         return false

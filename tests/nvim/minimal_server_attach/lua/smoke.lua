@@ -22,7 +22,7 @@ function M.run()
   vim.cmd.edit(workspace .. "/locales/es/app.ftl")
   start_client(server, workspace)
 
-  local attached = vim.wait(5000, function()
+  local attached = vim.wait(3000, function()
     for _, client in ipairs(vim.lsp.get_clients({ bufnr = 0 })) do
       if client.name == "fluent-lsp" then
         return true

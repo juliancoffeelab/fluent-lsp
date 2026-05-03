@@ -30,7 +30,7 @@ function M.run()
   vim.cmd.edit(workspace .. "/locales/lv/app.ftl")
   local client_id = start_client(server, workspace)
 
-  local attached = vim.wait(5000, function()
+  local attached = vim.wait(3000, function()
     for _, client in ipairs(vim.lsp.get_clients({ bufnr = 0 })) do
       if client.id == client_id and client.server_capabilities.hoverProvider then
         return true
@@ -43,7 +43,7 @@ function M.run()
   local found = vim.fn.searchpos("\\[zero\\] neviena pakotne nav gatava", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
   local hover = assert(responses[client_id] and responses[client_id].result, "missing zero-category hover")
   local value = hover.contents.value
   assert(value:match("^`%$count=zero`\n\n```ftl\nZero summary: no packages ready%.\n```\n\n---\n\n`%$count=zero`\n\n```ftl\nKopsavilkums ar neviena pakotne nav gatava%.\n```$"), "missing zero-category preview")
@@ -52,7 +52,7 @@ function M.run()
   found = vim.fn.searchpos("\\[one\\] viena pakotne ir gatava", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
   hover = assert(responses[client_id] and responses[client_id].result, "missing one-category hover")
   value = hover.contents.value
   assert(value:match("^`%$count=one`\n\n```ftl\nZero summary: one package ready%.\n```\n\n---\n\n`%$count=one`\n\n```ftl\nKopsavilkums ar viena pakotne ir gatava%.\n```$"), "missing one-category preview")

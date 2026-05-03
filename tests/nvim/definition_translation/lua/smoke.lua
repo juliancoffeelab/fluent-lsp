@@ -22,7 +22,7 @@ function M.run()
   vim.cmd.edit(workspace .. "/locales/es/app.ftl")
   start_client(server, workspace)
 
-  local attached = vim.wait(5000, function()
+  local attached = vim.wait(3000, function()
     for _, client in ipairs(vim.lsp.get_clients({ bufnr = 0 })) do
       if client.name == "fluent-lsp" and client.server_capabilities.definitionProvider then
         return true
@@ -36,7 +36,7 @@ function M.run()
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
   vim.lsp.buf.definition()
 
-  local jumped = vim.wait(5000, function()
+  local jumped = vim.wait(3000, function()
     return vim.api.nvim_buf_get_name(0):match("locales/en/app%.ftl$") ~= nil
   end, 50)
   assert(jumped, "definition did not jump to app.ftl")

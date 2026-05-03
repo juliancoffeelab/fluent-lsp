@@ -30,7 +30,7 @@ function M.run()
   vim.cmd.edit(workspace .. "/locales/en/app.ftl")
   local client_id = start_client(server, workspace)
 
-  local attached = vim.wait(5000, function()
+  local attached = vim.wait(3000, function()
     for _, client in ipairs(vim.lsp.get_clients({ bufnr = 0 })) do
       if client.id == client_id and client.server_capabilities.hoverProvider then
         return true
@@ -43,7 +43,7 @@ function M.run()
   local found = vim.fn.searchpos("install-hint", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
   local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
   local value = hover.contents.value
   assert(value:match("`%$gender=%*`, `%$count=%*`"), "missing default selector header")
