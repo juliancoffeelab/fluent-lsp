@@ -58,3 +58,5 @@ mismatch-rollout =
         [1] un paquete
        *[other] { $count } paquetes
     } listo.
+
+coins-line = Tienes { $coins } monedas.

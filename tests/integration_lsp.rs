@@ -4,6 +4,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{Value, json};
 use std::convert::TryFrom;
+use tempfile::tempdir;
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1126,6 +1127,157 @@ fn code_lens_falls_back_to_show_message_with_fixed_selector_limit() {
     assert!(!message.contains("```ftl\nResumen para otras personas en movil con { $count } elementos.\n```"));
 }
 
+#[test]
+fn code_action_generates_prefix_selector_by_default() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 70);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        71,
+        &source_path,
+        position_of(&source_text, "coins-line"),
+    );
+    let action = &actions[0];
+    assert_eq!(
+        action["title"],
+        Value::String("Generate number selector (prefix)".to_string())
+    );
+    assert_eq!(
+        action["kind"],
+        Value::String("refactor.rewrite".to_string())
+    );
+    assert_eq!(
+        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "Tienes { $coins } { $coins ->\n    [one] monedas.\n    *[other] monedas.\n}"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn code_action_uses_client_selector_style_setting() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 72);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "workspace/didChangeConfiguration",
+        "params": {
+            "settings": {
+                "fluent-lsp": {
+                    "selector_style": "whole"
+                }
+            }
+        }
+    }));
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        73,
+        &source_path,
+        position_of(&source_text, "{ $coins }"),
+    );
+    let action = &actions[0];
+    assert_eq!(
+        action["title"],
+        Value::String("Generate number selector from $coins (whole)".to_string())
+    );
+    assert_eq!(
+        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "{ $coins ->\n    [one] Tienes { $coins } monedas.\n    *[other] Tienes { $coins } monedas.\n}"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn file_config_selector_style_overrides_client_setting() {
+    let fixture = fixture_root();
+    let temp = tempdir().unwrap();
+    copy_dir(&fixture, temp.path());
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\nselector_style = \"whole\"\n",
+    )
+    .unwrap();
+
+    let source_path = temp.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 74);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "workspace/didChangeConfiguration",
+        "params": {
+            "settings": {
+                "fluent-lsp": {
+                    "selector_style": "prefix"
+                }
+            }
+        }
+    }));
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        75,
+        &source_path,
+        position_of(&source_text, "coins-line"),
+    );
+    let action = &actions[0];
+    assert_eq!(
+        action["title"],
+        Value::String("Generate number selector (whole)".to_string())
+    );
+}
+
+#[test]
+fn code_action_uses_snippet_text_edit_when_supported() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp_with_capabilities(
+        &root,
+        76,
+        json!({
+            "workspace": {
+                "workspaceEdit": {
+                    "documentChanges": true,
+                    "snippetEditSupport": true
+                }
+            }
+        }),
+    );
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        77,
+        &source_path,
+        position_of(&source_text, "coins-line"),
+    );
+    let action = &actions[0];
+    assert_eq!(
+        action["edit"]["documentChanges"][0]["edits"][0]["snippet"],
+        Value::String(
+            "Tienes { $coins } { $coins ->\n    [one] monedas.\n    *[other] monedas.\n}"
+                .to_string()
+        )
+    );
+    assert!(action["edit"]["changes"].is_null());
+}
+
 struct ReferenceExpectation<'a> {
     relative_path: &'a str,
     line: u32,
@@ -1138,6 +1290,105 @@ impl<'a> ReferenceExpectation<'a> {
             relative_path,
             line,
             character,
+        }
+    }
+}
+
+fn initialized_lsp(root: &Path, request_id: i64) -> LspProcess {
+    initialized_lsp_with_capabilities(root, request_id, json!({}))
+}
+
+fn initialized_lsp_with_capabilities(
+    root: &Path,
+    request_id: i64,
+    capabilities: Value,
+) -> LspProcess {
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": capabilities
+        }
+    }));
+
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], request_id);
+    assert_eq!(
+        initialize["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"][0],
+        Value::String("refactor.rewrite".to_string())
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
+
+    lsp
+}
+
+fn open_document(lsp: &mut LspProcess, path: &Path, text: &str) {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": format!("file://{}", path.display()),
+                "languageId": "fluent",
+                "version": 1,
+                "text": text
+            }
+        }
+    }));
+}
+
+fn request_code_actions(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    source_path: &Path,
+    position: (u32, u32),
+) -> Vec<Value> {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+
+    let response = lsp.recv();
+    assert_eq!(response["id"], request_id);
+    response["result"]
+        .as_array()
+        .expect("expected code action array")
+        .clone()
+}
+
+fn copy_dir(source: &Path, dest: &Path) {
+    std::fs::create_dir_all(dest).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let source_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_dir(&source_path, &dest_path);
+        } else {
+            std::fs::copy(&source_path, &dest_path).unwrap();
         }
     }
 }

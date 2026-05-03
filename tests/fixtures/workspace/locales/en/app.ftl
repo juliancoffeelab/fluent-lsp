@@ -78,3 +78,5 @@ zero-rollout =
         [one] one package ready
        *[other] { $count } packages ready
     }.
+
+coins-line = You have { $coins } coins.

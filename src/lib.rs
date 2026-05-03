@@ -14,23 +14,53 @@ use tempfile::Builder as TempFileBuilder;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::{Error as LspError, Result as LspResult};
 use tower_lsp::ls_types::{
-    CodeLens, CodeLensOptions, CodeLensParams, Command, DidChangeTextDocumentParams,
-    DidOpenTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams, GotoDefinitionParams,
+    CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
+    CodeActionProviderCapability, CodeActionResponse, CodeLens, CodeLensOptions, CodeLensParams,
+    Command, DidChangeConfigurationParams, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
     InitializeParams, InitializeResult, InitializedParams, Location, MarkupContent, MarkupKind,
-    MessageType, OneOf, Position, Range, ReferenceParams, ServerCapabilities,
-    ShowDocumentParams, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    MessageType, OneOf, OneOf3, OptionalVersionedTextDocumentIdentifier, Position, Range,
+    ReferenceParams, ServerCapabilities, ShowDocumentParams, SnippetTextEdit, TextDocumentEdit,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 
 const CONFIG_FILE_NAMES: [&str; 2] = ["fluent-lsp.toml", ".fluent-lsp.toml"];
 const SHOW_MESSAGE_SELECTOR_COMBINATIONS_LIMIT: usize = 10;
 const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str = "fluent-lsp.showSelectorCombinations";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SelectorStyle {
+    Prefix,
+    Suffix,
+    Whole,
+}
+
+impl Default for SelectorStyle {
+    fn default() -> Self {
+        Self::Prefix
+    }
+}
+
+impl SelectorStyle {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Prefix => "prefix",
+            Self::Suffix => "suffix",
+            Self::Whole => "whole",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
-    pub origin_language: String,
+    origin_language: String,
     #[serde(default)]
-    pub file_masks: Vec<String>,
+    file_masks: Vec<String>,
+    #[serde(default)]
+    selector_style: Option<SelectorStyle>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +68,12 @@ pub struct WorkspaceConfig {
     root_dir: PathBuf,
     origin_language: String,
     file_masks: Vec<FileMask>,
+    selector_style: Option<SelectorStyle>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ClientConfig {
+    selector_style: Option<SelectorStyle>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +126,7 @@ impl WorkspaceConfig {
             root_dir,
             origin_language,
             file_masks,
+            selector_style: config.selector_style,
         })
     }
 
@@ -174,6 +211,10 @@ impl WorkspaceConfig {
     fn relative_path(&self, path: &Path) -> Option<String> {
         let relative = path.strip_prefix(&self.root_dir).ok()?;
         Some(relative.to_string_lossy().replace('\\', "/"))
+    }
+
+    fn selector_style(&self) -> Option<SelectorStyle> {
+        self.selector_style
     }
 }
 
@@ -274,12 +315,28 @@ struct ActiveSelectorContext {
     current_variant_line: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VariablePlaceable {
+    element_index: usize,
+    name: String,
+    span: ByteRange<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GenerateSelectorTarget {
+    key: String,
+    variable: VariablePlaceable,
+    pattern_span: ByteRange<usize>,
+}
+
 #[derive(Default)]
 struct ServerState {
     root_dir: Option<PathBuf>,
     workspace: Option<WorkspaceConfig>,
     open_documents: HashMap<Uri, String>,
     supports_show_document: bool,
+    supports_snippet_text_edits: bool,
+    client_config: ClientConfig,
 }
 
 pub struct Backend {
@@ -491,6 +548,107 @@ impl Backend {
             }),
             range: Some(hover_range),
         }))
+    }
+
+    async fn code_actions_for(
+        &self,
+        params: CodeActionParams,
+    ) -> LspResult<Option<CodeActionResponse>> {
+        let state = self.state.read().await;
+        let Some(workspace) = state.workspace.clone() else {
+            return Ok(None);
+        };
+        let uri = params.text_document.uri;
+        let path = uri
+            .to_file_path()
+            .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
+            .into_owned();
+        if workspace.file_match(&path).is_none() {
+            return Ok(None);
+        }
+
+        let source = state
+            .open_documents
+            .get(&uri)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(&path).ok())
+            .ok_or_else(|| {
+                internal_error_with_message(format!("failed to read {}", path.display()))
+            })?;
+        let style = workspace
+            .selector_style()
+            .or(state.client_config.selector_style)
+            .unwrap_or_default();
+        let supports_snippet_text_edits = state.supports_snippet_text_edits;
+        drop(state);
+
+        let Some(target) =
+            find_generate_selector_target(&source, &path, params.range.start)
+        else {
+            return Ok(None);
+        };
+        let Some(file_match) = workspace.file_match(&path) else {
+            return Ok(None);
+        };
+        let Some(generated) = generate_number_selector_edit(
+            &source,
+            &target,
+            &file_match.language,
+            style,
+        ) else {
+            return Ok(None);
+        };
+        let Some(edit_range) = byte_range_to_lsp_range(&source, target.pattern_span.clone()) else {
+            return Ok(None);
+        };
+
+        let edit = if supports_snippet_text_edits {
+            WorkspaceEdit {
+                changes: None,
+                document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
+                    text_document: OptionalVersionedTextDocumentIdentifier {
+                        uri: uri.clone(),
+                        version: None,
+                    },
+                    edits: vec![OneOf3::Right(SnippetTextEdit {
+                        range: edit_range,
+                        snippet: generated,
+                        annotation_id: None,
+                    })],
+                }])),
+                change_annotations: None,
+            }
+        } else {
+            let mut changes = HashMap::new();
+            changes.insert(uri.clone(), vec![TextEdit::new(edit_range, generated)]);
+            WorkspaceEdit {
+                changes: Some(changes),
+                document_changes: None,
+                change_annotations: None,
+            }
+        };
+
+        let title = if position_overlaps_byte_span(
+            &source,
+            params.range.start,
+            &target.variable.span,
+        ) {
+            format!(
+                "Generate number selector from {} ({})",
+                target.variable.name,
+                style.label()
+            )
+        } else {
+            format!("Generate number selector ({})", style.label())
+        };
+
+        Ok(Some(vec![CodeActionOrCommand::CodeAction(CodeAction {
+            title,
+            kind: Some(CodeActionKind::REFACTOR_REWRITE),
+            edit: Some(edit),
+            is_preferred: Some(true),
+            ..CodeAction::default()
+        })]))
     }
 
     async fn code_lenses_for(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
@@ -808,10 +966,25 @@ impl LanguageServer for Backend {
                 .and_then(|window| window.show_document)
                 .map(|capability| capability.support)
                 .unwrap_or(false);
+            state.supports_snippet_text_edits = params
+                .capabilities
+                .workspace
+                .and_then(|workspace| workspace.workspace_edit)
+                .is_some_and(|capability| {
+                    capability.document_changes.unwrap_or(false)
+                        && capability.snippet_edit_support.unwrap_or(false)
+                });
         }
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
+                code_action_provider: Some(CodeActionProviderCapability::Options(
+                    CodeActionOptions {
+                        code_action_kinds: Some(vec![CodeActionKind::REFACTOR_REWRITE]),
+                        resolve_provider: Some(false),
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
                 code_lens_provider: Some(CodeLensOptions {
                     resolve_provider: Some(false),
                 }),
@@ -884,6 +1057,11 @@ impl LanguageServer for Backend {
         }
     }
 
+    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        let mut state = self.state.write().await;
+        state.client_config = parse_client_config(&params.settings);
+    }
+
     async fn goto_definition(
         &self,
         params: GotoDefinitionParams,
@@ -900,6 +1078,10 @@ impl LanguageServer for Backend {
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
         self.hover_for(params).await
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
+        self.code_actions_for(params).await
     }
 
     async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
@@ -1298,6 +1480,38 @@ fn code_lens_title(total_count: usize) -> String {
     }
 }
 
+fn parse_client_config(settings: &Value) -> ClientConfig {
+    if let Some(object) = settings.as_object() {
+        if let Some(style) = object
+            .get("selector_style")
+            .and_then(selector_style_from_json)
+        {
+            return ClientConfig {
+                selector_style: Some(style),
+            };
+        }
+
+        for key in ["fluent-lsp", "fluent_lsp"] {
+            if let Some(style) = object.get(key).and_then(|value| {
+                value
+                    .as_object()
+                    .and_then(|nested| nested.get("selector_style"))
+                    .and_then(selector_style_from_json)
+            }) {
+                return ClientConfig {
+                    selector_style: Some(style),
+                };
+            }
+        }
+    }
+
+    ClientConfig::default()
+}
+
+fn selector_style_from_json(value: &Value) -> Option<SelectorStyle> {
+    serde_json::from_value(value.clone()).ok()
+}
+
 fn sanitize_document_segment(value: &str) -> String {
     let sanitized: String = value
         .chars()
@@ -1324,6 +1538,244 @@ fn parse_select_openers(line: &str) -> Vec<String> {
     re.captures_iter(line)
         .filter_map(|captures| captures.get(1).map(|value| value.as_str().trim().to_string()))
         .collect()
+}
+
+fn find_generate_selector_target(
+    source: &str,
+    path: &Path,
+    position: Position,
+) -> Option<GenerateSelectorTarget> {
+    if !is_fluent_file(path) {
+        return None;
+    }
+
+    let key = extract_definition_key(source, path, position)?;
+    let definition_range = find_fluent_definition(source, &key)?;
+    let resource = parse_fluent_resource(source);
+    let pattern = find_fluent_pattern(&resource, &key)?;
+    if !pattern_supports_generated_selector(pattern) {
+        return None;
+    }
+
+    let variables = top_level_variable_placeables(pattern);
+    if variables.is_empty() {
+        return None;
+    }
+
+    let selected_variable = variables
+        .iter()
+        .find(|variable| position_overlaps_byte_span(source, position, &variable.span))
+        .cloned()
+        .or_else(|| {
+            if range_contains_position(&definition_range, position) {
+                variables.first().cloned()
+            } else {
+                None
+            }
+        })?;
+
+    Some(GenerateSelectorTarget {
+        key,
+        variable: selected_variable,
+        pattern_span: pattern.span.0.clone(),
+    })
+}
+
+fn pattern_supports_generated_selector(pattern: &fluent_syntax::ast::Pattern<&str>) -> bool {
+    pattern.elements.iter().all(pattern_element_supports_generation)
+}
+
+fn pattern_element_supports_generation(
+    element: &fluent_syntax::ast::PatternElement<&str>,
+) -> bool {
+    match element {
+        fluent_syntax::ast::PatternElement::TextElement { value, .. } => !value.contains('\n'),
+        fluent_syntax::ast::PatternElement::Placeable { expression, .. } => {
+            expression_supports_generation(expression)
+        }
+    }
+}
+
+fn expression_supports_generation(expression: &fluent_syntax::ast::Expression<&str>) -> bool {
+    match expression {
+        fluent_syntax::ast::Expression::Inline(inline, _) => inline_expression_supports_generation(inline),
+        fluent_syntax::ast::Expression::Select { .. } => false,
+    }
+}
+
+fn inline_expression_supports_generation(
+    expression: &fluent_syntax::ast::InlineExpression<&str>,
+) -> bool {
+    match expression {
+        fluent_syntax::ast::InlineExpression::Placeable { expression, .. } => {
+            expression_supports_generation(expression)
+        }
+        _ => true,
+    }
+}
+
+fn top_level_variable_placeables(
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+) -> Vec<VariablePlaceable> {
+    pattern
+        .elements
+        .iter()
+        .enumerate()
+        .filter_map(|(element_index, element)| match element {
+            fluent_syntax::ast::PatternElement::Placeable {
+                expression:
+                    fluent_syntax::ast::Expression::Inline(
+                        fluent_syntax::ast::InlineExpression::VariableReference { id, .. },
+                        _,
+                    ),
+                span,
+            } => Some(VariablePlaceable {
+                element_index,
+                name: format!("${}", id.name),
+                span: span.0.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn generate_number_selector_edit(
+    source: &str,
+    target: &GenerateSelectorTarget,
+    language: &str,
+    style: SelectorStyle,
+) -> Option<String> {
+    let resource = parse_fluent_resource(source);
+    let pattern = find_fluent_pattern(&resource, &target.key)?;
+
+    let whole_text = pattern_fragment_from_source(
+        &pattern.elements,
+    )?;
+    let before_variable = pattern_fragment_from_source(
+        &pattern.elements[..target.variable.element_index],
+    )?;
+    let including_variable = pattern_fragment_from_source(
+        &pattern.elements[..=target.variable.element_index],
+    )?;
+    let after_variable = pattern_fragment_from_source(
+        &pattern.elements[target.variable.element_index + 1..],
+    )?;
+
+    let replacement = match style {
+        SelectorStyle::Whole => render_generated_selector_block(
+            &target.variable.name,
+            language,
+            &whole_text,
+        ),
+        SelectorStyle::Prefix => {
+            if after_variable.is_empty() {
+                return None;
+            }
+            concat_prefix_and_selector(
+                &including_variable,
+                &render_generated_selector_block(&target.variable.name, language, &after_variable),
+            )
+        }
+        SelectorStyle::Suffix => {
+            let branch_body = format!("{including_variable}{after_variable}");
+            concat_prefix_and_selector(
+                &before_variable,
+                &render_generated_selector_block(&target.variable.name, language, &branch_body),
+            )
+        }
+    };
+
+    Some(replacement)
+}
+
+fn pattern_fragment_from_source(
+    elements: &[fluent_syntax::ast::PatternElement<&str>],
+) -> Option<String> {
+    if elements.is_empty() {
+        return Some(String::new());
+    }
+
+    let synthetic = Entry::Message(fluent_syntax::ast::Message {
+        id: fluent_syntax::ast::Identifier {
+            name: "__selector",
+            span: fluent_syntax::ast::Span(0..10),
+        },
+        value: Some(fluent_syntax::ast::Pattern {
+            elements: elements.to_vec(),
+            span: fluent_syntax::ast::Span::default(),
+        }),
+        attributes: vec![],
+        comment: None,
+        span: fluent_syntax::ast::Span::default(),
+    });
+    let rendered = serializer::serialize(&Resource {
+        body: vec![synthetic],
+        span: fluent_syntax::ast::Span::default(),
+    });
+
+    Some(strip_synthetic_message_value(&rendered))
+}
+
+fn strip_synthetic_message_value(rendered: &str) -> String {
+    if let Some(rest) = rendered.strip_prefix("__selector = ") {
+        return rest.trim_end_matches('\n').to_string();
+    }
+    if let Some(rest) = rendered.strip_prefix("__selector =\n") {
+        return rest
+            .lines()
+            .map(|line| line.strip_prefix("    ").unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_end_matches('\n')
+            .to_string();
+    }
+    rendered.trim_end_matches('\n').to_string()
+}
+
+fn render_generated_selector_block(variable: &str, language: &str, branch_body: &str) -> String {
+    let mut lines = vec![format!("{{ {variable} ->")];
+    let body = normalize_variant_body(branch_body);
+    let categories = plural_categories(language);
+
+    for category in categories {
+        let default_prefix = if *category == "other" { "*" } else { "" };
+        lines.push(format!("    {default_prefix}[{category}]{body}"));
+    }
+    lines.push("}".to_string());
+    lines.join("\n")
+}
+
+fn normalize_variant_body(body: &str) -> String {
+    if body.is_empty() {
+        String::new()
+    } else if body.chars().next().is_some_and(char::is_whitespace) {
+        body.to_string()
+    } else {
+        format!(" {body}")
+    }
+}
+
+fn concat_prefix_and_selector(prefix: &str, selector_block: &str) -> String {
+    if prefix.is_empty() {
+        selector_block.to_string()
+    } else if prefix.chars().last().is_some_and(char::is_whitespace) {
+        format!("{prefix}{selector_block}")
+    } else {
+        format!("{prefix} {selector_block}")
+    }
+}
+
+fn plural_categories(language: &str) -> &'static [&'static str] {
+    match language.split('-').next().unwrap_or(language) {
+        "lv" => &["zero", "one", "other"],
+        "ar" => &["zero", "one", "two", "few", "many", "other"],
+        _ => &["one", "other"],
+    }
+}
+
+fn position_overlaps_byte_span(source: &str, position: Position, span: &ByteRange<usize>) -> bool {
+    byte_range_to_lsp_range(source, span.clone())
+        .is_some_and(|range| range_contains_position(&range, position))
 }
 
 fn parse_variant_line(trimmed: &str) -> Option<String> {
@@ -2383,5 +2835,71 @@ mod tests {
             }
             _ => panic!("expected identifier variant key"),
         }
+    }
+
+    #[test]
+    fn parses_client_selector_style_from_nested_settings() {
+        let settings = serde_json::json!({
+            "fluent-lsp": {
+                "selector_style": "whole"
+            }
+        });
+
+        assert_eq!(
+            parse_client_config(&settings),
+            ClientConfig {
+                selector_style: Some(SelectorStyle::Whole),
+            }
+        );
+    }
+
+    #[test]
+    fn generate_selector_target_prefers_variable_under_cursor_and_falls_back_to_key_line() {
+        let source = "coins-line = Tienes { $coins } monedas.\n";
+        let path = Path::new("locales/es/app.ftl");
+
+        let from_key = find_generate_selector_target(source, path, Position::new(0, 2)).unwrap();
+        assert_eq!(from_key.variable.name, "$coins");
+
+        let from_variable =
+            find_generate_selector_target(source, path, Position::new(0, 23)).unwrap();
+        assert_eq!(from_variable.variable.name, "$coins");
+        assert_eq!(from_variable.variable.element_index, 1);
+    }
+
+    #[test]
+    fn generates_prefix_number_selector_edit() {
+        let source = "coins-line = Tienes { $coins } monedas.\n";
+        let path = Path::new("locales/es/app.ftl");
+        let target = find_generate_selector_target(source, path, Position::new(0, 2)).unwrap();
+
+        assert_eq!(
+            generate_number_selector_edit(source, &target, "es", SelectorStyle::Prefix).unwrap(),
+            "Tienes { $coins } { $coins ->\n    [one] monedas.\n    *[other] monedas.\n}"
+        );
+    }
+
+    #[test]
+    fn generates_whole_number_selector_edit() {
+        let source = "coins-line = Tienes { $coins } monedas.\n";
+        let path = Path::new("locales/es/app.ftl");
+        let target = find_generate_selector_target(source, path, Position::new(0, 23)).unwrap();
+
+        assert_eq!(
+            generate_number_selector_edit(source, &target, "es", SelectorStyle::Whole).unwrap(),
+            "{ $coins ->\n    [one] Tienes { $coins } monedas.\n    *[other] Tienes { $coins } monedas.\n}"
+        );
+    }
+
+    #[test]
+    fn generates_latinian_zero_one_other_selector_categories() {
+        let source = "coins-line = Tev ir { $coins } monetas.\n";
+        let path = Path::new("locales/lv/app.ftl");
+        let target = find_generate_selector_target(source, path, Position::new(0, 2)).unwrap();
+
+        assert_eq!(
+            generate_number_selector_edit(source, &target, "lv", SelectorStyle::Prefix).unwrap(),
+            "Tev ir { $coins } { $coins ->\n    [zero] monetas.\n    [one] monetas.\n    *[other] monetas.\n}"
+        );
     }
 }

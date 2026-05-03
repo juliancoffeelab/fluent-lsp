@@ -4,3 +4,5 @@ zero-rollout =
         [one] viena pakotne ir gatava
        *[other] { $count } pakotnes ir gatavas
     }.
+
+coins-line = Tev ir { $coins } monetas.

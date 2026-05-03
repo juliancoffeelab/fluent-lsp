@@ -89,3 +89,9 @@ fn nvim_smoke_codelens_selector_combinations() {
     let result = run_scenario("codelens_selector_combinations");
     assert_eq!(result["ok"], Value::Bool(true));
 }
+
+#[test]
+fn nvim_smoke_code_action_generate_selector() {
+    let result = run_scenario("code_action_generate_selector");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
