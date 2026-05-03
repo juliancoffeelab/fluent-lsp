@@ -17,7 +17,6 @@ use tower_lsp::lsp_types::{
     CodeLens, CodeLensOptions, CodeLensParams, Command, DidChangeTextDocumentParams,
     DidOpenTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, InitializeParams, InitializeResult,
-    InlayHint, InlayHintLabel, InlayHintOptions, InlayHintParams, InlayHintServerCapabilities,
     Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, Range, ReferenceParams,
     ServerCapabilities, ShowDocumentParams, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
 };
@@ -452,14 +451,36 @@ impl Backend {
         let Some(hover_range) = find_fluent_definition(&source, &key) else {
             return Ok(None);
         };
+        let hover_position = params.text_document_position_params.position;
         let selector_overrides = selector_overrides_for_position(
             &source,
             &key,
-            params.text_document_position_params.position,
+            hover_position,
         );
-        let hover_value = render_hover_markdown(
-            &render_message_preview(pattern, Some(&selector_overrides)),
-        );
+        let current_preview = render_message_preview(pattern, Some(&selector_overrides));
+        let source_preview = if !workspace.is_origin_file(&path)
+            && !range_contains_position(&hover_range, hover_position)
+        {
+            let origin_path = workspace.origin_file_for(&path).ok_or_else(|| {
+                internal_error_with_message(format!(
+                    "failed to resolve origin counterpart for {}",
+                    path.display()
+                ))
+            })?;
+            let origin_uri = Url::from_file_path(&origin_path).map_err(|()| {
+                internal_error_with_message(format!(
+                    "failed to convert origin path to URI: {}",
+                    origin_path.display()
+                ))
+            })?;
+            let origin_source = self.read_document_text_required(&origin_uri).await?;
+            let origin_resource = parse_fluent_resource(&origin_source);
+            find_fluent_pattern(&origin_resource, &key)
+                .map(|origin_pattern| render_message_preview(origin_pattern, Some(&selector_overrides)))
+        } else {
+            None
+        };
+        let hover_value = render_hover_markdown(source_preview.as_ref(), &current_preview);
 
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -524,77 +545,6 @@ impl Backend {
             Ok(None)
         } else {
             Ok(Some(lenses))
-        }
-    }
-
-    async fn inlay_hints_for(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
-        let state = self.state.read().await;
-        let Some(workspace) = state.workspace.clone() else {
-            return Ok(None);
-        };
-        let uri = params.text_document.uri;
-        let path = uri
-            .to_file_path()
-            .map_err(|()| LspError::invalid_params("expected a file URI"))?;
-        if workspace.file_match(&path).is_none() {
-            return Ok(None);
-        }
-
-        let source = state
-            .open_documents
-            .get(&uri)
-            .cloned()
-            .or_else(|| std::fs::read_to_string(&path).ok())
-            .ok_or_else(|| {
-                internal_error_with_message(format!("failed to read {}", path.display()))
-            })?;
-        drop(state);
-
-        let origin_source = if workspace.is_origin_file(&path) {
-            source.clone()
-        } else {
-            let origin_path = workspace.origin_file_for(&path).ok_or_else(|| {
-                internal_error_with_message(format!(
-                    "failed to resolve origin counterpart for {}",
-                    path.display()
-                ))
-            })?;
-            let origin_uri = Url::from_file_path(&origin_path).map_err(|()| {
-                internal_error_with_message(format!(
-                    "failed to convert origin path to URI: {}",
-                    origin_path.display()
-                ))
-            })?;
-            self.read_document_text_required(&origin_uri).await?
-        };
-
-        let mut hints = Vec::new();
-        for key in collect_fluent_keys(&source) {
-            let Some(position) = find_fluent_hint_position(&source, &key) else {
-                continue;
-            };
-            if !range_contains_position(&params.range, position) {
-                continue;
-            }
-            let Some(label) = render_source_inlay_hint_label(&origin_source, &key) else {
-                continue;
-            };
-            hints.push(InlayHint {
-                position,
-                label: InlayHintLabel::String(label),
-                kind: None,
-                text_edits: None,
-                tooltip: None,
-                padding_left: Some(true),
-                padding_right: None,
-                data: None,
-            });
-        }
-
-        if hints.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(hints))
         }
     }
 
@@ -865,12 +815,6 @@ impl LanguageServer for Backend {
                     work_done_progress_options: Default::default(),
                 }),
                 hover_provider: Some(tower_lsp::lsp_types::HoverProviderCapability::Simple(true)),
-                inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
-                    InlayHintOptions {
-                        resolve_provider: Some(false),
-                        work_done_progress_options: Default::default(),
-                    },
-                ))),
                 references_provider: Some(OneOf::Left(true)),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
@@ -950,10 +894,6 @@ impl LanguageServer for Backend {
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
         self.hover_for(params).await
-    }
-
-    async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
-        self.inlay_hints_for(params).await
     }
 
     async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
@@ -1044,13 +984,25 @@ fn render_fluent_source(source: &str, key: &str) -> Option<SourceRender> {
     Some(SourceRender { comments, source })
 }
 
-fn render_hover_markdown(preview: &MessagePreview) -> String {
+fn render_preview_markdown(preview: &MessagePreview) -> String {
     let mut sections = Vec::new();
     if !preview.selectors.is_empty() {
         sections.push(render_selector_assignments(&preview.selectors));
     }
     sections.push(render_ftl_block(&preview.text));
     sections.join("\n\n")
+}
+
+fn render_hover_markdown(source_preview: Option<&MessagePreview>, current_preview: &MessagePreview) -> String {
+    match source_preview {
+        Some(source_preview) => [
+            render_preview_markdown(source_preview),
+            "---".to_string(),
+            render_preview_markdown(current_preview),
+        ]
+        .join("\n\n"),
+        None => render_preview_markdown(current_preview),
+    }
 }
 
 fn render_selector_combinations_document(
@@ -1160,25 +1112,6 @@ fn strip_attribute_container(rendered: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
         + "\n"
-}
-
-fn render_source_inlay_hint_label(source: &str, key: &str) -> Option<String> {
-    let resource = parse_fluent_resource(source);
-    let pattern = find_fluent_pattern(&resource, key)?;
-    let preview = render_message_preview(pattern, None);
-    if preview.selectors.is_empty() {
-        Some(preview.text)
-    } else {
-        let selectors = preview
-            .selectors
-            .iter()
-            .map(|(selector, variant)| {
-                format!("{}={variant}", selector.strip_prefix('$').unwrap_or(selector))
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        Some(format!("[{selectors}] {}", preview.text))
-    }
 }
 
 fn render_message_preview(
@@ -1952,21 +1885,6 @@ where
     error
 }
 
-fn find_fluent_hint_position(source: &str, key: &str) -> Option<Position> {
-    let key_range = find_fluent_definition(source, key)?;
-    let (line, _) = line_at(source, key_range.start.line as usize)?;
-    let equals_index = line.find('=')?;
-    let value_start = line[equals_index + 1..]
-        .chars()
-        .take_while(|ch| ch.is_whitespace())
-        .map(|ch| ch.len_utf16() as u32)
-        .sum::<u32>();
-    Some(Position::new(
-        key_range.start.line,
-        equals_index as u32 + 1 + value_start,
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2129,13 +2047,17 @@ mod tests {
 
     #[test]
     fn renders_hover_markdown_for_selector_preview() {
-        let rendered = render_hover_markdown(&MessagePreview {
-            selectors: vec![
-                ("$gender".to_string(), "female".to_string()),
-                ("$count".to_string(), "*".to_string()),
-            ],
-            text: "Copy the download link for her account on { $count } devices now.".to_string(),
-        });
+        let rendered = render_hover_markdown(
+            None,
+            &MessagePreview {
+                selectors: vec![
+                    ("$gender".to_string(), "female".to_string()),
+                    ("$count".to_string(), "*".to_string()),
+                ],
+                text: "Copy the download link for her account on { $count } devices now."
+                    .to_string(),
+            },
+        );
         assert_eq!(
             rendered,
             "`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```"
@@ -2143,31 +2065,83 @@ mod tests {
     }
 
     #[test]
-    fn renders_fluent_source_with_free_and_inline_comments() {
-        let source = "### Shared menu copy\n## File menu\n# Primary action\nmenu-save =\n    .label = Save\n";
-        let rendered = render_fluent_source(source, "menu-save.label").unwrap();
+    fn renders_hover_markdown_with_separator_between_source_and_current() {
+        let rendered = render_hover_markdown(
+            Some(&MessagePreview {
+                selectors: vec![
+                    ("$gender".to_string(), "female".to_string()),
+                    ("$count".to_string(), "*".to_string()),
+                ],
+                text: "Copy the download link for her account on { $count } devices now."
+                    .to_string(),
+            }),
+            &MessagePreview {
+                selectors: vec![
+                    ("$gender".to_string(), "female".to_string()),
+                    ("$count".to_string(), "*".to_string()),
+                ],
+                text: "Copia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora."
+                    .to_string(),
+            },
+        );
         assert_eq!(
             rendered,
-            SourceRender {
-                comments: Some(
-                    "### Shared menu copy\n## File menu\n# Primary action\n".to_string()
-                ),
-                source: ".label = Save\n".to_string(),
+            "`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```"
+        );
+    }
+
+    #[test]
+    fn renders_hover_markdown_without_duplicate_origin_sections() {
+        let rendered = render_hover_markdown(
+            None,
+            &MessagePreview {
+                selectors: Vec::new(),
+                text: "Save".to_string(),
+            },
+        );
+        assert_eq!(rendered.matches("---").count(), 0);
+        assert_eq!(rendered, "```ftl\nSave\n```");
+    }
+
+    #[test]
+    fn render_message_preview_matches_available_selectors_and_defaults_the_rest() {
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
+        let resource = parse_fluent_resource(source);
+        let pattern = find_fluent_pattern(&resource, "install-hint").unwrap();
+        let overrides = HashMap::from([("$count".to_string(), "one".to_string())]);
+
+        assert_eq!(
+            render_message_preview(pattern, Some(&overrides)),
+            MessagePreview {
+                selectors: vec![
+                    ("$gender".to_string(), "*".to_string()),
+                    ("$count".to_string(), "one".to_string()),
+                ],
+                text: "Copy the download link for their account on { $count } device now."
+                    .to_string(),
             }
         );
     }
 
     #[test]
-    fn renders_source_inlay_hint_label_for_message_and_attribute_selectors() {
-        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n\ndownload-action =\n    .tooltip =\n        Install the recommended build for { $gender ->\n            [female] her\n            [male] his\n           *[other] their\n        } account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n";
+    fn render_message_preview_ignores_local_only_selectors_and_defaults_source_only_ones() {
+        let source = "mismatch-rollout =\n    Summary for { $platform ->\n        [desktop] desktop\n       *[mobile] mobile\n    } users with { $count } { $count ->\n        [one] package\n       *[other] packages\n    } ready.\n";
+        let resource = parse_fluent_resource(source);
+        let pattern = find_fluent_pattern(&resource, "mismatch-rollout").unwrap();
+        let overrides = HashMap::from([
+            ("$gender".to_string(), "female".to_string()),
+            ("$count".to_string(), "one".to_string()),
+        ]);
 
         assert_eq!(
-            render_source_inlay_hint_label(source, "install-hint").unwrap(),
-            "[gender=*, count=*] Copy the download link for their account on { $count } devices now."
-        );
-        assert_eq!(
-            render_source_inlay_hint_label(source, "download-action.tooltip").unwrap(),
-            "[gender=*, count=*] Install the recommended build for their account on { $count } devices now."
+            render_message_preview(pattern, Some(&overrides)),
+            MessagePreview {
+                selectors: vec![
+                    ("$platform".to_string(), "*".to_string()),
+                    ("$count".to_string(), "one".to_string()),
+                ],
+                text: "Summary for mobile users with { $count } package ready.".to_string(),
+            }
         );
     }
 
@@ -2187,6 +2161,21 @@ mod tests {
                 ],
                 text: "Copy the download link for her account on { $count } devices now."
                     .to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn renders_fluent_source_with_free_and_inline_comments() {
+        let source = "### Shared menu copy\n## File menu\n# Primary action\nmenu-save =\n    .label = Save\n";
+        let rendered = render_fluent_source(source, "menu-save.label").unwrap();
+        assert_eq!(
+            rendered,
+            SourceRender {
+                comments: Some(
+                    "### Shared menu copy\n## File menu\n# Primary action\n".to_string()
+                ),
+                source: ".label = Save\n".to_string(),
             }
         );
     }

@@ -61,3 +61,12 @@ audience-rollout =
         [one] item
        *[other] items
     }.
+
+mismatch-rollout =
+    Summary for { $platform ->
+        [desktop] desktop
+       *[mobile] mobile
+    } users with { $count } { $count ->
+        [one] package
+       *[other] packages
+    } ready.

@@ -55,8 +55,8 @@ fn nvim_smoke_hover_translation() {
 }
 
 #[test]
-fn nvim_smoke_inlay_hint_source_preview() {
-    let result = run_scenario("inlay_hint_source_preview");
+fn nvim_smoke_hover_selector_mismatch() {
+    let result = run_scenario("hover_selector_mismatch");
     assert_eq!(result["ok"], Value::Bool(true));
 }
 

@@ -97,10 +97,9 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
         initialize["result"]["capabilities"]["hoverProvider"],
         Value::Bool(true)
     );
-    assert_eq!(
-        initialize["result"]["capabilities"]["inlayHintProvider"]["resolveProvider"],
-        Value::Bool(false)
-    );
+    assert!(initialize["result"]["capabilities"]
+        .get("inlayHintProvider")
+        .is_none());
     assert_eq!(
         initialize["result"]["capabilities"]["codeLensProvider"]["resolveProvider"],
         Value::Bool(false)
@@ -401,9 +400,9 @@ fn hover_from_translation_shows_local_formatted_messages() {
         &mut lsp,
         22,
         &source_path,
-        position_of(&source_text, "[female] ella"),
-        "`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```",
-        8,
+        position_of(&source_text, "Abre la build mas reciente de"),
+        "```ftl\nOpen the latest { -brand-name } build and pick up where you left off.\n```\n\n---\n\n```ftl\nAbre la build mas reciente de { -brand-name } y sigue donde lo dejaste.\n```",
+        2,
         0,
     );
 
@@ -411,29 +410,108 @@ fn hover_from_translation_shows_local_formatted_messages() {
         &mut lsp,
         23,
         &source_path,
-        position_of(&source_text, "Instala la build recomendada para la cuenta de"),
-        "`$gender=*`, `$count=*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.\n```",
-        21,
-        5,
-    );
-
-    assert_hover(
-        &mut lsp,
-        24,
-        &source_path,
-        position_of(&source_text, "en { $count } { $count ->"),
-        "`$gender=other`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```",
+        position_of(&source_text, "[female] ella"),
+        "`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```",
         8,
         0,
     );
 
     assert_hover(
         &mut lsp,
+        24,
+        &source_path,
+        position_of(&source_text, "Instala la build recomendada para la cuenta de"),
+        "`$gender=*`, `$count=*`\n\n```ftl\nInstall the recommended build for their account on { $count } devices now.\n```\n\n---\n\n`$gender=*`, `$count=*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.\n```",
+        21,
+        5,
+    );
+
+    assert_hover(
+        &mut lsp,
         25,
         &source_path,
-        position_of(&source_text, "[one] dispositivo"),
-        "`$gender=other`, `$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.\n```",
+        position_of(&source_text, "en { $count } { $count ->"),
+        "`$gender=other`, `$count=*`\n\n```ftl\nCopy the download link for their account on { $count } devices now.\n```\n\n---\n\n`$gender=other`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```",
         8,
+        0,
+    );
+
+    assert_hover(
+        &mut lsp,
+        26,
+        &source_path,
+        position_of(&source_text, "[one] dispositivo"),
+        "`$gender=other`, `$count=one`\n\n```ftl\nCopy the download link for their account on { $count } device now.\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.\n```",
+        8,
+        0,
+    );
+}
+
+#[test]
+fn hover_from_translation_matches_available_selector_variables_across_source_and_local() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_uri = format!("file://{}", source_path.display());
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 27,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {}
+        }
+    }));
+
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], 27);
+    assert_eq!(
+        initialize["result"]["capabilities"]["hoverProvider"],
+        Value::Bool(true)
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": source_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": source_text
+            }
+        }
+    }));
+
+    assert_hover(
+        &mut lsp,
+        28,
+        &source_path,
+        position_of(&source_text, "[female] ella misma"),
+        "`$platform=*`, `$count=*`\n\n```ftl\nSummary for mobile users with { $count } packages ready.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nResumen para ella misma con { $count } paquetes listo.\n```",
+        50,
+        0,
+    );
+
+    assert_hover(
+        &mut lsp,
+        29,
+        &source_path,
+        position_of(&source_text, "[one] paquete"),
+        "`$platform=*`, `$count=one`\n\n```ftl\nSummary for mobile users with { $count } package ready.\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\nResumen para elle misme con { $count } paquete listo.\n```",
+        50,
         0,
     );
 }
@@ -491,168 +569,6 @@ fn hover_from_origin_file_shows_formatted_attribute_text() {
         4,
         5,
     );
-}
-
-#[test]
-fn inlay_hints_show_source_previews_for_messages_and_attributes() {
-    let root = fixture_root();
-    let source_path = root.join("locales/es/app.ftl");
-    let source_uri = format!("file://{}", source_path.display());
-    let source_text = std::fs::read_to_string(&source_path).unwrap();
-    let origin_path = root.join("locales/en/app.ftl");
-    let origin_uri = format!("file://{}", origin_path.display());
-    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
-
-    let mut lsp = LspProcess::start();
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 35,
-        "method": "initialize",
-        "params": {
-            "processId": null,
-            "rootUri": format!("file://{}", root.display()),
-            "capabilities": {}
-        }
-    }));
-
-    let initialize = lsp.recv();
-    assert_eq!(initialize["id"], 35);
-    assert_eq!(
-        initialize["result"]["capabilities"]["inlayHintProvider"]["resolveProvider"],
-        Value::Bool(false)
-    );
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "initialized",
-        "params": {}
-    }));
-    let initialized_log = lsp.recv();
-    assert_eq!(initialized_log["method"], "window/logMessage");
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": source_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": source_text
-            }
-        }
-    }));
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": origin_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": origin_text
-            }
-        }
-    }));
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 36,
-        "method": "textDocument/inlayHint",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "range": {
-                "start": { "line": 0, "character": 0 },
-                "end": { "line": 40, "character": 0 }
-            }
-        }
-    }));
-
-    let hints = lsp.recv();
-    assert_eq!(hints["id"], 36);
-    let items = hints["result"]
-        .as_array()
-        .expect("expected inlay hint array");
-    assert!(items.iter().any(|item| {
-        item["label"] == Value::String("Welcome".to_string())
-            && item["position"]["line"].as_u64() == Some(1)
-            && item["position"]["character"].as_u64() == Some(16)
-    }));
-    assert!(items.iter().any(|item| {
-        item["label"] == Value::String("Launch".to_string())
-            && item["position"]["line"].as_u64() == Some(5)
-            && item["position"]["character"].as_u64() == Some(13)
-    }));
-    assert!(items.iter().any(|item| {
-        item["label"]
-            == Value::String(
-                "[gender=*, count=*] Copy the download link for their account on { $count } devices now."
-                    .to_string(),
-            )
-            && item["position"]["line"].as_u64() == Some(8)
-            && item["position"]["character"].as_u64() == Some(14)
-    }));
-    assert!(items.iter().any(|item| {
-        item["label"]
-            == Value::String(
-                "[gender=*, count=*] Install the recommended build for their account on { $count } devices now."
-                    .to_string(),
-            )
-            && item["position"]["line"].as_u64() == Some(21)
-            && item["position"]["character"].as_u64() == Some(14)
-    }));
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 37,
-        "method": "textDocument/inlayHint",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "range": {
-                "start": { "line": 8, "character": 14 },
-                "end": { "line": 8, "character": 15 }
-            }
-        }
-    }));
-
-    let filtered_hints = lsp.recv();
-    assert_eq!(filtered_hints["id"], 37);
-    let filtered_items = filtered_hints["result"]
-        .as_array()
-        .expect("expected filtered inlay hint array");
-    assert_eq!(filtered_items.len(), 1);
-    assert_eq!(
-        filtered_items[0]["label"],
-        Value::String(
-            "[gender=*, count=*] Copy the download link for their account on { $count } devices now."
-                .to_string(),
-        )
-    );
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 38,
-        "method": "textDocument/inlayHint",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
-            "range": {
-                "start": { "line": 0, "character": 0 },
-                "end": { "line": 40, "character": 0 }
-            }
-        }
-    }));
-
-    let origin_hints = lsp.recv();
-    assert_eq!(origin_hints["id"], 38);
-    let origin_items = origin_hints["result"]
-        .as_array()
-        .expect("expected origin inlay hint array");
-    assert!(origin_items.iter().any(|item| {
-        item["label"] == Value::String("Welcome".to_string())
-            && item["position"]["line"].as_u64() == Some(1)
-            && item["position"]["character"].as_u64() == Some(16)
-    }));
 }
 
 #[test]

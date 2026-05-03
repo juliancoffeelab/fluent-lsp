@@ -40,3 +40,15 @@ sync-status =
        *[other] { $count } завантаження готове.
     }
 secondary-copy = Більше тексту
+
+mismatch-rollout =
+    Підсумок для { $gender ->
+        [female] неї
+        [male] нього
+       *[other] них
+    } з { $count } { $count ->
+        [one] пакунком
+        [few] пакунками
+        [many] пакунками
+       *[other] пакунками
+    } готовий.

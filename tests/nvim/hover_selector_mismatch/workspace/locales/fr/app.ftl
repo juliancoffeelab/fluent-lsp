@@ -32,3 +32,13 @@ sync-status =
        *[other] { $count } telechargements sont prets.
     }
 secondary-copy = Plus de texte
+
+mismatch-rollout =
+    Resume pour { $gender ->
+        [female] elle meme
+        [male] lui meme
+       *[other] iel meme
+    } avec { $count } { $count ->
+        [one] paquet
+       *[other] paquets
+    } pret.

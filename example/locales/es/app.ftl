@@ -34,3 +34,13 @@ sync-status =
        *[other] Hay { $count } descargas listas.
     }
 secondary-copy = Mas texto
+
+mismatch-rollout =
+    Resumen para { $gender ->
+        [female] ella misma
+        [male] el mismo
+       *[other] elle misme
+    } con { $count } { $count ->
+        [one] paquete
+       *[other] paquetes
+    } listo.

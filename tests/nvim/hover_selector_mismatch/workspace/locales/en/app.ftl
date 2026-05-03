@@ -48,3 +48,12 @@ sync-status =
     }
 
 secondary-copy = More text
+
+mismatch-rollout =
+    Summary for { $platform ->
+        [desktop] desktop
+       *[mobile] mobile
+    } users with { $count } { $count ->
+        [one] package
+       *[other] packages
+    } ready.

@@ -47,6 +47,7 @@ function M.run()
   local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
   local value = hover.contents.value
   assert(value == "```ftl\nSave\n```", "unexpected origin hover preview: " .. value)
+  assert(not value:match("\n\n---\n\n"), "origin hover should not duplicate source/current sections")
 
   write_result(result_path, {
     ok = true,
