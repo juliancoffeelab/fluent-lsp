@@ -335,9 +335,18 @@ struct ActiveSelectorContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VariablePlaceable {
     name: String,
-    span: ByteRange<usize>,
+    reference_span: ByteRange<usize>,
+    selection_span: ByteRange<usize>,
+    anchor_span: ByteRange<usize>,
     container_span: ByteRange<usize>,
-    direct_placeable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FunctionSelectorTarget {
+    selector_text: String,
+    selection_span: ByteRange<usize>,
+    anchor_span: ByteRange<usize>,
+    container_span: ByteRange<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,6 +355,8 @@ struct GenerateSelectorTarget {
     pattern_span: ByteRange<usize>,
     variables: Vec<VariablePlaceable>,
     selected_variable: Option<VariablePlaceable>,
+    functions: Vec<FunctionSelectorTarget>,
+    selected_function: Option<FunctionSelectorTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -662,7 +673,13 @@ impl Backend {
                     }
                 };
 
-                let title = if let Some(variable) = &target.selected_variable {
+                let title = if let Some(function) = &target.selected_function {
+                    format!(
+                        "Generate number selector from {} ({})",
+                        function.selector_text,
+                        candidate_style.label()
+                    )
+                } else if let Some(variable) = &target.selected_variable {
                     format!(
                         "Generate number selector from {} ({})",
                         variable.name,
@@ -1617,13 +1634,25 @@ fn find_generate_selector_target(
     let resource = parse_fluent_resource(source);
     let pattern = find_fluent_pattern(&resource, &key)?;
     let variables = collect_variable_placeables(source, pattern);
+    let functions = collect_function_selector_targets(source, pattern);
     let selected_variable = variables
         .iter()
-        .find(|variable| position_overlaps_byte_span(source, position, &variable.span))
+        .find(|variable| position_overlaps_byte_span(source, position, &variable.selection_span))
         .cloned();
+    let selected_function = if selected_variable.is_none() {
+        functions
+            .iter()
+            .filter(|function| position_overlaps_byte_span(source, position, &function.selection_span))
+            .min_by_key(|function| function.selection_span.end - function.selection_span.start)
+            .cloned()
+    } else {
+        None
+    };
 
     let pattern_span = if let Some(variable) = &selected_variable {
         variable.container_span.clone()
+    } else if let Some(function) = &selected_function {
+        function.container_span.clone()
     } else if let Some(position_span) =
         deepest_pattern_span_for_position(source, pattern, position)
     {
@@ -1639,7 +1668,11 @@ fn find_generate_selector_target(
         .into_iter()
         .filter(|variable| variable.container_span == pattern_span)
         .collect::<Vec<_>>();
-    if selected_variable.is_none() {
+    let functions = functions
+        .into_iter()
+        .filter(|function| function.container_span == pattern_span)
+        .collect::<Vec<_>>();
+    if selected_variable.is_none() && selected_function.is_none() {
         let distinct_variable_names = variables
             .iter()
             .map(|variable| variable.name.as_str())
@@ -1648,9 +1681,7 @@ fn find_generate_selector_target(
         if distinct_variable_names > 1 {
             return None;
         }
-        if !variables.iter().any(|variable| variable.direct_placeable)
-            && pattern_contains_select(pattern)
-        {
+        if pattern_contains_select(pattern) {
             return None;
         }
     }
@@ -1660,6 +1691,8 @@ fn find_generate_selector_target(
         pattern_span,
         variables,
         selected_variable,
+        functions,
+        selected_function,
     })
 }
 
@@ -1670,6 +1703,15 @@ fn collect_variable_placeables(
     let mut variables = Vec::new();
     collect_variable_placeables_in_pattern(source, pattern, &mut variables);
     variables
+}
+
+fn collect_function_selector_targets(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+) -> Vec<FunctionSelectorTarget> {
+    let mut functions = Vec::new();
+    collect_function_selector_targets_in_pattern(source, pattern, &mut functions);
+    functions
 }
 
 fn generate_number_selector_edit(
@@ -1684,29 +1726,32 @@ fn generate_number_selector_edit(
     let anchor_variable = target
         .selected_variable
         .as_ref()
-        .filter(|variable| variable.direct_placeable)
         .cloned()
         .or_else(|| {
             target
                 .variables
                 .iter()
-                .find(|variable| variable.direct_placeable)
+                .find(|variable| variable.anchor_span.start < variable.anchor_span.end)
                 .cloned()
         });
-    let binding = variable_binding_for_target(
+    let anchor_function = target.selected_function.as_ref().cloned();
+    let binding = selector_binding_for_target(
+        target.selected_function.as_ref(),
         target.selected_variable.as_ref(),
-        target.variables.first().or(anchor_variable.as_ref()),
+        target.variables.first(),
         use_snippets,
     );
 
-    let whole_text = if target.selected_variable.is_none() {
-        if let Some(anchor) = anchor_variable.as_ref() {
-            replace_anchor_placeables(
+    let whole_text = if target.selected_function.is_some() {
+        pattern_text.to_string()
+    } else if target.selected_variable.is_none() {
+        if let Some(variable) = anchor_variable.as_ref() {
+            replace_variable_references(
                 pattern_text,
                 target.pattern_span.start,
                 &target.variables,
-                &anchor.name,
-                &render_variable_placeable(&binding),
+                &variable.name,
+                &render_selector_token(&binding),
             )
         } else {
             pattern_text.to_string()
@@ -1718,29 +1763,45 @@ fn generate_number_selector_edit(
     let replacement = match style {
         SelectorStyle::Whole => indent_selector_block(
             &render_generated_selector_block(
-                &render_variable_token(&binding),
+                &render_selector_token(&binding),
                 language,
                 &whole_text,
             ),
             &line_indent,
         ),
         SelectorStyle::Prefix => {
-            let anchor = anchor_variable.as_ref()?;
-            let anchor_relative = relative_span(&target.pattern_span, &anchor.span)?;
-            let before_including_anchor = replace_anchor_placeables(
-                &pattern_text[..anchor_relative.end],
-                target.pattern_span.start,
-                &target.variables,
-                &anchor.name,
-                &render_variable_placeable(&binding),
-            );
-            let after_anchor = replace_anchor_placeables(
-                &pattern_text[anchor_relative.end..],
-                target.pattern_span.start + anchor_relative.end,
-                &target.variables,
-                &anchor.name,
-                &render_variable_placeable(&binding),
-            );
+            let anchor_relative = if let Some(function) = anchor_function.as_ref() {
+                relative_span(&target.pattern_span, &function.anchor_span)?
+            } else {
+                let variable = anchor_variable.as_ref()?;
+                relative_span(&target.pattern_span, &variable.anchor_span)?
+            };
+            let before_including_anchor = if target.selected_function.is_some() {
+                pattern_text[..anchor_relative.end].to_string()
+            } else if let Some(variable) = anchor_variable.as_ref() {
+                replace_variable_references(
+                    &pattern_text[..anchor_relative.end],
+                    target.pattern_span.start,
+                    &target.variables,
+                    &variable.name,
+                    &render_selector_token(&binding),
+                )
+            } else {
+                pattern_text[..anchor_relative.end].to_string()
+            };
+            let after_anchor = if target.selected_function.is_some() {
+                pattern_text[anchor_relative.end..].to_string()
+            } else if let Some(variable) = anchor_variable.as_ref() {
+                replace_variable_references(
+                    &pattern_text[anchor_relative.end..],
+                    target.pattern_span.start + anchor_relative.end,
+                    &target.variables,
+                    &variable.name,
+                    &render_selector_token(&binding),
+                )
+            } else {
+                pattern_text[anchor_relative.end..].to_string()
+            };
             if after_anchor.is_empty() {
                 return None;
             }
@@ -1748,7 +1809,7 @@ fn generate_number_selector_edit(
                 &before_including_anchor,
                 &indent_selector_block(
                     &render_generated_selector_block(
-                        &render_variable_token(&binding),
+                        &render_selector_token(&binding),
                         language,
                         &after_anchor,
                     ),
@@ -1757,27 +1818,43 @@ fn generate_number_selector_edit(
             )
         }
         SelectorStyle::Suffix => {
-            let anchor = anchor_variable.as_ref()?;
-            let anchor_relative = relative_span(&target.pattern_span, &anchor.span)?;
-            let before_anchor = replace_anchor_placeables(
-                &pattern_text[..anchor_relative.start],
-                target.pattern_span.start,
-                &target.variables,
-                &anchor.name,
-                &render_variable_placeable(&binding),
-            );
-            let from_anchor = replace_anchor_placeables(
-                &pattern_text[anchor_relative.start..],
-                target.pattern_span.start + anchor_relative.start,
-                &target.variables,
-                &anchor.name,
-                &render_variable_placeable(&binding),
-            );
+            let anchor_relative = if let Some(function) = anchor_function.as_ref() {
+                relative_span(&target.pattern_span, &function.anchor_span)?
+            } else {
+                let variable = anchor_variable.as_ref()?;
+                relative_span(&target.pattern_span, &variable.anchor_span)?
+            };
+            let before_anchor = if target.selected_function.is_some() {
+                pattern_text[..anchor_relative.start].to_string()
+            } else if let Some(variable) = anchor_variable.as_ref() {
+                replace_variable_references(
+                    &pattern_text[..anchor_relative.start],
+                    target.pattern_span.start,
+                    &target.variables,
+                    &variable.name,
+                    &render_selector_token(&binding),
+                )
+            } else {
+                pattern_text[..anchor_relative.start].to_string()
+            };
+            let from_anchor = if target.selected_function.is_some() {
+                pattern_text[anchor_relative.start..].to_string()
+            } else if let Some(variable) = anchor_variable.as_ref() {
+                replace_variable_references(
+                    &pattern_text[anchor_relative.start..],
+                    target.pattern_span.start + anchor_relative.start,
+                    &target.variables,
+                    &variable.name,
+                    &render_selector_token(&binding),
+                )
+            } else {
+                pattern_text[anchor_relative.start..].to_string()
+            };
             concat_prefix_and_selector(
                 &before_anchor,
                 &indent_selector_block(
                     &render_generated_selector_block(
-                        &render_variable_token(&binding),
+                        &render_selector_token(&binding),
                         language,
                         &from_anchor,
                     ),
@@ -2251,14 +2328,16 @@ fn plural_categories(language: &str) -> &'static [&'static str] {
 }
 
 fn available_selector_styles(target: &GenerateSelectorTarget) -> Vec<SelectorStyle> {
-    if !target.variables.iter().any(|variable| variable.direct_placeable) {
-        vec![SelectorStyle::Whole]
-    } else {
+    if target.selected_function.is_some() || !target.variables.is_empty() {
         vec![
             SelectorStyle::Prefix,
             SelectorStyle::Whole,
             SelectorStyle::Suffix,
         ]
+    } else if target.variables.is_empty() {
+        vec![SelectorStyle::Whole]
+    } else {
+        vec![SelectorStyle::Whole]
     }
 }
 
@@ -2291,19 +2370,27 @@ fn collect_variable_placeables_in_element(
     variables: &mut Vec<VariablePlaceable>,
 ) {
     if let fluent_syntax::ast::PatternElement::Placeable { expression, span } = element {
+        let anchor_span = normalize_placeable_span(source, span.0.clone());
         if let fluent_syntax::ast::Expression::Inline(
-            fluent_syntax::ast::InlineExpression::VariableReference { id, .. },
+            fluent_syntax::ast::InlineExpression::VariableReference { id, span, .. },
             _,
         ) = expression
         {
             variables.push(VariablePlaceable {
                 name: format!("${}", id.name),
-                span: normalize_placeable_span(source, span.0.clone()),
+                reference_span: span.0.clone(),
+                selection_span: anchor_span.clone(),
+                anchor_span,
                 container_span: container_span.clone(),
-                direct_placeable: true,
             });
         } else {
-            collect_variable_references_in_expression(source, expression, container_span, variables);
+            collect_variable_references_in_expression(
+                source,
+                expression,
+                container_span,
+                &anchor_span,
+                variables,
+            );
         }
     }
 }
@@ -2312,16 +2399,29 @@ fn collect_variable_references_in_expression(
     source: &str,
     expression: &fluent_syntax::ast::Expression<&str>,
     container_span: &ByteRange<usize>,
+    anchor_span: &ByteRange<usize>,
     variables: &mut Vec<VariablePlaceable>,
 ) {
     match expression {
         fluent_syntax::ast::Expression::Inline(inline, _) => {
-            collect_variable_references_in_inline(source, inline, container_span, variables);
+            collect_variable_references_in_inline(
+                source,
+                inline,
+                container_span,
+                anchor_span,
+                variables,
+            );
         }
         fluent_syntax::ast::Expression::Select {
             selector, variants, ..
         } => {
-            collect_variable_references_in_inline(source, selector, container_span, variables);
+            collect_variable_references_in_inline(
+                source,
+                selector,
+                container_span,
+                anchor_span,
+                variables,
+            );
             for variant in variants {
                 collect_variable_placeables_in_pattern(source, &variant.value, variables);
             }
@@ -2333,19 +2433,27 @@ fn collect_variable_references_in_inline(
     source: &str,
     inline: &fluent_syntax::ast::InlineExpression<&str>,
     container_span: &ByteRange<usize>,
+    anchor_span: &ByteRange<usize>,
     variables: &mut Vec<VariablePlaceable>,
 ) {
     match inline {
         fluent_syntax::ast::InlineExpression::VariableReference { id, span } => {
             variables.push(VariablePlaceable {
                 name: format!("${}", id.name),
-                span: span.0.clone(),
+                reference_span: span.0.clone(),
+                selection_span: span.0.clone(),
+                anchor_span: anchor_span.clone(),
                 container_span: container_span.clone(),
-                direct_placeable: false,
             });
         }
         fluent_syntax::ast::InlineExpression::FunctionReference { arguments, .. } => {
-            collect_variable_references_in_call_arguments(source, arguments, container_span, variables);
+            collect_variable_references_in_call_arguments(
+                source,
+                arguments,
+                container_span,
+                anchor_span,
+                variables,
+            );
         }
         fluent_syntax::ast::InlineExpression::TermReference { arguments, .. } => {
             if let Some(arguments) = arguments {
@@ -2353,12 +2461,19 @@ fn collect_variable_references_in_inline(
                     source,
                     arguments,
                     container_span,
+                    anchor_span,
                     variables,
                 );
             }
         }
         fluent_syntax::ast::InlineExpression::Placeable { expression, .. } => {
-            collect_variable_references_in_expression(source, expression, container_span, variables);
+            collect_variable_references_in_expression(
+                source,
+                expression,
+                container_span,
+                anchor_span,
+                variables,
+            );
         }
         fluent_syntax::ast::InlineExpression::StringLiteral { .. }
         | fluent_syntax::ast::InlineExpression::NumberLiteral { .. }
@@ -2370,13 +2485,166 @@ fn collect_variable_references_in_call_arguments(
     source: &str,
     arguments: &fluent_syntax::ast::CallArguments<&str>,
     container_span: &ByteRange<usize>,
+    anchor_span: &ByteRange<usize>,
     variables: &mut Vec<VariablePlaceable>,
 ) {
     for positional in &arguments.positional {
-        collect_variable_references_in_inline(source, positional, container_span, variables);
+        collect_variable_references_in_inline(
+            source,
+            positional,
+            container_span,
+            anchor_span,
+            variables,
+        );
     }
     for named in &arguments.named {
-        collect_variable_references_in_inline(source, &named.value, container_span, variables);
+        collect_variable_references_in_inline(
+            source,
+            &named.value,
+            container_span,
+            anchor_span,
+            variables,
+        );
+    }
+}
+
+fn collect_function_selector_targets_in_pattern(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    functions: &mut Vec<FunctionSelectorTarget>,
+) {
+    let container_span = trim_trailing_newlines_from_span(source, pattern.span.0.clone());
+    for element in &pattern.elements {
+        collect_function_selector_targets_in_element(source, element, &container_span, functions);
+    }
+}
+
+fn collect_function_selector_targets_in_element(
+    source: &str,
+    element: &fluent_syntax::ast::PatternElement<&str>,
+    container_span: &ByteRange<usize>,
+    functions: &mut Vec<FunctionSelectorTarget>,
+) {
+    if let fluent_syntax::ast::PatternElement::Placeable { expression, span } = element {
+        let anchor_span = normalize_placeable_span(source, span.0.clone());
+        collect_function_selector_targets_in_expression(
+            source,
+            expression,
+            container_span,
+            &anchor_span,
+            functions,
+        );
+    }
+}
+
+fn collect_function_selector_targets_in_expression(
+    source: &str,
+    expression: &fluent_syntax::ast::Expression<&str>,
+    container_span: &ByteRange<usize>,
+    anchor_span: &ByteRange<usize>,
+    functions: &mut Vec<FunctionSelectorTarget>,
+) {
+    match expression {
+        fluent_syntax::ast::Expression::Inline(inline, _) => collect_function_selector_targets_in_inline(
+            source,
+            inline,
+            container_span,
+            anchor_span,
+            functions,
+        ),
+        fluent_syntax::ast::Expression::Select {
+            selector, variants, ..
+        } => {
+            collect_function_selector_targets_in_inline(
+                source,
+                selector,
+                container_span,
+                anchor_span,
+                functions,
+            );
+            for variant in variants {
+                collect_function_selector_targets_in_pattern(source, &variant.value, functions);
+            }
+        }
+    }
+}
+
+fn collect_function_selector_targets_in_inline(
+    source: &str,
+    inline: &fluent_syntax::ast::InlineExpression<&str>,
+    container_span: &ByteRange<usize>,
+    anchor_span: &ByteRange<usize>,
+    functions: &mut Vec<FunctionSelectorTarget>,
+) {
+    match inline {
+        fluent_syntax::ast::InlineExpression::FunctionReference { span, arguments, .. } => {
+            if let Some(selector_text) = source.get(span.0.clone()) {
+                functions.push(FunctionSelectorTarget {
+                    selector_text: selector_text.to_string(),
+                    selection_span: span.0.clone(),
+                    anchor_span: anchor_span.clone(),
+                    container_span: container_span.clone(),
+                });
+            }
+            collect_function_selector_targets_in_call_arguments(
+                source,
+                arguments,
+                container_span,
+                anchor_span,
+                functions,
+            );
+        }
+        fluent_syntax::ast::InlineExpression::TermReference { arguments, .. } => {
+            if let Some(arguments) = arguments {
+                collect_function_selector_targets_in_call_arguments(
+                    source,
+                    arguments,
+                    container_span,
+                    anchor_span,
+                    functions,
+                );
+            }
+        }
+        fluent_syntax::ast::InlineExpression::Placeable { expression, .. } => {
+            collect_function_selector_targets_in_expression(
+                source,
+                expression,
+                container_span,
+                anchor_span,
+                functions,
+            );
+        }
+        fluent_syntax::ast::InlineExpression::StringLiteral { .. }
+        | fluent_syntax::ast::InlineExpression::NumberLiteral { .. }
+        | fluent_syntax::ast::InlineExpression::MessageReference { .. }
+        | fluent_syntax::ast::InlineExpression::VariableReference { .. } => {}
+    }
+}
+
+fn collect_function_selector_targets_in_call_arguments(
+    source: &str,
+    arguments: &fluent_syntax::ast::CallArguments<&str>,
+    container_span: &ByteRange<usize>,
+    anchor_span: &ByteRange<usize>,
+    functions: &mut Vec<FunctionSelectorTarget>,
+) {
+    for positional in &arguments.positional {
+        collect_function_selector_targets_in_inline(
+            source,
+            positional,
+            container_span,
+            anchor_span,
+            functions,
+        );
+    }
+    for named in &arguments.named {
+        collect_function_selector_targets_in_inline(
+            source,
+            &named.value,
+            container_span,
+            anchor_span,
+            functions,
+        );
     }
 }
 
@@ -2466,16 +2734,20 @@ fn collect_pattern_spans_from_expression(
     }
 }
 
-fn variable_binding_for_target(
+fn selector_binding_for_target(
+    selected_function: Option<&FunctionSelectorTarget>,
     selected_variable: Option<&VariablePlaceable>,
-    anchor_variable: Option<&VariablePlaceable>,
+    fallback_variable: Option<&VariablePlaceable>,
     use_snippets: bool,
 ) -> VariableBinding {
+    if let Some(function) = selected_function {
+        return VariableBinding::Concrete(function.selector_text.clone());
+    }
     if let Some(variable) = selected_variable {
         return VariableBinding::Concrete(variable.name.clone());
     }
 
-    let default_name = anchor_variable
+    let default_name = fallback_variable
         .map(|variable| variable.name.trim_start_matches('$').to_string())
         .unwrap_or_else(|| "count".to_string());
 
@@ -2486,17 +2758,13 @@ fn variable_binding_for_target(
     }
 }
 
-fn render_variable_token(binding: &VariableBinding) -> String {
+fn render_selector_token(binding: &VariableBinding) -> String {
     match binding {
         VariableBinding::Concrete(name) => name.clone(),
         VariableBinding::Placeholder(default_name) => {
             format!("\\$${{1:{default_name}}}")
         }
     }
-}
-
-fn render_variable_placeable(binding: &VariableBinding) -> String {
-    format!("{{ {} }}", render_variable_token(binding))
 }
 
 fn direct_variable_placeable_name<'a>(
@@ -2635,7 +2903,7 @@ fn common_prefix_element_count(source: &str, variants: &[ParsedVariant<'_>]) -> 
     common_len
 }
 
-fn replace_anchor_placeables(
+fn replace_variable_references(
     fragment: &str,
     fragment_start: usize,
     variables: &[VariablePlaceable],
@@ -2647,13 +2915,13 @@ fn replace_anchor_placeables(
         .iter()
         .filter(|variable| {
             variable.name == target_name
-                && variable.span.start >= fragment_start
-                && variable.span.end <= fragment_end
+                && variable.reference_span.start >= fragment_start
+                && variable.reference_span.end <= fragment_end
         })
         .map(|variable| {
             (
-                variable.span.start - fragment_start,
-                variable.span.end - fragment_start,
+                variable.reference_span.start - fragment_start,
+                variable.reference_span.end - fragment_start,
             )
         })
         .collect::<Vec<_>>();
@@ -3927,15 +4195,22 @@ mod tests {
     }
 
     #[test]
-    fn nested_function_argument_variable_only_offers_whole_generation() {
+    fn nested_function_argument_variable_uses_enclosing_placeable_as_anchor() {
         let source = "formatted-download = Descarga { NUMBER($downloads) } archivos.\n";
         let path = Path::new("locales/es/app.ftl");
 
         let from_key = find_generate_selector_target(source, path, Position::new(0, 3)).unwrap();
         assert_eq!(from_key.variables.len(), 1);
         assert_eq!(from_key.variables[0].name, "$downloads");
-        assert!(!from_key.variables[0].direct_placeable);
-        assert_eq!(available_selector_styles(&from_key), vec![SelectorStyle::Whole]);
+        assert_eq!(
+            available_selector_styles(&from_key),
+            vec![SelectorStyle::Prefix, SelectorStyle::Whole, SelectorStyle::Suffix]
+        );
+        assert_eq!(
+            generate_number_selector_edit(source, &from_key, "es", SelectorStyle::Prefix, true)
+                .unwrap(),
+            "Descarga { NUMBER(\\$${1:downloads}) } { \\$${1:downloads} ->\n    [one] archivos.\n    *[other] archivos.\n}"
+        );
 
         let from_variable =
             find_generate_selector_target(source, path, Position::new(0, 39)).unwrap();
@@ -3951,11 +4226,50 @@ mod tests {
                 source,
                 &from_variable,
                 "es",
-                SelectorStyle::Whole,
+                SelectorStyle::Prefix,
                 false,
             )
             .unwrap(),
-            "{ $downloads ->\n    [one] Descarga { NUMBER($downloads) } archivos.\n    *[other] Descarga { NUMBER($downloads) } archivos.\n}"
+            "Descarga { NUMBER($downloads) } { $downloads ->\n    [one] archivos.\n    *[other] archivos.\n}"
+        );
+    }
+
+    #[test]
+    fn function_call_under_cursor_selects_on_function_expression_itself() {
+        let source = "formatted-download = Descarga { NUMBER($downloads) } archivos.\n";
+        let path = Path::new("locales/es/app.ftl");
+        let function_column = source.find("NUMBER(").unwrap() as u32;
+        let target =
+            find_generate_selector_target(source, path, Position::new(0, function_column)).unwrap();
+
+        assert_eq!(
+            target
+                .selected_function
+                .as_ref()
+                .map(|function| function.selector_text.as_str()),
+            Some("NUMBER($downloads)")
+        );
+        assert_eq!(
+            generate_number_selector_edit(source, &target, "es", SelectorStyle::Prefix, false)
+                .unwrap(),
+            "Descarga { NUMBER($downloads) } { NUMBER($downloads) ->\n    [one] archivos.\n    *[other] archivos.\n}"
+        );
+    }
+
+    #[test]
+    fn nested_function_calls_still_find_inner_variable_anchor() {
+        let source = "deep-download = Descarga { WRAP(NUMBER($downloads)) } archivos.\n";
+        let path = Path::new("locales/es/app.ftl");
+        let target = find_generate_selector_target(source, path, Position::new(0, 44)).unwrap();
+
+        assert_eq!(
+            target.selected_variable.as_ref().map(|variable| variable.name.as_str()),
+            Some("$downloads")
+        );
+        assert_eq!(
+            generate_number_selector_edit(source, &target, "es", SelectorStyle::Prefix, false)
+                .unwrap(),
+            "Descarga { WRAP(NUMBER($downloads)) } { $downloads ->\n    [one] archivos.\n    *[other] archivos.\n}"
         );
     }
 

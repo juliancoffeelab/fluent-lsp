@@ -9,6 +9,7 @@ nested-coins =
 download-count =
     .tooltip = Descarga { $files } archivos.
 formatted-download = Descarga { NUMBER($downloads) } archivos.
+deep-download = Descarga { WRAP(NUMBER($downloads)) } archivos.
 coins-period = Tienes { $coins }.
 whole-coins = { $coins ->
     [one] Tienes { $coins } moneda.

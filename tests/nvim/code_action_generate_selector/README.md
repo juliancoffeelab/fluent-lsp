@@ -12,7 +12,8 @@ It verifies these client-visible behaviors:
 - ambiguous message keys with multiple candidate variables do not advertise generation
 - root entries that already branch but have no clear local anchor do not advertise generation
 - attributes participate in generation
-- variables nested inside function arguments still participate, but only whole-form generation is offered because prefix/suffix would split the function call
+- variables nested inside function arguments participate using the enclosing placeable as the split anchor, so `NUMBER($downloads)` can generate prefix/whole/suffix forms without splitting the call itself
+- when the cursor is on a function call rather than on the nested variable, the generated selector can target the function expression itself
 - punctuation tails stay attached in generated variant bodies instead of turning `.` into ` .`
 - whole-form selectors can be rewritten into prefix and suffix forms when the shared structure is lossless
 - prefix-form selectors can be rewritten into whole form
@@ -32,8 +33,11 @@ How the scenario is exercised:
 - asserts only whole-form generation is offered
 - requests `textDocument/codeAction` on `download-count.tooltip`
 - asserts attribute generation is available
-- requests `textDocument/codeAction` on `formatted-download` and on `$downloads`
-- asserts a variable inside `NUMBER(...)` is detected but only whole-form generation is advertised
+- requests `textDocument/codeAction` on `formatted-download`, on `$downloads`, and on `NUMBER($downloads)`
+- asserts a variable inside `NUMBER(...)` uses the enclosing placeable as the split anchor
+- asserts a function call under the cursor can be used as the selector expression itself
+- requests `textDocument/codeAction` on `deep-download`
+- asserts nested function calls like `WRAP(NUMBER($downloads))` can also be selected as the selector expression
 - requests `textDocument/codeAction` on `coins-period`
 - asserts generated variant text keeps `.` attached without an extra leading space
 - requests `textDocument/codeAction` on `whole-coins`

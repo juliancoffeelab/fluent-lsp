@@ -52,8 +52,11 @@ coins-line = Tienes { $coins } monedas.
 # Objetivo simple para generar selector sin variable existente
 plain-count = Monedas disponibles.
 
-# Caso conservador de solo whole con referencia anidada dentro de NUMBER(...)
+# Caso con referencia anidada dentro de NUMBER(...)
 formatted-download = Descarga { NUMBER($downloads) } archivos.
+
+# Caso con llamadas a funciones anidadas alrededor de la variable
+deep-download = Descarga { WRAP(NUMBER($downloads)) } archivos.
 
 # Caso para verificar que la puntuacion siga pegada al texto generado
 coins-period = Tienes { $coins }.

@@ -1370,7 +1370,7 @@ fn code_action_supports_attributes() {
 }
 
 #[test]
-fn code_action_limits_nested_function_argument_variables_to_whole() {
+fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
@@ -1395,15 +1395,12 @@ fn code_action_limits_nested_function_argument_variables_to_whole() {
         &source_path,
         position_of(&source_text, "formatted-download"),
     );
-    assert_eq!(key_actions.len(), 1);
+    assert_eq!(key_actions.len(), 3);
+    let key_prefix = find_code_action(&key_actions, "Generate number selector (prefix)");
     assert_eq!(
-        key_actions[0]["title"],
-        Value::String("Generate number selector (whole)".to_string())
-    );
-    assert_eq!(
-        key_actions[0]["edit"]["documentChanges"][0]["edits"][0]["snippet"],
+        key_prefix["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
-            "{ \\$${1:downloads} ->\n    [one] Descarga { NUMBER($downloads) } archivos.\n    *[other] Descarga { NUMBER($downloads) } archivos.\n}"
+            "Descarga { NUMBER(\\$${1:downloads}) } { \\$${1:downloads} ->\n    [one] archivos.\n    *[other] archivos.\n}"
                 .to_string()
         )
     );
@@ -1414,10 +1411,43 @@ fn code_action_limits_nested_function_argument_variables_to_whole() {
         &source_path,
         position_of(&source_text, "$downloads"),
     );
-    assert_eq!(variable_actions.len(), 1);
+    assert_eq!(variable_actions.len(), 3);
     assert_eq!(
-        variable_actions[0]["title"],
-        Value::String("Generate number selector from $downloads (whole)".to_string())
+        find_code_action(&variable_actions, "Generate number selector from $downloads (prefix)")["edit"]["documentChanges"][0]["edits"][0]["snippet"],
+        Value::String(
+            "Descarga { NUMBER($downloads) } { $downloads ->\n    [one] archivos.\n    *[other] archivos.\n}"
+                .to_string()
+        )
+    );
+
+    let function_actions = request_code_actions(
+        &mut lsp,
+        104,
+        &source_path,
+        position_of(&source_text, "NUMBER($downloads)"),
+    );
+    assert_eq!(function_actions.len(), 3);
+    assert_eq!(
+        find_code_action(&function_actions, "Generate number selector from NUMBER($downloads) (prefix)")["edit"]["documentChanges"][0]["edits"][0]["snippet"],
+        Value::String(
+            "Descarga { NUMBER($downloads) } { NUMBER($downloads) ->\n    [one] archivos.\n    *[other] archivos.\n}"
+                .to_string()
+        )
+    );
+
+    let deep_variable_actions = request_code_actions(
+        &mut lsp,
+        105,
+        &source_path,
+        position_of(&source_text, "WRAP(NUMBER($downloads))"),
+    );
+    assert_eq!(deep_variable_actions.len(), 3);
+    assert_eq!(
+        find_code_action(&deep_variable_actions, "Generate number selector from WRAP(NUMBER($downloads)) (prefix)")["edit"]["documentChanges"][0]["edits"][0]["snippet"],
+        Value::String(
+            "Descarga { WRAP(NUMBER($downloads)) } { WRAP(NUMBER($downloads)) ->\n    [one] archivos.\n    *[other] archivos.\n}"
+                .to_string()
+        )
     );
 }
 

@@ -16,7 +16,9 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - Request a code action on `coins-line` to generate a selector from a plain message
   - Request a code action on `{ $coins }` in `coins-line` to generate variable-targeted `prefix`, `whole`, and `suffix` forms
   - Request a code action on `plain-count` to verify whole-only snippet generation with a placeholder variable
-  - Request a code action on `formatted-download` or `$downloads` to verify nested `NUMBER(...)` anchors are detected but only offer `whole`
+  - Request a code action on `formatted-download` or `$downloads` to verify nested `NUMBER(...)` anchors use the enclosing placeable for `prefix`, `whole`, and `suffix`
+  - Request a code action on `NUMBER($downloads)` to select on the function call itself
+  - Request a code action on `deep-download` to verify nested function-call selectors like `WRAP(NUMBER($downloads))`
   - Request a code action on `coins-period` to verify generated branch bodies keep trailing punctuation attached
   - Request a code action on `whole-coins`, `prefix-coins`, or `suffix-coins` to exercise selector rewrite actions between the three shapes
   - Request a code action on `bare-suffix-coins` to verify only `Convert selector to prefix form` is distinct

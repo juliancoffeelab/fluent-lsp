@@ -72,8 +72,11 @@ coins-line = You have { $coins } coins.
 # Plain generation target without any existing variable
 plain-count = Coins available.
 
-# Conservative whole-only generation target with a nested variable reference
+# Generation target with a nested variable reference inside a function call
 formatted-download = Download { NUMBER($downloads) } files.
+
+# Generation target with nested function calls around the variable
+deep-download = Download { WRAP(NUMBER($downloads)) } files.
 
 # Generation target that keeps punctuation attached in branch bodies
 coins-period = You have { $coins }.

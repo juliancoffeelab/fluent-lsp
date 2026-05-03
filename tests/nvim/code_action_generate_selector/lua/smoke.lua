@@ -143,17 +143,34 @@ function M.run()
   found = vim.fn.searchpos("formatted-download", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
   actions = request_code_actions(client_id)
-  assert(#actions == 1, "function-argument variable should only offer whole generation")
-  action = actions[1]
+  assert(#actions == 3, "function-argument anchor should offer prefix, whole, and suffix generation")
+  action = find_action(actions, "Generate number selector (prefix)")
   edits = action.edit.documentChanges[1].edits
-  assert(action.title == "Generate number selector (whole)", "unexpected function-argument action title")
-  assert(edits[1].snippet == "{ \\$${1:downloads} ->\n    [one] Descarga { NUMBER($downloads) } archivos.\n    *[other] Descarga { NUMBER($downloads) } archivos.\n}", "unexpected function-argument generated text")
+  assert(edits[1].snippet == "Descarga { NUMBER(\\$${1:downloads}) } { \\$${1:downloads} ->\n    [one] archivos.\n    *[other] archivos.\n}", "unexpected function-argument generated text")
 
   found = vim.fn.searchpos("\\$downloads", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
   actions = request_code_actions(client_id)
-  assert(#actions == 1, "nested function variable under cursor should only offer whole generation")
-  assert(actions[1].title == "Generate number selector from $downloads (whole)", "unexpected nested function variable title")
+  assert(#actions == 3, "nested function variable under cursor should offer prefix, whole, and suffix generation")
+  assert(find_action(actions, "Generate number selector from $downloads (prefix)"), "missing nested function variable prefix action")
+
+  found = vim.fn.searchpos("formatted-download", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  found = vim.fn.searchpos("NUMBER($downloads)", "nW")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  actions = request_code_actions(client_id)
+  action = find_action(actions, "Generate number selector from NUMBER($downloads) (prefix)")
+  edits = action.edit.documentChanges[1].edits
+  assert(edits[1].snippet == "Descarga { NUMBER($downloads) } { NUMBER($downloads) ->\n    [one] archivos.\n    *[other] archivos.\n}", "unexpected function-call selector text")
+
+  found = vim.fn.searchpos("deep-download", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  found = vim.fn.searchpos("WRAP(NUMBER($downloads))", "nW")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  actions = request_code_actions(client_id)
+  action = find_action(actions, "Generate number selector from WRAP(NUMBER($downloads)) (prefix)")
+  edits = action.edit.documentChanges[1].edits
+  assert(edits[1].snippet == "Descarga { WRAP(NUMBER($downloads)) } { WRAP(NUMBER($downloads)) ->\n    [one] archivos.\n    *[other] archivos.\n}", "unexpected nested function-call selector text")
 
   found = vim.fn.searchpos("coins-period", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
