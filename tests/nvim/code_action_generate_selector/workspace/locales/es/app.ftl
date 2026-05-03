@@ -8,6 +8,15 @@ nested-coins =
     }
 download-count =
     .tooltip = Descarga { $files } archivos.
+install-hint =
+    Copia el enlace de descarga para la cuenta de { $gender ->
+        [female] ella
+        [male] el
+       *[other] elle
+    } en { $count } { $count ->
+        [one] dispositivo
+       *[other] dispositivos
+    } ahora.
 formatted-download = Descarga { NUMBER($downloads) } archivos.
 deep-download = Descarga { WRAP(NUMBER($downloads)) } archivos.
 coins-period = Tienes { $coins }.

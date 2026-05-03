@@ -1606,6 +1606,58 @@ fn code_action_rewrites_nested_whole_selector_inside_variant() {
 }
 
 #[test]
+fn code_action_rewrites_selected_count_selector_with_trailing_suffix_text() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 106);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        107,
+        &source_path,
+        position_of(&source_text, "{ $count ->"),
+    );
+    assert!(actions.iter().any(|action| action["title"] == Value::String("Convert selector to whole form".to_string())));
+    let suffix = find_code_action(&actions, "Convert selector to suffix form");
+    assert_eq!(
+        suffix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count ->\n    [one] { $count } device now.\n    *[other] { $count } devices now.\n}"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn code_action_rewrites_selected_gender_selector_to_whole_with_nested_count_preserved() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 108);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        109,
+        &source_path,
+        position_of(&source_text, "{ $gender ->"),
+    );
+    assert_eq!(actions.len(), 1);
+    let whole = find_code_action(&actions, "Convert selector to whole form");
+    assert_eq!(
+        whole["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "{ $gender ->\n    [female] Copy the download link for her account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n    [male] Copy the download link for his account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n    *[other] Copy the download link for their account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n}"
+                .to_string()
+        )
+    );
+}
+
+#[test]
 fn code_action_is_hidden_for_ambiguous_message_keys() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");

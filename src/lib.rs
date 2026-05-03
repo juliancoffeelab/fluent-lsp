@@ -1905,6 +1905,14 @@ fn find_selector_rewrite_target(
                 actions,
             ));
         }
+
+        let actions = selector_rewrite_actions_for_occurrence(source, pattern, byte_index);
+        if !actions.is_empty() {
+            return Some((
+                trim_trailing_newlines_from_span(source, pattern.span.0.clone()),
+                actions,
+            ));
+        }
     }
 
     None
@@ -1986,6 +1994,49 @@ fn selector_rewrite_actions_for_pattern(
     actions
 }
 
+fn selector_rewrite_actions_for_occurrence(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    byte_index: usize,
+) -> Vec<SelectorRewriteAction> {
+    let current_text = source
+        .get(trim_trailing_newlines_from_span(source, pattern.span.0.clone()))
+        .unwrap_or_default();
+    let mut actions = Vec::new();
+
+    for occurrence in select_occurrences_in_pattern(source, pattern) {
+        if !occurrence.placeable_span.contains(&byte_index) {
+            continue;
+        }
+
+        if let Some(replacement) = rewrite_selected_selector_to_whole(source, pattern, &occurrence) {
+            if replacement != current_text {
+                actions.push(SelectorRewriteAction {
+                    kind: SelectorRewriteKind::Whole,
+                    replacement,
+                });
+            }
+        }
+
+        if let Some(replacement) =
+            rewrite_selected_selector_to_suffix(source, pattern, &occurrence)
+        {
+            if replacement != current_text {
+                actions.push(SelectorRewriteAction {
+                    kind: SelectorRewriteKind::Suffix,
+                    replacement,
+                });
+            }
+        }
+
+        if !actions.is_empty() {
+            break;
+        }
+    }
+
+    actions
+}
+
 enum SelectorPatternShape<'a> {
     Whole(ParsedSelectExpression<'a>),
     Prefix {
@@ -2008,6 +2059,13 @@ struct ParsedVariant<'a> {
     key_text: String,
     default: bool,
     value: &'a fluent_syntax::ast::Pattern<&'a str>,
+}
+
+struct ParsedSelectOccurrence<'a> {
+    placeable_span: ByteRange<usize>,
+    outer_prefix: Vec<&'a fluent_syntax::ast::PatternElement<&'a str>>,
+    outer_suffix: Vec<&'a fluent_syntax::ast::PatternElement<&'a str>>,
+    select: ParsedSelectExpression<'a>,
 }
 
 fn analyze_selector_pattern_shape<'a>(
@@ -2054,6 +2112,13 @@ fn select_expression_from_tail_element<'a>(
     let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = tail else {
         return None;
     };
+    select_expression_from_expression(source, expression)
+}
+
+fn select_expression_from_expression<'a>(
+    source: &'a str,
+    expression: &'a fluent_syntax::ast::Expression<&'a str>,
+) -> Option<ParsedSelectExpression<'a>> {
     let fluent_syntax::ast::Expression::Select {
         selector,
         variants,
@@ -2085,6 +2150,30 @@ fn select_expression_from_tail_element<'a>(
     })
 }
 
+fn select_occurrences_in_pattern<'a>(
+    source: &'a str,
+    pattern: &'a fluent_syntax::ast::Pattern<&'a str>,
+) -> Vec<ParsedSelectOccurrence<'a>> {
+    let mut occurrences = Vec::new();
+
+    for (index, element) in pattern.elements.iter().enumerate() {
+        let fluent_syntax::ast::PatternElement::Placeable { expression, span } = element else {
+            continue;
+        };
+        let Some(select) = select_expression_from_expression(source, expression) else {
+            continue;
+        };
+        occurrences.push(ParsedSelectOccurrence {
+            placeable_span: normalize_placeable_span(source, span.0.clone()),
+            outer_prefix: pattern.elements[..index].iter().collect(),
+            outer_suffix: pattern.elements[index + 1..].iter().collect(),
+            select,
+        });
+    }
+
+    occurrences
+}
+
 fn rewrite_prefixed_selector_to_whole(
     source: &str,
     pattern: &fluent_syntax::ast::Pattern<&str>,
@@ -2106,6 +2195,36 @@ fn rewrite_prefixed_selector_to_whole(
 
     Some(render_select_block(
         &select.selector_text,
+        &variants,
+        &line_indentation_at(source, pattern.span.0.start),
+    ))
+}
+
+fn rewrite_selected_selector_to_whole(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    occurrence: &ParsedSelectOccurrence<'_>,
+) -> Option<String> {
+    let prefix_text = render_pattern_elements(source, &occurrence.outer_prefix)?;
+    let suffix_text = render_pattern_elements(source, &occurrence.outer_suffix)?;
+    let variants = occurrence
+        .select
+        .variants
+        .iter()
+        .map(|variant| {
+            Some(RenderedVariant {
+                key_text: variant.key_text.clone(),
+                default: variant.default,
+                body: trim_rendered_variant_body(format!(
+                    "{prefix_text}{}{suffix_text}",
+                    pattern_source_text(source, variant.value)?
+                )),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    Some(render_select_block(
+        &occurrence.select.selector_text,
         &variants,
         &line_indentation_at(source, pattern.span.0.start),
     ))
@@ -2242,6 +2361,44 @@ fn rewrite_suffix_selector_to_prefix(
         &outer_prefix_text,
         &render_select_block(
             &select.selector_text,
+            &variants,
+            &line_indentation_at(source, pattern.span.0.start),
+        ),
+    ))
+}
+
+fn rewrite_selected_selector_to_suffix(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    occurrence: &ParsedSelectOccurrence<'_>,
+) -> Option<String> {
+    let anchor_index =
+        selector_prefix_anchor_index(&occurrence.outer_prefix, occurrence.select.selector_name)?;
+    let outer_prefix_text =
+        render_pattern_elements(source, &occurrence.outer_prefix[..anchor_index])?;
+    let body_prefix_text =
+        render_pattern_elements(source, &occurrence.outer_prefix[anchor_index..])?;
+    let suffix_text = render_pattern_elements(source, &occurrence.outer_suffix)?;
+    let variants = occurrence
+        .select
+        .variants
+        .iter()
+        .map(|variant| {
+            Some(RenderedVariant {
+                key_text: variant.key_text.clone(),
+                default: variant.default,
+                body: trim_rendered_variant_body(format!(
+                    "{body_prefix_text}{}{suffix_text}",
+                    pattern_source_text(source, variant.value)?
+                )),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    Some(concat_prefix_and_selector(
+        &outer_prefix_text,
+        &render_select_block(
+            &occurrence.select.selector_text,
             &variants,
             &line_indentation_at(source, pattern.span.0.start),
         ),
@@ -2843,7 +3000,20 @@ fn render_pattern_element_slice(
 }
 
 fn trim_rendered_variant_body(body: String) -> String {
-    body.trim_end_matches('\n').to_string()
+    let mut end = body.len();
+    loop {
+        let prefix = &body[..end];
+        let Some(line_start) = prefix.rfind('\n').map(|index| index + 1) else {
+            break;
+        };
+        if prefix[line_start..].chars().all(char::is_whitespace) {
+            end = line_start.saturating_sub(1);
+        } else {
+            break;
+        }
+    }
+
+    body[..end].trim_end_matches('\n').to_string()
 }
 
 fn pattern_source_text(
@@ -4385,6 +4555,42 @@ mod tests {
         );
         assert_generated_pattern_parses(&actions[0].replacement);
         assert_generated_pattern_parses(&actions[1].replacement);
+    }
+
+    #[test]
+    fn rewrites_selected_count_selector_with_trailing_suffix_text() {
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
+        let path = Path::new("locales/en/app.ftl");
+        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(5, 31)).unwrap();
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].kind, SelectorRewriteKind::Whole);
+        assert_eq!(
+            actions[0].replacement,
+            "{ $count ->\n    [one] Copy the download link for { $gender ->\n            [female] her\n            [male] his\n           *[other] their\n        } account on { $count } device now.\n    *[other] Copy the download link for { $gender ->\n            [female] her\n            [male] his\n           *[other] their\n        } account on { $count } devices now.\n}"
+        );
+        assert_eq!(actions[1].kind, SelectorRewriteKind::Suffix);
+        assert_eq!(
+            actions[1].replacement,
+            "Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count ->\n    [one] { $count } device now.\n    *[other] { $count } devices now.\n}"
+        );
+        assert_generated_pattern_parses(&actions[0].replacement);
+        assert_generated_pattern_parses(&actions[1].replacement);
+    }
+
+    #[test]
+    fn rewrites_selected_gender_selector_to_whole_with_nested_count_selector_preserved() {
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
+        let path = Path::new("locales/en/app.ftl");
+        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(1, 35)).unwrap();
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].kind, SelectorRewriteKind::Whole);
+        assert_eq!(
+            actions[0].replacement,
+            "{ $gender ->\n    [female] Copy the download link for her account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n    [male] Copy the download link for his account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n    *[other] Copy the download link for their account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n}"
+        );
+        assert_generated_pattern_parses(&actions[0].replacement);
     }
 
     #[test]
