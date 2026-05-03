@@ -8,6 +8,12 @@ nested-coins =
     }
 download-count =
     .tooltip = Download { $files } files.
+# Comment used to prove rewrite edits do not consume surrounding comments
+commented-download =
+    .tooltip = { $files ->
+        [one] Download { $files } file.
+       *[other] Download { $files } files.
+    }
 install-hint =
     Copy the download link for { $gender ->
         [female] her

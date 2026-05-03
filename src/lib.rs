@@ -4558,6 +4558,41 @@ mod tests {
     }
 
     #[test]
+    fn rewrites_whole_selector_inside_attribute_value() {
+        let source = "commented-download =\n    .tooltip = { $files ->\n        [one] Descarga { $files } archivo.\n       *[other] Descarga { $files } archivos.\n    }\n";
+        let path = Path::new("locales/es/app.ftl");
+        let (_, actions) =
+            find_selector_rewrite_target(source, path, Position::new(1, 6)).unwrap();
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].kind, SelectorRewriteKind::Prefix);
+        assert_eq!(
+            actions[0].replacement,
+            "Descarga { $files } { $files ->\n        [one] archivo.\n        *[other] archivos.\n    }"
+        );
+        assert_eq!(actions[1].kind, SelectorRewriteKind::Suffix);
+        assert_eq!(
+            actions[1].replacement,
+            "Descarga { $files ->\n        [one] { $files } archivo.\n        *[other] { $files } archivos.\n    }"
+        );
+        assert_generated_pattern_parses(&actions[0].replacement);
+        assert_generated_pattern_parses(&actions[1].replacement);
+    }
+
+    #[test]
+    fn attribute_rewrite_target_excludes_comments_and_attribute_key() {
+        let source = "# Comentario para verificar que la reescritura no toque el comentario\ncommented-download =\n    .tooltip = { $files ->\n        [one] Descarga { $files } archivo.\n       *[other] Descarga { $files } archivos.\n    }\n";
+        let path = Path::new("locales/es/app.ftl");
+        let (pattern_span, _) =
+            find_selector_rewrite_target(source, path, Position::new(2, 6)).unwrap();
+
+        assert_eq!(
+            source.get(pattern_span).unwrap(),
+            "{ $files ->\n        [one] Descarga { $files } archivo.\n       *[other] Descarga { $files } archivos.\n    }"
+        );
+    }
+
+    #[test]
     fn rewrites_selected_count_selector_with_trailing_suffix_text() {
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
         let path = Path::new("locales/en/app.ftl");

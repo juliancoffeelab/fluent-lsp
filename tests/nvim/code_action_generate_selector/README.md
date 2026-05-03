@@ -20,6 +20,8 @@ It verifies these client-visible behaviors:
 - suffix-form selectors can be rewritten into whole form and collapsed into prefix form
 - whole selectors that already look suffix-like with no outer prefix text only advertise the distinct prefix collapse
 - nested selector branches are rewritten within their local variant pattern instead of breaking the outer select
+- rewrite actions also work inside attribute values
+- rewrite edits for attribute values do not consume surrounding comments or the attribute key itself
 - selectors in the middle of a larger pattern can still rewrite their containing pattern when the cursor is on that selector
 - the `install-hint` `$count` selector can collapse into a local suffix form without disturbing the earlier `$gender` selector
 - the `install-hint` `$gender` selector can rewrite the whole containing pattern, preserving the nested `$count` selector inside each branch
@@ -53,6 +55,9 @@ How the scenario is exercised:
 - asserts only `Convert selector to prefix form` is available because the original text already serves as the zero-prefix suffix/whole shape
 - requests `textDocument/codeAction` inside `nested-whole-coins`
 - asserts rewrite targeting applies to the nested selector pattern inside the selected variant, not only to root-level messages
+- requests `textDocument/codeAction` on `commented-download.tooltip`
+- asserts `Convert selector to prefix form` and `Convert selector to suffix form` are available for an attribute value
+- asserts the returned edit range starts at the attribute value itself, not at the preceding comment or attribute key
 - requests `textDocument/codeAction` on the `$count` selector inside `install-hint`
 - asserts the server offers a local `suffix` rewrite on the containing pattern while preserving the earlier `$gender` selector
 - requests `textDocument/codeAction` on the `$gender` selector inside `install-hint`

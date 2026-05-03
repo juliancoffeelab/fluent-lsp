@@ -8,6 +8,12 @@ nested-coins =
     }
 download-count =
     .tooltip = Descarga { $files } archivos.
+# Comentario para verificar que la reescritura no toque el comentario
+commented-download =
+    .tooltip = { $files ->
+        [one] Descarga { $files } archivo.
+       *[other] Descarga { $files } archivos.
+    }
 install-hint =
     Copia el enlace de descarga para la cuenta de { $gender ->
         [female] ella

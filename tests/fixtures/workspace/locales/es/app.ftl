@@ -69,6 +69,12 @@ nested-coins =
     }
 download-count =
     .tooltip = Descarga { $files } archivos.
+# Comentario para verificar que la reescritura no toque el comentario
+commented-download =
+    .tooltip = { $files ->
+        [one] Descarga { $files } archivo.
+       *[other] Descarga { $files } archivos.
+    }
 formatted-download = Descarga { NUMBER($downloads) } archivos.
 deep-download = Descarga { WRAP(NUMBER($downloads)) } archivos.
 coins-period = Tienes { $coins }.

@@ -1606,6 +1606,60 @@ fn code_action_rewrites_nested_whole_selector_inside_variant() {
 }
 
 #[test]
+fn code_action_rewrites_selector_inside_attribute_value() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 110);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        111,
+        &source_path,
+        position_of(&source_text, "{ $files ->"),
+    );
+    let prefix = find_code_action(&actions, "Convert selector to prefix form");
+    assert_eq!(
+        prefix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "Descarga { $files } { $files ->\n        [one] archivo.\n        *[other] archivos.\n    }"
+                .to_string()
+        )
+    );
+    let suffix = find_code_action(&actions, "Convert selector to suffix form");
+    assert_eq!(
+        suffix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "Descarga { $files ->\n        [one] { $files } archivo.\n        *[other] { $files } archivos.\n    }"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn attribute_rewrite_range_does_not_consume_comments_or_attribute_key() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 112);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        113,
+        &source_path,
+        position_of(&source_text, "{ $files ->"),
+    );
+    let prefix = find_code_action(&actions, "Convert selector to prefix form");
+    let edit = &prefix["edit"]["changes"][format!("file://{}", source_path.display())][0];
+    assert_eq!(edit["range"]["start"]["line"], Value::from(73));
+    assert_eq!(edit["range"]["start"]["character"], Value::from(15));
+}
+
+#[test]
 fn code_action_rewrites_selected_count_selector_with_trailing_suffix_text() {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");

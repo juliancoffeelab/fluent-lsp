@@ -273,7 +273,7 @@ Unit tests:
  [x] Parse a prefix-form message and normalize it into whole form.
  [x] Parse a suffix-form message and normalize it into whole form.
  [x] Refuse malformed or ambiguous forms.
- [ ] Preserve comments, indentation, and attribute scoping.
+ [x] Preserve comments, indentation, and attribute scoping.
 
 Integration tests:
  [x] `textDocument/codeAction` advertises conversion for valid prefix form.
