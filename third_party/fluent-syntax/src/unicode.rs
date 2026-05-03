@@ -133,7 +133,10 @@ where
 ///     "Foo 😊 Bar"
 /// );
 /// ```
-#[expect(mismatched_lifetime_syntaxes, reason = "keep vendored signature unchanged for now")]
+#[expect(
+    mismatched_lifetime_syntaxes,
+    reason = "keep vendored signature unchanged for now"
+)]
 pub fn unescape_unicode_to_string(input: &str) -> Cow<str> {
     let mut result = String::new();
     let owned = unescape(&mut result, input).expect("String write methods don't Err");

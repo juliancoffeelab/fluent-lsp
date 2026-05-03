@@ -28,12 +28,19 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - Hover `install-hint` on the key line for default selector choices, or inside a specific branch for explicit selector choices
   - Use the matching English `coins-line`, `whole-coins`, `prefix-coins`, `suffix-coins`, and `nested-whole-coins` entries to inspect the same code-action shapes in the origin language
   - This is the denser top-level file: terms, message values, multiple attributes, selector-generation examples, and selector-rewrite examples
+  - `incomplete-rollout` is the English “missing `other`” example for diagnostics
 - `example/locales/fr/app.ftl`
   - Extra translation target for references and locale comparisons
 - `example/locales/lv/app.ftl`
   - Hover `zero-rollout` inside `[zero]` or `[one]` to verify category-style selector matching across source and Latvian local text
+  - Enable `warn_on_missing_plural_categories` and open `incomplete-zero` to verify a Latvian missing-`zero` warning
+  - Enable `error_on_unsupported_plural_categories` and open `bad-zero` to verify an exact-span error on `[few]`
+- `example/locales/ar/app.ftl`
+  - Use `arabic-rollout` when you want a locale whose supported plural-category set is wider than English or Latvian
+  - Enable diagnostics to verify `zero/one/two/few/many/other` are treated as valid Arabic category names
 - `example/locales/uk/app.ftl`
   - Extra translation target for references and locale comparisons
+  - Enable `warn_on_missing_plural_categories` or `error_on_unsupported_plural_categories` to verify Unicode-backed Ukrainian categories like `few` and `many` are accepted
 - `example/locales/es/dialogs/menu.ftl`
   - Go to definition on `menu-save.label` to verify locale-tree resolution for nested attributes
 - `example/locales/en/dialogs/menu.ftl`
@@ -51,4 +58,8 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
 - Your editor opens this repository root as the workspace root.
 - The LSP client reads `fluent-lsp.toml` from the repo root.
 - The client supports standard LSP hover, definition, references, and CodeLens.
+- Diagnostic settings can be sent through LSP client configuration or added to `fluent-lsp.toml`:
+  - `error_on_unsupported_plural_categories = true`
+  - `warn_on_missing_plural_categories = true`
+  - `warn_on_selector_style_mismatch = true`
 - This example workspace is intentionally small, but it keeps multiple translation targets where they are useful for trying references and cross-locale behavior.

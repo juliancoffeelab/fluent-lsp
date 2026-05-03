@@ -13,7 +13,11 @@ fn adapt_pattern(pattern: &mut ast::Pattern<String>, crlf: bool) {
     let mut elements = vec![];
     for element in &pattern.elements {
         match element {
-            ast::PatternElement::TextElement { value, #[cfg(feature = "spans")] span } => {
+            ast::PatternElement::TextElement {
+                value,
+                #[cfg(feature = "spans")]
+                span,
+            } => {
                 let mut start = 0;
                 let len = value.len();
                 for (i, b) in value.as_bytes().iter().enumerate() {

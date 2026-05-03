@@ -59,6 +59,12 @@ mismatch-rollout =
        *[other] { $count } packages
     } ready.
 
+incomplete-rollout =
+    You have { $count } { $count ->
+        [one] package
+       *[other] packages
+    } ready.
+
 zero-rollout =
     Zero summary: { $count ->
         [zero] no packages ready

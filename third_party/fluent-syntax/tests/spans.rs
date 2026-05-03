@@ -55,7 +55,10 @@ fn variant_spans_cover_the_entire_branch_including_default_marker() {
         panic!("expected select expression");
     };
 
-    assert_eq!(&source[variants[0].span.start..variants[0].span.end], "[0] Zero\n");
+    assert_eq!(
+        &source[variants[0].span.start..variants[0].span.end],
+        "[0] Zero\n"
+    );
     assert_eq!(
         &source[variants[1].span.start..variants[1].span.end],
         "[one] One\n"

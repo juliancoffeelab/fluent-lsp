@@ -442,26 +442,26 @@ arabic-rollout =
 ```
 
 Unit tests:
-[] Map locale to supported plural-category set.
-[] Detect unsupported category in a numeric selector.
-[] Ignore supported categories.
-[] Ignore non-numeric selectors when heuristics say “not number-like”.
-[] Default config is off.
-[] Use exact AST variant-key spans for the highlighted unsupported-category diagnostic range.
+[x] Map locale to supported plural-category set.
+[x] Detect unsupported category in a numeric selector.
+[x] Ignore supported categories.
+[x] Ignore non-numeric selectors when heuristics say “not number-like”.
+[x] Default config is off.
+[x] Use exact AST variant-key spans for the highlighted unsupported-category diagnostic range.
 
 Integration tests:
-[] Diagnostics are absent by default.
-[] Diagnostics appear when enabled.
-[] Diagnostics point at the unsupported category token.
-[] Latvian and Arabic-like cases use the correct language-specific category sets.
+[x] Diagnostics are absent by default.
+[x] Diagnostics appear when enabled.
+[x] Diagnostics point at the unsupported category token.
+[x] Latvian and Arabic-like cases use the correct language-specific category sets.
 
 Neovim smoke:
-[] Scenario with diagnostics off.
-[] Scenario with diagnostics on.
+[x] Scenario with diagnostics off.
+[x] Scenario with diagnostics on.
 
 Examples to add:
-[] A Latvian example with an intentionally unsupported category.
-[] An Arabic example where the supported category set is wider than English.
+[x] A Latvian example with an intentionally unsupported category.
+[x] An Arabic example where the supported category set is wider than English.
 
 ### 6. Warning config: selector matches not enough number categories
 
@@ -549,24 +549,24 @@ Expected behavior for English:
 - do not treat `[1]` as automatically satisfying the language category requirement unless we explicitly implement that proof
 
 Unit tests:
-[] Heuristic recognizes obvious number selectors like `$count`, `$coins`, `$items`.
-[] Heuristic does not flag clearly non-numeric selectors.
-[] Missing required categories for the locale emit warning when enabled.
-[] Complete category sets do not emit warning.
-[] Use exact AST variant-key spans for missing/invalid-category related diagnostic ranges where applicable.
+[x] Heuristic recognizes obvious number selectors like `$count`, `$coins`, `$items`.
+[x] Heuristic does not flag clearly non-numeric selectors.
+[x] Missing required categories for the locale emit warning when enabled.
+[x] Complete category sets do not emit warning.
+[x] Use exact AST variant-key spans for missing/invalid-category related diagnostic ranges where applicable.
 
 Integration tests:
-[] Diagnostics absent by default.
-[] Diagnostics emitted when enabled for incomplete numeric selectors.
-[] Diagnostics suppressed for non-numeric selectors.
+[x] Diagnostics absent by default.
+[x] Diagnostics emitted when enabled for incomplete numeric selectors.
+[x] Diagnostics suppressed for non-numeric selectors.
 
 Neovim smoke:
-[] Scenario for incomplete numeric selector warning.
-[] Scenario proving non-numeric selector is ignored.
+[x] Scenario for incomplete numeric selector warning.
+[x] Scenario proving non-numeric selector is ignored.
 
 Examples to add:
-[] English incomplete example missing `other`.
-[] Latvian incomplete example missing `zero`.
+[x] English incomplete example missing `other`.
+[x] Latvian incomplete example missing `zero`.
 
 ### 7. Style warning config: whole/suffix/prefix
 
@@ -603,24 +603,24 @@ Pseudo diagnostic:
 ```
 
 Unit tests:
-[] Detect `whole` style.
-[] Detect `prefix` style.
-[] Detect `suffix` style.
-[] Ignore entries that do not match any recognized style cleanly.
-[] Emit warning only when detected style differs from preferred style.
+[x] Detect `whole` style.
+[x] Detect `prefix` style.
+[x] Detect `suffix` style.
+[x] Ignore entries that do not match any recognized style cleanly.
+[x] Emit warning only when detected style differs from preferred style.
 
 Integration tests:
-[] Diagnostics for preferred `prefix` against `whole`.
-[] Diagnostics for preferred `whole` against `suffix`.
-[] No diagnostics when style matches preference.
-[] `fluent-lsp.toml` overrides LSP settings here too.
+[x] Diagnostics for preferred `prefix` against `whole`.
+[x] Diagnostics for preferred `whole` against `suffix`.
+[x] No diagnostics when style matches preference.
+[x] `fluent-lsp.toml` overrides LSP settings here too.
 
 Neovim smoke:
-[] Scenario with preferred `prefix`.
+[x] Scenario with preferred `prefix`.
 [] Scenario with preferred `whole`.
 
 Examples to add:
-[] One example trio showing the same message in whole/prefix/suffix form.
+[x] One example trio showing the same message in whole/prefix/suffix form.
 
 ### 8. Cross-cutting coverage I would add
 

@@ -5,5 +5,17 @@ zero-rollout =
        *[other] { $count } pakotnes ir gatavas
     }.
 
+bad-zero =
+    { $count ->
+        [few] slikti
+       *[other] labi
+    }
+
+incomplete-zero =
+    { $count ->
+        [one] viena pakotne
+       *[other] pakotnes
+    }
+
 coins-line = Tev ir { $coins } monetas.
 plain-count = Pakotnes pieejamas.

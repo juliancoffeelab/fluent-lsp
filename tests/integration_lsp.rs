@@ -72,7 +72,6 @@ impl Drop for LspProcess {
 fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
-    let source_uri = format!("file://{}", source_path.display());
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = LspProcess::start();
@@ -98,9 +97,11 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
         initialize["result"]["capabilities"]["hoverProvider"],
         Value::Bool(true)
     );
-    assert!(initialize["result"]["capabilities"]
-        .get("inlayHintProvider")
-        .is_none());
+    assert!(
+        initialize["result"]["capabilities"]
+            .get("inlayHintProvider")
+            .is_none()
+    );
     assert_eq!(
         initialize["result"]["capabilities"]["codeLensProvider"]["resolveProvider"],
         Value::Bool(false)
@@ -123,18 +124,8 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
     let initialized_log = lsp.recv();
     assert_eq!(initialized_log["method"], "window/logMessage");
 
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": source_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": source_text
-            }
-        }
-    }));
+    send_open_document(&mut lsp, source_path.as_path(), &source_text);
+    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
 
     assert_definition(
         &mut lsp,
@@ -168,20 +159,7 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
 
     let nested_path = root.join("locales/es/dialogs/menu.ftl");
     let nested_text = std::fs::read_to_string(&nested_path).unwrap();
-    let nested_uri = format!("file://{}", nested_path.display());
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": nested_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": nested_text
-            }
-        }
-    }));
+    open_document(&mut lsp, &nested_path, &nested_text);
 
     assert_definition(
         &mut lsp,
@@ -213,8 +191,7 @@ fn assert_definition(
         }
     }));
 
-    let definition = lsp.recv();
-    assert_eq!(definition["id"], request_id);
+    let definition = recv_response(lsp, request_id);
     assert_eq!(
         definition["result"]["uri"],
         Value::String(format!("file://{}", expected_target.display()))
@@ -233,7 +210,6 @@ fn assert_definition(
 fn references_from_origin_resolve_to_translated_fluent_files() {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");
-    let source_uri = format!("file://{}", source_path.display());
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = LspProcess::start();
@@ -264,18 +240,7 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
     let initialized_log = lsp.recv();
     assert_eq!(initialized_log["method"], "window/logMessage");
 
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": source_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": source_text
-            }
-        }
-    }));
+    open_document(&mut lsp, &source_path, &source_text);
 
     assert_references(
         &mut lsp,
@@ -312,20 +277,8 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
 
     let nested_path = root.join("locales/en/dialogs/menu.ftl");
     let nested_text = std::fs::read_to_string(&nested_path).unwrap();
-    let nested_uri = format!("file://{}", nested_path.display());
 
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": nested_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": nested_text
-            }
-        }
-    }));
+    open_document(&mut lsp, &nested_path, &nested_text);
 
     assert_references(
         &mut lsp,
@@ -344,7 +297,6 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
 fn hover_from_translation_shows_local_formatted_messages() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
-    let source_uri = format!("file://{}", source_path.display());
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = LspProcess::start();
@@ -375,18 +327,7 @@ fn hover_from_translation_shows_local_formatted_messages() {
     let initialized_log = lsp.recv();
     assert_eq!(initialized_log["method"], "window/logMessage");
 
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": source_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": source_text
-            }
-        }
-    }));
+    open_document(&mut lsp, &source_path, &source_text);
 
     assert_hover(
         &mut lsp,
@@ -422,7 +363,10 @@ fn hover_from_translation_shows_local_formatted_messages() {
         &mut lsp,
         24,
         &source_path,
-        position_of(&source_text, "Instala la build recomendada para la cuenta de"),
+        position_of(
+            &source_text,
+            "Instala la build recomendada para la cuenta de",
+        ),
         "`$gender=*`, `$count=*`\n\n```ftl\nInstall the recommended build for their account on { $count } devices now.\n```\n\n---\n\n`$gender=*`, `$count=*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.\n```",
         21,
         5,
@@ -453,7 +397,6 @@ fn hover_from_translation_shows_local_formatted_messages() {
 fn hover_from_translation_matches_available_selector_variables_across_source_and_local() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
-    let source_uri = format!("file://{}", source_path.display());
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = LspProcess::start();
@@ -484,18 +427,7 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
     let initialized_log = lsp.recv();
     assert_eq!(initialized_log["method"], "window/logMessage");
 
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": source_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": source_text
-            }
-        }
-    }));
+    open_document(&mut lsp, &source_path, &source_text);
 
     assert_hover(
         &mut lsp,
@@ -532,7 +464,6 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
 fn hover_from_latvian_translation_preserves_zero_category_selectors() {
     let root = fixture_root();
     let source_path = root.join("locales/lv/app.ftl");
-    let source_uri = format!("file://{}", source_path.display());
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = LspProcess::start();
@@ -563,18 +494,7 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
     let initialized_log = lsp.recv();
     assert_eq!(initialized_log["method"], "window/logMessage");
 
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": source_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": source_text
-            }
-        }
-    }));
+    open_document(&mut lsp, &source_path, &source_text);
 
     assert_hover(
         &mut lsp,
@@ -601,7 +521,6 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
 fn hover_from_origin_file_shows_formatted_attribute_text() {
     let root = fixture_root();
     let source_path = root.join("locales/en/dialogs/menu.ftl");
-    let source_uri = format!("file://{}", source_path.display());
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = LspProcess::start();
@@ -628,18 +547,7 @@ fn hover_from_origin_file_shows_formatted_attribute_text() {
     let initialized_log = lsp.recv();
     assert_eq!(initialized_log["method"], "window/logMessage");
 
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": source_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": source_text
-            }
-        }
-    }));
+    open_document(&mut lsp, &source_path, &source_text);
 
     assert_hover(
         &mut lsp,
@@ -656,7 +564,6 @@ fn hover_from_origin_file_shows_formatted_attribute_text() {
 fn code_lens_opens_full_selector_combinations_document() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
-    let source_uri = format!("file://{}", source_path.display());
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = LspProcess::start();
@@ -697,18 +604,7 @@ fn code_lens_opens_full_selector_combinations_document() {
     let initialized_log = lsp.recv();
     assert_eq!(initialized_log["method"], "window/logMessage");
 
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": source_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": source_text
-            }
-        }
-    }));
+    open_document(&mut lsp, &source_path, &source_text);
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -719,8 +615,7 @@ fn code_lens_opens_full_selector_combinations_document() {
         }
     }));
 
-    let lenses = lsp.recv();
-    assert_eq!(lenses["id"], 41);
+    let lenses = recv_response(&mut lsp, 41);
     let items = lenses["result"]
         .as_array()
         .expect("expected code lens array");
@@ -797,8 +692,7 @@ fn code_lens_opens_full_selector_combinations_document() {
         }
     }));
 
-    let response = lsp.recv();
-    assert_eq!(response["id"], 42);
+    let response = recv_response(&mut lsp, 42);
     assert_eq!(response["result"], Value::Null);
 }
 
@@ -806,7 +700,6 @@ fn code_lens_opens_full_selector_combinations_document() {
 fn code_lens_opens_full_selector_combinations_document_for_attribute() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
-    let source_uri = format!("file://{}", source_path.display());
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = LspProcess::start();
@@ -839,18 +732,8 @@ fn code_lens_opens_full_selector_combinations_document_for_attribute() {
     let initialized_log = lsp.recv();
     assert_eq!(initialized_log["method"], "window/logMessage");
 
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": source_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": source_text
-            }
-        }
-    }));
+    send_open_document(&mut lsp, source_path.as_path(), &source_text);
+    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -861,8 +744,7 @@ fn code_lens_opens_full_selector_combinations_document_for_attribute() {
         }
     }));
 
-    let lenses = lsp.recv();
-    assert_eq!(lenses["id"], 51);
+    let lenses = recv_response(&mut lsp, 51);
     let items = lenses["result"]
         .as_array()
         .expect("expected code lens array");
@@ -912,8 +794,7 @@ fn code_lens_opens_full_selector_combinations_document_for_attribute() {
         }
     }));
 
-    let response = lsp.recv();
-    assert_eq!(response["id"], 52);
+    let response = recv_response(&mut lsp, 52);
     assert_eq!(response["result"], Value::Null);
 }
 
@@ -921,7 +802,6 @@ fn code_lens_opens_full_selector_combinations_document_for_attribute() {
 fn code_lens_origin_document_omits_duplicate_source_sections() {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");
-    let source_uri = format!("file://{}", source_path.display());
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = LspProcess::start();
@@ -954,18 +834,8 @@ fn code_lens_origin_document_omits_duplicate_source_sections() {
     let initialized_log = lsp.recv();
     assert_eq!(initialized_log["method"], "window/logMessage");
 
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": source_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": source_text
-            }
-        }
-    }));
+    send_open_document(&mut lsp, source_path.as_path(), &source_text);
+    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -976,8 +846,7 @@ fn code_lens_origin_document_omits_duplicate_source_sections() {
         }
     }));
 
-    let lenses = lsp.recv();
-    assert_eq!(lenses["id"], 56);
+    let lenses = recv_response(&mut lsp, 56);
     let items = lenses["result"]
         .as_array()
         .expect("expected code lens array");
@@ -997,7 +866,7 @@ fn code_lens_origin_document_omits_duplicate_source_sections() {
         }
     }));
 
-    let request = lsp.recv();
+    let request = recv_notification(&mut lsp, "window/showDocument");
     assert_eq!(request["method"], "window/showDocument");
     let document_uri = request["params"]["uri"]
         .as_str()
@@ -1010,7 +879,12 @@ fn code_lens_origin_document_omits_duplicate_source_sections() {
     assert!(!document_text.contains("Source language:"));
     assert!(!document_text.contains("Source text:"));
     assert!(!document_text.contains("Source language combinations:"));
-    assert_eq!(document_text.matches("Current language combinations:").count(), 1);
+    assert_eq!(
+        document_text
+            .matches("Current language combinations:")
+            .count(),
+        1
+    );
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -1020,8 +894,7 @@ fn code_lens_origin_document_omits_duplicate_source_sections() {
         }
     }));
 
-    let response = lsp.recv();
-    assert_eq!(response["id"], 57);
+    let response = recv_response(&mut lsp, 57);
     assert_eq!(response["result"], Value::Null);
 }
 
@@ -1029,7 +902,6 @@ fn code_lens_origin_document_omits_duplicate_source_sections() {
 fn code_lens_falls_back_to_show_message_with_fixed_selector_limit() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
-    let source_uri = format!("file://{}", source_path.display());
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = LspProcess::start();
@@ -1056,18 +928,8 @@ fn code_lens_falls_back_to_show_message_with_fixed_selector_limit() {
     let initialized_log = lsp.recv();
     assert_eq!(initialized_log["method"], "window/logMessage");
 
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didOpen",
-        "params": {
-            "textDocument": {
-                "uri": source_uri,
-                "languageId": "fluent",
-                "version": 1,
-                "text": source_text
-            }
-        }
-    }));
+    send_open_document(&mut lsp, source_path.as_path(), &source_text);
+    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -1078,8 +940,7 @@ fn code_lens_falls_back_to_show_message_with_fixed_selector_limit() {
         }
     }));
 
-    let lenses = lsp.recv();
-    assert_eq!(lenses["id"], 61);
+    let lenses = recv_response(&mut lsp, 61);
     let items = lenses["result"]
         .as_array()
         .expect("expected code lens array");
@@ -1124,7 +985,11 @@ fn code_lens_falls_back_to_show_message_with_fixed_selector_limit() {
     assert!(message.contains("Current language combinations:"));
     assert_eq!(message.matches("\n```ftl\n").count(), 10);
     assert!(message.contains("`...`\n2 more"));
-    assert!(!message.contains("```ftl\nResumen para otras personas en movil con { $count } elementos.\n```"));
+    assert!(
+        !message.contains(
+            "```ftl\nResumen para otras personas en movil con { $count } elementos.\n```"
+        )
+    );
 }
 
 #[test]
@@ -1177,9 +1042,12 @@ fn code_action_returns_all_styles_for_variable_occurrence() {
         position_of(&source_text, "{ $coins }"),
     );
     assert_eq!(actions.len(), 3);
-    assert!(actions.iter().any(|action| action["title"] == Value::String("Generate number selector from $coins (prefix)".to_string())));
-    assert!(actions.iter().any(|action| action["title"] == Value::String("Generate number selector from $coins (whole)".to_string())));
-    assert!(actions.iter().any(|action| action["title"] == Value::String("Generate number selector from $coins (suffix)".to_string())));
+    assert!(actions.iter().any(|action| action["title"]
+        == Value::String("Generate number selector from $coins (prefix)".to_string())));
+    assert!(actions.iter().any(|action| action["title"]
+        == Value::String("Generate number selector from $coins (whole)".to_string())));
+    assert!(actions.iter().any(|action| action["title"]
+        == Value::String("Generate number selector from $coins (suffix)".to_string())));
 }
 
 #[test]
@@ -1366,7 +1234,8 @@ fn code_action_supports_attributes() {
         &source_path,
         position_of(&source_text, "$files"),
     );
-    assert!(actions.iter().any(|action| action["title"] == Value::String("Generate number selector from $files (prefix)".to_string())));
+    assert!(actions.iter().any(|action| action["title"]
+        == Value::String("Generate number selector from $files (prefix)".to_string())));
 }
 
 #[test]
@@ -1469,9 +1338,7 @@ fn code_action_keeps_punctuation_attached_in_prefix_generation() {
     let action = find_code_action(&actions, "Generate number selector (prefix)");
     assert_eq!(
         action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
-        Value::String(
-            "Tienes { $coins } { $coins ->\n    [one].\n    *[other].\n}".to_string()
-        )
+        Value::String("Tienes { $coins } { $coins ->\n    [one].\n    *[other].\n}".to_string())
     );
 }
 
@@ -1490,8 +1357,14 @@ fn code_action_rewrites_whole_selector_to_prefix_and_suffix() {
         &source_path,
         position_of(&source_text, "whole-coins"),
     );
-    assert!(actions.iter().any(|action| action["title"] == Value::String("Convert selector to prefix form".to_string())));
-    assert!(actions.iter().any(|action| action["title"] == Value::String("Convert selector to suffix form".to_string())));
+    assert!(
+        actions.iter().any(|action| action["title"]
+            == Value::String("Convert selector to prefix form".to_string()))
+    );
+    assert!(
+        actions.iter().any(|action| action["title"]
+            == Value::String("Convert selector to suffix form".to_string()))
+    );
 
     let prefix = find_code_action(&actions, "Convert selector to prefix form");
     assert_eq!(
@@ -1552,8 +1425,13 @@ fn code_action_rewrites_suffix_selector_to_whole_and_prefix() {
         &source_path,
         position_of(&source_text, "suffix-coins"),
     );
-    assert!(actions.iter().any(|action| action["title"] == Value::String("Convert selector to whole form".to_string())));
-    assert!(actions.iter().any(|action| action["title"] == Value::String("Convert selector to prefix form".to_string())));
+    assert!(actions.iter().any(
+        |action| action["title"] == Value::String("Convert selector to whole form".to_string())
+    ));
+    assert!(
+        actions.iter().any(|action| action["title"]
+            == Value::String("Convert selector to prefix form".to_string()))
+    );
 }
 
 #[test]
@@ -1575,7 +1453,9 @@ fn code_action_bare_suffix_like_selector_only_offers_prefix() {
     let action = find_code_action(&actions, "Convert selector to prefix form");
     assert_eq!(
         action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
-        Value::String("{ $coins } { $coins ->\n    [one] moneda.\n    *[other] monedas.\n}".to_string())
+        Value::String(
+            "{ $coins } { $coins ->\n    [one] moneda.\n    *[other] monedas.\n}".to_string()
+        )
     );
 }
 
@@ -1602,7 +1482,8 @@ fn code_action_rewrites_nested_whole_selector_inside_variant() {
                 .to_string()
         )
     );
-    assert!(actions.iter().any(|candidate| candidate["title"] == Value::String("Convert selector to suffix form".to_string())));
+    assert!(actions.iter().any(|candidate| candidate["title"]
+        == Value::String("Convert selector to suffix form".to_string())));
 }
 
 #[test]
@@ -1674,7 +1555,9 @@ fn code_action_rewrites_selected_count_selector_with_trailing_suffix_text() {
         &source_path,
         position_of(&source_text, "{ $count ->"),
     );
-    assert!(actions.iter().any(|action| action["title"] == Value::String("Convert selector to whole form".to_string())));
+    assert!(actions.iter().any(
+        |action| action["title"] == Value::String("Convert selector to whole form".to_string())
+    ));
     let suffix = find_code_action(&actions, "Convert selector to suffix form");
     assert_eq!(
         suffix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
@@ -1735,6 +1618,355 @@ fn code_action_is_hidden_for_ambiguous_message_keys() {
         position_of(&source_text, "nested-coins"),
     );
     assert!(nested_actions.is_empty());
+}
+
+#[test]
+fn diagnostics_are_absent_by_default() {
+    let root = fixture_root();
+    let source_path = root.join("locales/lv/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 114);
+    send_open_document(&mut lsp, &source_path, &source_text);
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["uri"],
+        Value::String(format!("file://{}", source_path.display()))
+    );
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
+fn diagnostics_report_unsupported_and_missing_categories_when_enabled() {
+    let root = fixture_root();
+    let source_path = root.join("locales/lv/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 115);
+    send_open_document(&mut lsp, &source_path, &source_text);
+    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true,
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let diagnostics = notification["params"]["diagnostics"]
+        .as_array()
+        .expect("expected diagnostics array");
+    let messages = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic["message"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(diagnostics.len(), 4);
+    assert!(messages.contains(&"`few` is not a supported plural category for `lv`".to_string()));
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| *message == "Numeric selector for `lv` is missing category `zero`")
+            .count(),
+        2
+    );
+    assert!(messages.contains(&"Numeric selector for `lv` is missing category `one`".to_string()));
+
+    let unsupported = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                == Value::String("`few` is not a supported plural category for `lv`".to_string())
+        })
+        .unwrap();
+    assert_eq!(unsupported["severity"], Value::from(1));
+    assert_eq!(
+        unsupported["range"]["start"]["line"],
+        Value::from(position_of(&source_text, "few").0)
+    );
+    assert_eq!(
+        unsupported["range"]["start"]["character"],
+        Value::from(position_of(&source_text, "few").1)
+    );
+}
+
+#[test]
+fn diagnostics_report_selector_style_mismatches_when_enabled() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 116);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_selector_style_mismatch": true,
+                "selector_style": "prefix"
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, &source_text);
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let diagnostics = notification["params"]["diagnostics"]
+        .as_array()
+        .expect("expected diagnostics array");
+    let messages = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic["message"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+
+    assert!(
+        messages.contains(&"Selector style is `whole`, but workspace prefers `prefix`".to_string())
+    );
+    assert!(
+        messages
+            .contains(&"Selector style is `suffix`, but workspace prefers `prefix`".to_string())
+    );
+}
+
+#[test]
+fn file_config_overrides_client_style_diagnostic_settings() {
+    let temp = tempdir().unwrap();
+    copy_dir(&fixture_root(), temp.path());
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\nselector_style = \"whole\"\nwarn_on_selector_style_mismatch = true\n",
+    )
+    .unwrap();
+
+    let source_path = temp.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 117);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_selector_style_mismatch": false,
+                "selector_style": "prefix"
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, &source_text);
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let diagnostics = notification["params"]["diagnostics"]
+        .as_array()
+        .expect("expected diagnostics array");
+    let messages = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic["message"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+
+    assert!(
+        !messages
+            .contains(&"Selector style is `whole`, but workspace prefers `prefix`".to_string())
+    );
+    assert!(
+        messages.contains(&"Selector style is `prefix`, but workspace prefers `whole`".to_string())
+    );
+    assert!(
+        messages.contains(&"Selector style is `suffix`, but workspace prefers `whole`".to_string())
+    );
+}
+
+#[test]
+fn diagnostics_report_invalid_numeric_identifier_keys_when_enabled() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = "bad-key =\n    { $count ->\n        [admins] nope\n        [one] ok\n       *[other] ok\n    }\n";
+
+    let mut lsp = initialized_lsp(&root, 118);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let diagnostics = notification["params"]["diagnostics"]
+        .as_array()
+        .expect("expected diagnostics array");
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0]["message"],
+        Value::String(
+            "`admins` is not a supported numeric selector key for `en`; use exact numbers or plural categories"
+                .to_string(),
+        )
+    );
+    assert_eq!(diagnostics[0]["severity"], Value::from(1));
+}
+
+#[test]
+fn diagnostics_ignore_non_numeric_admin_other_selector() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text =
+        "bad-key =\n    { $count ->\n        [admins] nope\n       *[other] ok\n    }\n";
+
+    let mut lsp = initialized_lsp(&root, 122);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true,
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
+fn diagnostics_do_not_warn_for_complete_numeric_selectors_or_matching_style() {
+    let temp = tempdir().unwrap();
+    copy_dir(&fixture_root(), temp.path());
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\nwarn_on_missing_plural_categories = true\nwarn_on_selector_style_mismatch = true\nselector_style = \"whole\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/en/match.ftl"),
+        "match-rollout =\n    { $count ->\n        [one] one package\n       *[other] { $count } packages\n    }\n",
+    )
+    .unwrap();
+
+    let source_path = temp.path().join("locales/en/match.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 123);
+    send_open_document(&mut lsp, &source_path, &source_text);
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
+fn diagnostics_report_local_selector_style_mismatches_when_enabled() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n       *[fallback] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
+
+    let mut lsp = initialized_lsp(&root, 119);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_selector_style_mismatch": true,
+                "selector_style": "prefix"
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let diagnostics = notification["params"]["diagnostics"]
+        .as_array()
+        .expect("expected diagnostics array");
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0]["message"],
+        Value::String("Selector style is `whole`, but workspace prefers `prefix`".to_string())
+    );
+}
+
+#[test]
+fn diagnostics_use_unicode_plural_categories_for_ukrainian() {
+    let root = fixture_root();
+    let source_path = root.join("locales/uk/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 120);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true,
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, &source_text);
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let diagnostics = notification["params"]["diagnostics"]
+        .as_array()
+        .expect("expected diagnostics array");
+    let messages = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic["message"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(diagnostics.len(), 1);
+    assert!(messages.contains(&"Numeric selector for `uk` is missing category `one`".to_string()));
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("`few` is not a supported plural category"))
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("`many` is not a supported plural category"))
+    );
+}
+
+#[test]
+fn did_close_clears_document_diagnostics() {
+    let root = fixture_root();
+    let source_path = root.join("locales/lv/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 121);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true,
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, &source_text);
+    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+
+    send_close_document(&mut lsp, &source_path);
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["uri"],
+        Value::String(format!("file://{}", source_path.display()))
+    );
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
 }
 
 #[test]
@@ -1818,7 +2050,7 @@ fn initialized_lsp_with_capabilities(
     lsp
 }
 
-fn open_document(lsp: &mut LspProcess, path: &Path, text: &str) {
+fn send_open_document(lsp: &mut LspProcess, path: &Path, text: &str) {
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "method": "textDocument/didOpen",
@@ -1829,6 +2061,55 @@ fn open_document(lsp: &mut LspProcess, path: &Path, text: &str) {
                 "version": 1,
                 "text": text
             }
+        }
+    }));
+}
+
+fn send_close_document(lsp: &mut LspProcess, path: &Path) {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didClose",
+        "params": {
+            "textDocument": {
+                "uri": format!("file://{}", path.display())
+            }
+        }
+    }));
+}
+
+fn open_document(lsp: &mut LspProcess, path: &Path, text: &str) {
+    send_open_document(lsp, path, text);
+    let notification = recv_notification(lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["uri"],
+        Value::String(format!("file://{}", path.display()))
+    );
+}
+
+fn recv_notification(lsp: &mut LspProcess, method: &str) -> Value {
+    loop {
+        let message = lsp.recv();
+        if message["method"] == Value::String(method.to_string()) {
+            return message;
+        }
+    }
+}
+
+fn recv_response(lsp: &mut LspProcess, request_id: i64) -> Value {
+    loop {
+        let message = lsp.recv();
+        if message["id"] == Value::from(request_id) {
+            return message;
+        }
+    }
+}
+
+fn change_configuration(lsp: &mut LspProcess, settings: Value) {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "workspace/didChangeConfiguration",
+        "params": {
+            "settings": settings
         }
     }));
 }
@@ -1855,8 +2136,7 @@ fn request_code_actions(
         }
     }));
 
-    let response = lsp.recv();
-    assert_eq!(response["id"], request_id);
+    let response = recv_response(lsp, request_id);
     response["result"]
         .as_array()
         .expect("expected code action array")
@@ -1885,8 +2165,7 @@ fn request_code_actions_allow_empty(
         }
     }));
 
-    let response = lsp.recv();
-    assert_eq!(response["id"], request_id);
+    let response = recv_response(lsp, request_id);
     response["result"].as_array().cloned().unwrap_or_default()
 }
 
@@ -1929,8 +2208,7 @@ fn assert_references(
         }
     }));
 
-    let references = lsp.recv();
-    assert_eq!(references["id"], request_id);
+    let references = recv_response(lsp, request_id);
     let items = references["result"]
         .as_array()
         .expect("expected references array");
@@ -1969,8 +2247,7 @@ fn assert_hover(
         }
     }));
 
-    let hover = lsp.recv();
-    assert_eq!(hover["id"], request_id);
+    let hover = recv_response(lsp, request_id);
     assert_eq!(
         hover["result"]["contents"]["kind"],
         Value::String("markdown".to_string())

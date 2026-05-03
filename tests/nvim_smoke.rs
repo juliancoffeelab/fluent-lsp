@@ -95,3 +95,9 @@ fn nvim_smoke_code_action_generate_selector() {
     let result = run_scenario("code_action_generate_selector");
     assert_eq!(result["ok"], Value::Bool(true));
 }
+
+#[test]
+fn nvim_smoke_diagnostics_numeric_selectors() {
+    let result = run_scenario("diagnostics_numeric_selectors");
+    assert_eq!(result["ok"], Value::Bool(true));
+}

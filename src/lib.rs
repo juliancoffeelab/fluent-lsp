@@ -7,6 +7,8 @@ use anyhow::{Context, Result};
 use fluent_syntax::ast::{Entry, Resource};
 use fluent_syntax::parser;
 use fluent_syntax::serializer;
+use icu::locale::Locale;
+use icu::plurals::{PluralCategory, PluralRules};
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
@@ -16,7 +18,8 @@ use tower_lsp::jsonrpc::{Error as LspError, Result as LspResult};
 use tower_lsp::ls_types::{
     CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, CodeLens, CodeLensOptions, CodeLensParams,
-    Command, DidChangeConfigurationParams, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    Command, Diagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
     InitializeParams, InitializeResult, InitializedParams, Location, MarkupContent, MarkupKind,
@@ -78,6 +81,12 @@ pub struct Config {
     file_masks: Vec<String>,
     #[serde(default)]
     selector_style: Option<SelectorStyle>,
+    #[serde(default)]
+    error_on_unsupported_plural_categories: Option<bool>,
+    #[serde(default)]
+    warn_on_missing_plural_categories: Option<bool>,
+    #[serde(default)]
+    warn_on_selector_style_mismatch: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -86,11 +95,25 @@ pub struct WorkspaceConfig {
     origin_language: String,
     file_masks: Vec<FileMask>,
     selector_style: Option<SelectorStyle>,
+    error_on_unsupported_plural_categories: Option<bool>,
+    warn_on_missing_plural_categories: Option<bool>,
+    warn_on_selector_style_mismatch: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct ClientConfig {
     selector_style: Option<SelectorStyle>,
+    error_on_unsupported_plural_categories: Option<bool>,
+    warn_on_missing_plural_categories: Option<bool>,
+    warn_on_selector_style_mismatch: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct EffectiveDiagnosticConfig {
+    error_on_unsupported_plural_categories: bool,
+    warn_on_missing_plural_categories: bool,
+    warn_on_selector_style_mismatch: bool,
+    preferred_selector_style: Option<SelectorStyle>,
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +167,9 @@ impl WorkspaceConfig {
             origin_language,
             file_masks,
             selector_style: config.selector_style,
+            error_on_unsupported_plural_categories: config.error_on_unsupported_plural_categories,
+            warn_on_missing_plural_categories: config.warn_on_missing_plural_categories,
+            warn_on_selector_style_mismatch: config.warn_on_selector_style_mismatch,
         })
     }
 
@@ -232,6 +258,28 @@ impl WorkspaceConfig {
 
     fn selector_style(&self) -> Option<SelectorStyle> {
         self.selector_style
+    }
+
+    fn effective_diagnostic_config(&self, client: ClientConfig) -> EffectiveDiagnosticConfig {
+        EffectiveDiagnosticConfig {
+            error_on_unsupported_plural_categories: self
+                .error_on_unsupported_plural_categories
+                .or(client.error_on_unsupported_plural_categories)
+                .unwrap_or(false),
+            warn_on_missing_plural_categories: self
+                .warn_on_missing_plural_categories
+                .or(client.warn_on_missing_plural_categories)
+                .unwrap_or(false),
+            warn_on_selector_style_mismatch: self
+                .warn_on_selector_style_mismatch
+                .or(client.warn_on_selector_style_mismatch)
+                .unwrap_or(false),
+            preferred_selector_style: Some(
+                self.selector_style
+                    .or(client.selector_style)
+                    .unwrap_or_default(),
+            ),
+        }
     }
 }
 
@@ -430,6 +478,44 @@ impl Backend {
         Err(error)
     }
 
+    async fn publish_document_diagnostics(&self, uri: &Uri) {
+        let (workspace, client_config, source, language) = {
+            let state = self.state.read().await;
+            let Some(workspace) = state.workspace.clone() else {
+                return;
+            };
+            let Some(source) = state.open_documents.get(uri).cloned().or_else(|| {
+                uri.to_file_path()
+                    .and_then(|path| std::fs::read_to_string(path.as_ref()).ok())
+            }) else {
+                return;
+            };
+            let Some(path) = uri.to_file_path() else {
+                return;
+            };
+            let Some(file_match) = workspace.file_match(path.as_ref()) else {
+                return;
+            };
+            (workspace, state.client_config, source, file_match.language)
+        };
+
+        let settings = workspace.effective_diagnostic_config(client_config);
+        let diagnostics = collect_document_diagnostics(&source, &language, settings);
+        self.client
+            .publish_diagnostics(uri.clone(), diagnostics, None)
+            .await;
+    }
+
+    async fn republish_open_document_diagnostics(&self) {
+        let uris = {
+            let state = self.state.read().await;
+            state.open_documents.keys().cloned().collect::<Vec<_>>()
+        };
+        for uri in uris {
+            self.publish_document_diagnostics(&uri).await;
+        }
+    }
+
     async fn definition_for(&self, params: GotoDefinitionParams) -> Option<Location> {
         let state = self.state.read().await;
         let workspace = state.workspace.clone()?;
@@ -553,11 +639,7 @@ impl Backend {
             return Ok(None);
         };
         let hover_position = params.text_document_position_params.position;
-        let selector_overrides = selector_overrides_for_position(
-            &source,
-            &key,
-            hover_position,
-        );
+        let selector_overrides = selector_overrides_for_position(&source, &key, hover_position);
         let current_preview = render_message_preview(pattern, Some(&selector_overrides));
         let source_preview = if !workspace.is_origin_file(&path)
             && !range_contains_position(&hover_range, hover_position)
@@ -576,8 +658,9 @@ impl Backend {
             })?;
             let origin_source = self.read_document_text_required(&origin_uri).await?;
             let origin_resource = parse_fluent_resource(&origin_source);
-            find_fluent_pattern(&origin_resource, &key)
-                .map(|origin_pattern| render_message_preview(origin_pattern, Some(&selector_overrides)))
+            find_fluent_pattern(&origin_resource, &key).map(|origin_pattern| {
+                render_message_preview(origin_pattern, Some(&selector_overrides))
+            })
         } else {
             None
         };
@@ -629,13 +712,11 @@ impl Backend {
             let Some(file_match) = workspace.file_match(&path) else {
                 return Ok(None);
             };
-            let Some(edit_range) =
-                byte_range_to_lsp_range(&source, target.pattern_span.clone())
+            let Some(edit_range) = byte_range_to_lsp_range(&source, target.pattern_span.clone())
             else {
                 return Ok(None);
             };
-            let ordered_styles =
-                ordered_selector_styles(available_selector_styles(&target), style);
+            let ordered_styles = ordered_selector_styles(available_selector_styles(&target), style);
             for candidate_style in ordered_styles {
                 let Some(generated) = generate_number_selector_edit(
                     &source,
@@ -1120,26 +1201,38 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let uri = params.text_document.uri;
         self.state
             .write()
             .await
             .open_documents
-            .insert(params.text_document.uri, params.text_document.text);
+            .insert(uri.clone(), params.text_document.text);
+        self.publish_document_diagnostics(&uri).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.into_iter().last() {
+            let uri = params.text_document.uri;
             self.state
                 .write()
                 .await
                 .open_documents
-                .insert(params.text_document.uri, change.text);
+                .insert(uri.clone(), change.text);
+            self.publish_document_diagnostics(&uri).await;
         }
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let uri = params.text_document.uri;
+        self.state.write().await.open_documents.remove(&uri);
+        self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         let mut state = self.state.write().await;
         state.client_config = parse_client_config(&params.settings);
+        drop(state);
+        self.republish_open_document_diagnostics().await;
     }
 
     async fn goto_definition(
@@ -1262,7 +1355,10 @@ fn render_preview_markdown(preview: &MessagePreview) -> String {
     sections.join("\n\n")
 }
 
-fn render_hover_markdown(source_preview: Option<&MessagePreview>, current_preview: &MessagePreview) -> String {
+fn render_hover_markdown(
+    source_preview: Option<&MessagePreview>,
+    current_preview: &MessagePreview,
+) -> String {
     match source_preview {
         Some(source_preview) => [
             render_preview_markdown(source_preview),
@@ -1424,9 +1520,7 @@ fn render_expression_preview(
             text: render_inline_expression_as_text(inline),
         },
         fluent_syntax::ast::Expression::Select {
-            selector,
-            variants,
-            ..
+            selector, variants, ..
         } => {
             let default_variant = variants
                 .iter()
@@ -1447,10 +1541,9 @@ fn render_expression_preview(
             };
 
             let mut preview = render_message_preview(&selected_variant.value, selector_overrides);
-            preview.selectors.insert(
-                0,
-                (selector_name, rendered_variant_name),
-            );
+            preview
+                .selectors
+                .insert(0, (selector_name, rendered_variant_name));
             preview
         }
     }
@@ -1562,25 +1655,43 @@ fn code_lens_title(total_count: usize) -> String {
 
 fn parse_client_config(settings: &Value) -> ClientConfig {
     if let Some(object) = settings.as_object() {
-        if let Some(style) = object
-            .get("selector_style")
-            .and_then(selector_style_from_json)
-        {
-            return ClientConfig {
-                selector_style: Some(style),
-            };
+        let direct = ClientConfig {
+            selector_style: object
+                .get("selector_style")
+                .and_then(selector_style_from_json),
+            error_on_unsupported_plural_categories: object
+                .get("error_on_unsupported_plural_categories")
+                .and_then(Value::as_bool),
+            warn_on_missing_plural_categories: object
+                .get("warn_on_missing_plural_categories")
+                .and_then(Value::as_bool),
+            warn_on_selector_style_mismatch: object
+                .get("warn_on_selector_style_mismatch")
+                .and_then(Value::as_bool),
+        };
+        if direct != ClientConfig::default() {
+            return direct;
         }
 
         for key in ["fluent-lsp", "fluent_lsp"] {
-            if let Some(style) = object.get(key).and_then(|value| {
-                value
-                    .as_object()
-                    .and_then(|nested| nested.get("selector_style"))
-                    .and_then(selector_style_from_json)
-            }) {
-                return ClientConfig {
-                    selector_style: Some(style),
+            if let Some(nested) = object.get(key).and_then(Value::as_object) {
+                let nested = ClientConfig {
+                    selector_style: nested
+                        .get("selector_style")
+                        .and_then(selector_style_from_json),
+                    error_on_unsupported_plural_categories: nested
+                        .get("error_on_unsupported_plural_categories")
+                        .and_then(Value::as_bool),
+                    warn_on_missing_plural_categories: nested
+                        .get("warn_on_missing_plural_categories")
+                        .and_then(Value::as_bool),
+                    warn_on_selector_style_mismatch: nested
+                        .get("warn_on_selector_style_mismatch")
+                        .and_then(Value::as_bool),
                 };
+                if nested != ClientConfig::default() {
+                    return nested;
+                }
             }
         }
     }
@@ -1590,6 +1701,301 @@ fn parse_client_config(settings: &Value) -> ClientConfig {
 
 fn selector_style_from_json(value: &Value) -> Option<SelectorStyle> {
     serde_json::from_value(value.clone()).ok()
+}
+
+fn collect_document_diagnostics(
+    source: &str,
+    language: &str,
+    settings: EffectiveDiagnosticConfig,
+) -> Vec<Diagnostic> {
+    if !settings.error_on_unsupported_plural_categories
+        && !settings.warn_on_missing_plural_categories
+        && !settings.warn_on_selector_style_mismatch
+    {
+        return Vec::new();
+    }
+
+    let resource = parse_fluent_resource(source);
+    let supported_categories = plural_categories(language);
+    let mut diagnostics = Vec::new();
+    for entry in &resource.body {
+        match entry {
+            Entry::Message(message) => {
+                if let Some(value) = &message.value {
+                    collect_pattern_diagnostics(
+                        source,
+                        language,
+                        &supported_categories,
+                        settings,
+                        value,
+                        &mut diagnostics,
+                    );
+                }
+                for attribute in &message.attributes {
+                    collect_pattern_diagnostics(
+                        source,
+                        language,
+                        &supported_categories,
+                        settings,
+                        &attribute.value,
+                        &mut diagnostics,
+                    );
+                }
+            }
+            Entry::Term(term) => {
+                collect_pattern_diagnostics(
+                    source,
+                    language,
+                    &supported_categories,
+                    settings,
+                    &term.value,
+                    &mut diagnostics,
+                );
+                for attribute in &term.attributes {
+                    collect_pattern_diagnostics(
+                        source,
+                        language,
+                        &supported_categories,
+                        settings,
+                        &attribute.value,
+                        &mut diagnostics,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    diagnostics.sort_by_key(|diagnostic| {
+        (
+            diagnostic.range.start.line,
+            diagnostic.range.start.character,
+            diagnostic.message.clone(),
+        )
+    });
+    diagnostics
+}
+
+fn collect_pattern_diagnostics(
+    source: &str,
+    language: &str,
+    supported_categories: &[&'static str],
+    settings: EffectiveDiagnosticConfig,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if settings.warn_on_selector_style_mismatch {
+        if let Some(shape) = analyze_selector_pattern_shape(source, pattern) {
+            let (style, select) = match &shape {
+                SelectorPatternShape::Whole(select) => (SelectorStyle::Whole, select),
+                SelectorPatternShape::Prefix { select, .. } => (SelectorStyle::Prefix, select),
+                SelectorPatternShape::Suffix { select, .. } => (SelectorStyle::Suffix, select),
+            };
+            if parsed_select_is_number_like(select)
+                && settings
+                    .preferred_selector_style
+                    .is_some_and(|preferred| preferred != style)
+            {
+                let range = byte_range_to_lsp_range(
+                    source,
+                    trim_trailing_newlines_from_span(source, pattern.span.0.clone()),
+                );
+                if let Some(range) = range {
+                    diagnostics.push(Diagnostic {
+                        range,
+                        severity: Some(DiagnosticSeverity::WARNING),
+                        source: Some("fluent-lsp".to_string()),
+                        message: format!(
+                            "Selector style is `{}`, but workspace prefers `{}`",
+                            style.label(),
+                            settings.preferred_selector_style.unwrap().label()
+                        ),
+                        ..Diagnostic::default()
+                    });
+                }
+            }
+        }
+
+        if analyze_selector_pattern_shape(source, pattern).is_none() {
+            for occurrence in select_occurrences_in_pattern(source, pattern) {
+                let Some(style) = analyze_selector_occurrence_style(source, pattern, &occurrence)
+                else {
+                    continue;
+                };
+                if parsed_select_is_number_like(&occurrence.select)
+                    && settings
+                        .preferred_selector_style
+                        .is_some_and(|preferred| preferred != style)
+                {
+                    if let Some(range) =
+                        byte_range_to_lsp_range(source, occurrence.placeable_span.clone())
+                    {
+                        diagnostics.push(Diagnostic {
+                            range,
+                            severity: Some(DiagnosticSeverity::WARNING),
+                            source: Some("fluent-lsp".to_string()),
+                            message: format!(
+                                "Selector style is `{}`, but workspace prefers `{}`",
+                                style.label(),
+                                settings.preferred_selector_style.unwrap().label()
+                            ),
+                            ..Diagnostic::default()
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    for element in &pattern.elements {
+        let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = element else {
+            continue;
+        };
+        collect_expression_diagnostics(
+            source,
+            language,
+            supported_categories,
+            settings,
+            expression,
+            diagnostics,
+        );
+    }
+}
+
+fn collect_expression_diagnostics(
+    source: &str,
+    language: &str,
+    supported_categories: &[&'static str],
+    settings: EffectiveDiagnosticConfig,
+    expression: &fluent_syntax::ast::Expression<&str>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let fluent_syntax::ast::Expression::Select { variants, .. } = expression else {
+        return;
+    };
+
+    if selector_is_number_like(variants) {
+        if settings.error_on_unsupported_plural_categories {
+            for variant in variants {
+                let Some(category_name) = identifier_variant_key_name(&variant.key) else {
+                    continue;
+                };
+                let unsupported_message = if !is_known_plural_category_name(category_name) {
+                    Some(format!(
+                        "`{category_name}` is not a supported numeric selector key for `{language}`; use exact numbers or plural categories"
+                    ))
+                } else if !supported_categories.contains(&category_name) {
+                    Some(format!(
+                        "`{category_name}` is not a supported plural category for `{language}`"
+                    ))
+                } else {
+                    None
+                };
+                if let Some(message) = unsupported_message {
+                    if let Some(range) =
+                        byte_range_to_lsp_range(source, variant_key_span(&variant.key))
+                    {
+                        diagnostics.push(Diagnostic {
+                            range,
+                            severity: Some(DiagnosticSeverity::ERROR),
+                            source: Some("fluent-lsp".to_string()),
+                            message,
+                            ..Diagnostic::default()
+                        });
+                    }
+                }
+            }
+        }
+
+        if settings.warn_on_missing_plural_categories {
+            let present = variants
+                .iter()
+                .filter_map(|variant| identifier_variant_key_name(&variant.key))
+                .collect::<HashSet<_>>();
+            if let Some(range) = byte_range_to_lsp_range(source, select_expression_span(expression))
+            {
+                for category in supported_categories {
+                    if present.contains(category) {
+                        continue;
+                    }
+                    let message = if *category == "other" {
+                        format!(
+                            "Numeric selector for `{language}` is missing fallback category `other`"
+                        )
+                    } else {
+                        format!(
+                            "Numeric selector for `{language}` is missing category `{category}`"
+                        )
+                    };
+                    diagnostics.push(Diagnostic {
+                        range,
+                        severity: Some(DiagnosticSeverity::WARNING),
+                        source: Some("fluent-lsp".to_string()),
+                        message,
+                        ..Diagnostic::default()
+                    });
+                }
+            }
+        }
+    }
+
+    for variant in variants {
+        collect_pattern_diagnostics(
+            source,
+            language,
+            supported_categories,
+            settings,
+            &variant.value,
+            diagnostics,
+        );
+    }
+}
+
+fn parsed_select_is_number_like(select: &ParsedSelectExpression<'_>) -> bool {
+    select.variants.iter().any(|variant| {
+        variant.key_text.chars().all(|ch| ch.is_ascii_digit())
+            || is_distinct_plural_category_name(&variant.key_text)
+    })
+}
+
+fn selector_is_number_like(variants: &[fluent_syntax::ast::Variant<&str>]) -> bool {
+    variants.iter().any(|variant| match &variant.key {
+        fluent_syntax::ast::VariantKey::NumberLiteral { .. } => true,
+        fluent_syntax::ast::VariantKey::Identifier { name, .. } => {
+            is_distinct_plural_category_name(name)
+        }
+    })
+}
+
+fn is_known_plural_category_name(name: &str) -> bool {
+    matches!(name, "zero" | "one" | "two" | "few" | "many" | "other")
+}
+
+fn is_distinct_plural_category_name(name: &str) -> bool {
+    matches!(name, "zero" | "one" | "two" | "few" | "many")
+}
+
+fn identifier_variant_key_name<'a>(
+    key: &'a fluent_syntax::ast::VariantKey<&'a str>,
+) -> Option<&'a str> {
+    match key {
+        fluent_syntax::ast::VariantKey::Identifier { name, .. } => Some(name),
+        fluent_syntax::ast::VariantKey::NumberLiteral { .. } => None,
+    }
+}
+
+fn variant_key_span(key: &fluent_syntax::ast::VariantKey<&str>) -> ByteRange<usize> {
+    match key {
+        fluent_syntax::ast::VariantKey::Identifier { span, .. }
+        | fluent_syntax::ast::VariantKey::NumberLiteral { span, .. } => span.0.clone(),
+    }
+}
+
+fn select_expression_span(expression: &fluent_syntax::ast::Expression<&str>) -> ByteRange<usize> {
+    match expression {
+        fluent_syntax::ast::Expression::Select { span, .. }
+        | fluent_syntax::ast::Expression::Inline(_, span) => span.0.clone(),
+    }
 }
 
 fn sanitize_document_segment(value: &str) -> String {
@@ -1616,7 +2022,11 @@ fn parse_select_openers(line: &str) -> Vec<String> {
         .get_or_init(|| Regex::new(r"\{\s*([^{}\n]+?)\s*->").expect("valid select opener regex"));
 
     re.captures_iter(line)
-        .filter_map(|captures| captures.get(1).map(|value| value.as_str().trim().to_string()))
+        .filter_map(|captures| {
+            captures
+                .get(1)
+                .map(|value| value.as_str().trim().to_string())
+        })
         .collect()
 }
 
@@ -1642,7 +2052,9 @@ fn find_generate_selector_target(
     let selected_function = if selected_variable.is_none() {
         functions
             .iter()
-            .filter(|function| position_overlaps_byte_span(source, position, &function.selection_span))
+            .filter(|function| {
+                position_overlaps_byte_span(source, position, &function.selection_span)
+            })
             .min_by_key(|function| function.selection_span.end - function.selection_span.start)
             .cloned()
     } else {
@@ -1653,8 +2065,7 @@ fn find_generate_selector_target(
         variable.container_span.clone()
     } else if let Some(function) = &selected_function {
         function.container_span.clone()
-    } else if let Some(position_span) =
-        deepest_pattern_span_for_position(source, pattern, position)
+    } else if let Some(position_span) = deepest_pattern_span_for_position(source, pattern, position)
     {
         position_span
     } else if range_contains_position(&definition_range, position) {
@@ -1723,17 +2134,13 @@ fn generate_number_selector_edit(
 ) -> Option<String> {
     let pattern_text = source.get(target.pattern_span.clone())?;
     let line_indent = line_indentation_at(source, target.pattern_span.start);
-    let anchor_variable = target
-        .selected_variable
-        .as_ref()
-        .cloned()
-        .or_else(|| {
-            target
-                .variables
-                .iter()
-                .find(|variable| variable.anchor_span.start < variable.anchor_span.end)
-                .cloned()
-        });
+    let anchor_variable = target.selected_variable.as_ref().cloned().or_else(|| {
+        target
+            .variables
+            .iter()
+            .find(|variable| variable.anchor_span.start < variable.anchor_span.end)
+            .cloned()
+    });
     let anchor_function = target.selected_function.as_ref().cloned();
     let binding = selector_binding_for_target(
         target.selected_function.as_ref(),
@@ -1926,7 +2333,10 @@ fn selector_rewrite_actions_for_pattern(
         return Vec::new();
     };
     let current_text = source
-        .get(trim_trailing_newlines_from_span(source, pattern.span.0.clone()))
+        .get(trim_trailing_newlines_from_span(
+            source,
+            pattern.span.0.clone(),
+        ))
         .unwrap_or_default();
     let mut actions = Vec::new();
 
@@ -2000,7 +2410,10 @@ fn selector_rewrite_actions_for_occurrence(
     byte_index: usize,
 ) -> Vec<SelectorRewriteAction> {
     let current_text = source
-        .get(trim_trailing_newlines_from_span(source, pattern.span.0.clone()))
+        .get(trim_trailing_newlines_from_span(
+            source,
+            pattern.span.0.clone(),
+        ))
         .unwrap_or_default();
     let mut actions = Vec::new();
 
@@ -2009,7 +2422,8 @@ fn selector_rewrite_actions_for_occurrence(
             continue;
         }
 
-        if let Some(replacement) = rewrite_selected_selector_to_whole(source, pattern, &occurrence) {
+        if let Some(replacement) = rewrite_selected_selector_to_whole(source, pattern, &occurrence)
+        {
             if replacement != current_text {
                 actions.push(SelectorRewriteAction {
                     kind: SelectorRewriteKind::Whole,
@@ -2018,8 +2432,7 @@ fn selector_rewrite_actions_for_occurrence(
             }
         }
 
-        if let Some(replacement) =
-            rewrite_selected_selector_to_suffix(source, pattern, &occurrence)
+        if let Some(replacement) = rewrite_selected_selector_to_suffix(source, pattern, &occurrence)
         {
             if replacement != current_text {
                 actions.push(SelectorRewriteAction {
@@ -2066,6 +2479,28 @@ struct ParsedSelectOccurrence<'a> {
     outer_prefix: Vec<&'a fluent_syntax::ast::PatternElement<&'a str>>,
     outer_suffix: Vec<&'a fluent_syntax::ast::PatternElement<&'a str>>,
     select: ParsedSelectExpression<'a>,
+}
+
+fn analyze_selector_occurrence_style(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    occurrence: &ParsedSelectOccurrence<'_>,
+) -> Option<SelectorStyle> {
+    if occurrence.outer_suffix.is_empty() {
+        if selector_prefix_anchor_index(&occurrence.outer_prefix, occurrence.select.selector_name)
+            .is_some()
+        {
+            return Some(SelectorStyle::Prefix);
+        }
+
+        if occurrence.select.variants.iter().all(|variant| {
+            variant_starts_with_direct_selector(variant.value, occurrence.select.selector_name)
+        }) {
+            return Some(SelectorStyle::Suffix);
+        }
+    }
+
+    rewrite_selected_selector_to_whole(source, pattern, occurrence).map(|_| SelectorStyle::Whole)
 }
 
 fn analyze_selector_pattern_shape<'a>(
@@ -2120,9 +2555,7 @@ fn select_expression_from_expression<'a>(
     expression: &'a fluent_syntax::ast::Expression<&'a str>,
 ) -> Option<ParsedSelectExpression<'a>> {
     let fluent_syntax::ast::Expression::Select {
-        selector,
-        variants,
-        ..
+        selector, variants, ..
     } = expression
     else {
         return None;
@@ -2188,7 +2621,10 @@ fn rewrite_prefixed_selector_to_whole(
             Some(RenderedVariant {
                 key_text: variant.key_text.clone(),
                 default: variant.default,
-                body: format!("{prefix_text}{}", pattern_source_text(source, variant.value)?),
+                body: format!(
+                    "{prefix_text}{}",
+                    pattern_source_text(source, variant.value)?
+                ),
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -2435,7 +2871,7 @@ fn render_generated_selector_block(variable: &str, language: &str, branch_body: 
     let categories = plural_categories(language);
 
     for category in categories {
-        let default_prefix = if *category == "other" { "*" } else { "" };
+        let default_prefix = if category == "other" { "*" } else { "" };
         lines.push(format!("    {default_prefix}[{category}]{body}"));
     }
     lines.push("}".to_string());
@@ -2476,11 +2912,47 @@ fn concat_prefix_and_selector(prefix: &str, selector_block: &str) -> String {
     }
 }
 
-fn plural_categories(language: &str) -> &'static [&'static str] {
-    match language.split('-').next().unwrap_or(language) {
-        "lv" => &["zero", "one", "other"],
-        "ar" => &["zero", "one", "two", "few", "many", "other"],
-        _ => &["one", "other"],
+fn plural_categories(language: &str) -> Vec<&'static str> {
+    let locale = language.parse::<Locale>().ok().or_else(|| {
+        language
+            .split('-')
+            .next()
+            .and_then(|base| base.parse::<Locale>().ok())
+    });
+
+    locale
+        .and_then(|locale| PluralRules::try_new_cardinal(locale.into()).ok())
+        .map(|rules| {
+            let mut present = HashSet::new();
+            for number in 0_u32..=200 {
+                present.insert(rules.category_for(number));
+            }
+            present.insert(PluralCategory::Other);
+
+            [
+                PluralCategory::Zero,
+                PluralCategory::One,
+                PluralCategory::Two,
+                PluralCategory::Few,
+                PluralCategory::Many,
+                PluralCategory::Other,
+            ]
+            .into_iter()
+            .filter(|category| present.contains(category))
+            .map(plural_category_name)
+            .collect()
+        })
+        .unwrap_or_else(|| vec!["one", "other"])
+}
+
+fn plural_category_name(category: PluralCategory) -> &'static str {
+    match category {
+        PluralCategory::Zero => "zero",
+        PluralCategory::One => "one",
+        PluralCategory::Two => "two",
+        PluralCategory::Few => "few",
+        PluralCategory::Many => "many",
+        PluralCategory::Other => "other",
     }
 }
 
@@ -2702,13 +3174,15 @@ fn collect_function_selector_targets_in_expression(
     functions: &mut Vec<FunctionSelectorTarget>,
 ) {
     match expression {
-        fluent_syntax::ast::Expression::Inline(inline, _) => collect_function_selector_targets_in_inline(
-            source,
-            inline,
-            container_span,
-            anchor_span,
-            functions,
-        ),
+        fluent_syntax::ast::Expression::Inline(inline, _) => {
+            collect_function_selector_targets_in_inline(
+                source,
+                inline,
+                container_span,
+                anchor_span,
+                functions,
+            )
+        }
         fluent_syntax::ast::Expression::Select {
             selector, variants, ..
         } => {
@@ -2734,7 +3208,9 @@ fn collect_function_selector_targets_in_inline(
     functions: &mut Vec<FunctionSelectorTarget>,
 ) {
     match inline {
-        fluent_syntax::ast::InlineExpression::FunctionReference { span, arguments, .. } => {
+        fluent_syntax::ast::InlineExpression::FunctionReference {
+            span, arguments, ..
+        } => {
             if let Some(selector_text) = source.get(span.0.clone()) {
                 functions.push(FunctionSelectorTarget {
                     selector_text: selector_text.to_string(),
@@ -2823,9 +3299,7 @@ fn pattern_contains_select(pattern: &fluent_syntax::ast::Pattern<&str>) -> bool 
     pattern.elements.iter().any(pattern_element_contains_select)
 }
 
-fn pattern_element_contains_select(
-    element: &fluent_syntax::ast::PatternElement<&str>,
-) -> bool {
+fn pattern_element_contains_select(element: &fluent_syntax::ast::PatternElement<&str>) -> bool {
     match element {
         fluent_syntax::ast::PatternElement::TextElement { .. } => false,
         fluent_syntax::ast::PatternElement::Placeable { expression, .. } => {
@@ -3021,7 +3495,10 @@ fn pattern_source_text(
     pattern: &fluent_syntax::ast::Pattern<&str>,
 ) -> Option<String> {
     source
-        .get(trim_trailing_newlines_from_span(source, pattern.span.0.clone()))
+        .get(trim_trailing_newlines_from_span(
+            source,
+            pattern.span.0.clone(),
+        ))
         .map(ToString::to_string)
 }
 
@@ -3108,10 +3585,7 @@ fn replace_variable_references(
     result
 }
 
-fn relative_span(
-    outer: &ByteRange<usize>,
-    inner: &ByteRange<usize>,
-) -> Option<ByteRange<usize>> {
+fn relative_span(outer: &ByteRange<usize>, inner: &ByteRange<usize>) -> Option<ByteRange<usize>> {
     if inner.start < outer.start || inner.end > outer.end {
         None
     } else {
@@ -3406,7 +3880,12 @@ fn selector_overrides_for_position(
     let mut selectors: Vec<ActiveSelectorContext> = Vec::new();
     let mut resolved_overrides: HashMap<String, String> = HashMap::new();
 
-    for (index, line) in lines.iter().enumerate().take(line_index + 1).skip(start_line) {
+    for (index, line) in lines
+        .iter()
+        .enumerate()
+        .take(line_index + 1)
+        .skip(start_line)
+    {
         let trimmed = line.trim_start();
         let indent = leading_spaces(line);
 
@@ -3544,9 +4023,7 @@ fn expand_expression(
             total_count: 1,
         },
         fluent_syntax::ast::Expression::Select {
-            selector,
-            variants,
-            ..
+            selector, variants, ..
         } => {
             let selector_name = render_inline_expression(selector);
             let mut items = Vec::new();
@@ -3584,7 +4061,9 @@ fn render_variant_key(key: &fluent_syntax::ast::VariantKey<&str>) -> String {
     }
 }
 
-fn render_inline_expression_as_text(expression: &fluent_syntax::ast::InlineExpression<&str>) -> String {
+fn render_inline_expression_as_text(
+    expression: &fluent_syntax::ast::InlineExpression<&str>,
+) -> String {
     format!("{{ {} }}", render_inline_expression(expression))
 }
 
@@ -3593,20 +4072,16 @@ fn render_inline_expression(expression: &fluent_syntax::ast::InlineExpression<&s
         fluent_syntax::ast::InlineExpression::StringLiteral { value, .. } => {
             format!("\"{value}\"")
         }
-        fluent_syntax::ast::InlineExpression::NumberLiteral { value, .. } => {
-            (*value).to_string()
-        }
+        fluent_syntax::ast::InlineExpression::NumberLiteral { value, .. } => (*value).to_string(),
         fluent_syntax::ast::InlineExpression::FunctionReference { id, .. } => {
             format!("{}()", id.name)
         }
-        fluent_syntax::ast::InlineExpression::MessageReference {
-            id,
-            attribute,
-            ..
-        } => match attribute {
-            Some(attribute) => format!("{}.{}", id.name, attribute.name),
-            None => id.name.to_string(),
-        },
+        fluent_syntax::ast::InlineExpression::MessageReference { id, attribute, .. } => {
+            match attribute {
+                Some(attribute) => format!("{}.{}", id.name, attribute.name),
+                None => id.name.to_string(),
+            }
+        }
         fluent_syntax::ast::InlineExpression::TermReference {
             id,
             attribute,
@@ -3797,9 +4272,12 @@ mod tests {
     fn extracts_key_inside_selector_variant_text() {
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
 
-        let key =
-            extract_definition_key(source, Path::new("locales/en/app.ftl"), Position::new(2, 18))
-                .unwrap();
+        let key = extract_definition_key(
+            source,
+            Path::new("locales/en/app.ftl"),
+            Position::new(2, 18),
+        )
+        .unwrap();
         assert_eq!(key, "install-hint");
     }
 
@@ -3831,6 +4309,7 @@ mod tests {
                 "locales/fr/dialogs/menu.ftl".to_string(),
                 "locales/lv/app.ftl".to_string(),
                 "locales/lv/dialogs/menu.ftl".to_string(),
+                "locales/uk/app.ftl".to_string(),
             ]
         );
     }
@@ -4095,19 +4574,11 @@ mod tests {
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
 
         assert_eq!(
-            selector_overrides_for_position(
-                source,
-                "install-hint",
-                Position::new(2, 18)
-            ),
+            selector_overrides_for_position(source, "install-hint", Position::new(2, 18)),
             HashMap::from([("$gender".to_string(), "female".to_string())])
         );
         assert_eq!(
-            selector_overrides_for_position(
-                source,
-                "install-hint",
-                Position::new(0, 3)
-            ),
+            selector_overrides_for_position(source, "install-hint", Position::new(0, 3)),
             HashMap::new()
         );
     }
@@ -4117,11 +4588,7 @@ mod tests {
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
 
         assert_eq!(
-            selector_overrides_for_position(
-                source,
-                "install-hint",
-                Position::new(5, 8)
-            ),
+            selector_overrides_for_position(source, "install-hint", Position::new(5, 8)),
             HashMap::from([("$gender".to_string(), "other".to_string())])
         );
     }
@@ -4131,11 +4598,7 @@ mod tests {
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
 
         assert_eq!(
-            selector_overrides_for_position(
-                source,
-                "install-hint",
-                Position::new(6, 12)
-            ),
+            selector_overrides_for_position(source, "install-hint", Position::new(6, 12)),
             HashMap::from([
                 ("$gender".to_string(), "other".to_string()),
                 ("$count".to_string(), "one".to_string()),
@@ -4148,22 +4611,14 @@ mod tests {
         let source = "mismatch-rollout =\n    Resumen para { $gender ->\n        [female] ella misma\n        [male] el mismo\n       *[other] elle misme\n    } con { $count ->\n        [0] ningun paquete\n        [1] un paquete\n       *[other] { $count } paquetes\n    } listo.\n";
 
         assert_eq!(
-            selector_overrides_for_position(
-                source,
-                "mismatch-rollout",
-                Position::new(6, 12)
-            ),
+            selector_overrides_for_position(source, "mismatch-rollout", Position::new(6, 12)),
             HashMap::from([
                 ("$gender".to_string(), "other".to_string()),
                 ("$count".to_string(), "0".to_string()),
             ])
         );
         assert_eq!(
-            selector_overrides_for_position(
-                source,
-                "mismatch-rollout",
-                Position::new(7, 12)
-            ),
+            selector_overrides_for_position(source, "mismatch-rollout", Position::new(7, 12)),
             HashMap::from([
                 ("$gender".to_string(), "other".to_string()),
                 ("$count".to_string(), "1".to_string()),
@@ -4194,7 +4649,10 @@ mod tests {
         );
         assert!(!rendered.contains("Source language:"));
         assert!(!rendered.contains("Source language combinations:"));
-        assert_eq!(rendered.matches("Current language combinations:").count(), 1);
+        assert_eq!(
+            rendered.matches("Current language combinations:").count(),
+            1
+        );
     }
 
     #[test]
@@ -4224,7 +4682,10 @@ mod tests {
             panic!("expected select expression");
         };
 
-        assert_eq!(&source[variants[0].span.start..variants[0].span.end], "[0] Zero\n");
+        assert_eq!(
+            &source[variants[0].span.start..variants[0].span.end],
+            "[0] Zero\n"
+        );
         match &variants[1].key {
             fluent_syntax::ast::VariantKey::Identifier { span, .. } => {
                 assert_eq!(&source[span.start..span.end], "other");
@@ -4237,7 +4698,8 @@ mod tests {
     fn parses_client_selector_style_from_nested_settings() {
         let settings = serde_json::json!({
             "fluent-lsp": {
-                "selector_style": "whole"
+                "selector_style": "whole",
+                "warn_on_missing_plural_categories": true
             }
         });
 
@@ -4245,7 +4707,184 @@ mod tests {
             parse_client_config(&settings),
             ClientConfig {
                 selector_style: Some(SelectorStyle::Whole),
+                warn_on_missing_plural_categories: Some(true),
+                ..ClientConfig::default()
             }
+        );
+    }
+
+    #[test]
+    fn workspace_diagnostic_config_prefers_file_values_over_client_settings() {
+        let workspace = WorkspaceConfig {
+            root_dir: PathBuf::from("."),
+            origin_language: "en".to_string(),
+            file_masks: Vec::new(),
+            selector_style: Some(SelectorStyle::Whole),
+            error_on_unsupported_plural_categories: Some(false),
+            warn_on_missing_plural_categories: Some(true),
+            warn_on_selector_style_mismatch: Some(false),
+        };
+
+        let effective = workspace.effective_diagnostic_config(ClientConfig {
+            selector_style: Some(SelectorStyle::Prefix),
+            error_on_unsupported_plural_categories: Some(true),
+            warn_on_missing_plural_categories: Some(false),
+            warn_on_selector_style_mismatch: Some(true),
+        });
+
+        assert_eq!(
+            effective,
+            EffectiveDiagnosticConfig {
+                error_on_unsupported_plural_categories: false,
+                warn_on_missing_plural_categories: true,
+                warn_on_selector_style_mismatch: false,
+                preferred_selector_style: Some(SelectorStyle::Whole),
+            }
+        );
+    }
+
+    #[test]
+    fn collects_unsupported_and_missing_plural_category_diagnostics() {
+        let source =
+            "bad-zero =\n    { $count ->\n        [few] slikti\n       *[other] labi\n    }\n";
+        let diagnostics = collect_document_diagnostics(
+            source,
+            "lv",
+            EffectiveDiagnosticConfig {
+                error_on_unsupported_plural_categories: true,
+                warn_on_missing_plural_categories: true,
+                ..EffectiveDiagnosticConfig::default()
+            },
+        );
+
+        assert_eq!(diagnostics.len(), 3);
+        let unsupported = diagnostics
+            .iter()
+            .find(|diagnostic| {
+                diagnostic.message == "`few` is not a supported plural category for `lv`"
+            })
+            .unwrap();
+        assert_eq!(unsupported.severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(unsupported.range.start, Position::new(2, 9));
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.message
+                    == "Numeric selector for `lv` is missing category `zero`")
+                .count(),
+            1
+        );
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic.message
+            == "Numeric selector for `lv` is missing category `one`"));
+    }
+
+    #[test]
+    fn numeric_literal_selectors_still_require_plural_categories() {
+        let source = "numeric-rollout =\n    { $count ->\n        [0] nav\n        [1] viens\n       *[other] daudz\n    }\n";
+        let diagnostics = collect_document_diagnostics(
+            source,
+            "en",
+            EffectiveDiagnosticConfig {
+                warn_on_missing_plural_categories: true,
+                ..EffectiveDiagnosticConfig::default()
+            },
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].message,
+            "Numeric selector for `en` is missing category `one`"
+        );
+    }
+
+    #[test]
+    fn style_mismatch_diagnostics_report_local_numeric_selector_occurrences() {
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n       *[fallback] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
+        let diagnostics = collect_document_diagnostics(
+            source,
+            "en",
+            EffectiveDiagnosticConfig {
+                warn_on_selector_style_mismatch: true,
+                preferred_selector_style: Some(SelectorStyle::Prefix),
+                ..EffectiveDiagnosticConfig::default()
+            },
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].message,
+            "Selector style is `whole`, but workspace prefers `prefix`"
+        );
+        assert_eq!(diagnostics[0].range.start, Position::new(4, 28));
+    }
+
+    #[test]
+    fn style_mismatch_diagnostics_report_recognized_numeric_styles() {
+        let source = "whole-coins = { $coins ->\n    [one] You have { $coins } coin.\n   *[other] You have { $coins } coins.\n}\n";
+        let diagnostics = collect_document_diagnostics(
+            source,
+            "en",
+            EffectiveDiagnosticConfig {
+                warn_on_selector_style_mismatch: true,
+                preferred_selector_style: Some(SelectorStyle::Prefix),
+                ..EffectiveDiagnosticConfig::default()
+            },
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].message,
+            "Selector style is `whole`, but workspace prefers `prefix`"
+        );
+        assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+    }
+
+    #[test]
+    fn numeric_selectors_reject_arbitrary_identifier_keys() {
+        let source = "bad-key =\n    { $count ->\n        [admins] nope\n        [one] ok\n       *[other] ok\n    }\n";
+        let diagnostics = collect_document_diagnostics(
+            source,
+            "en",
+            EffectiveDiagnosticConfig {
+                error_on_unsupported_plural_categories: true,
+                ..EffectiveDiagnosticConfig::default()
+            },
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].message,
+            "`admins` is not a supported numeric selector key for `en`; use exact numbers or plural categories"
+        );
+        assert_eq!(diagnostics[0].range.start, Position::new(2, 9));
+        assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    }
+
+    #[test]
+    fn selectors_with_only_other_and_custom_keys_are_not_numeric() {
+        let source =
+            "bad-key =\n    { $count ->\n        [admins] nope\n       *[other] ok\n    }\n";
+        let diagnostics = collect_document_diagnostics(
+            source,
+            "en",
+            EffectiveDiagnosticConfig {
+                error_on_unsupported_plural_categories: true,
+                warn_on_missing_plural_categories: true,
+                ..EffectiveDiagnosticConfig::default()
+            },
+        );
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn plural_categories_come_from_unicode_data() {
+        assert_eq!(plural_categories("en"), vec!["one", "other"]);
+        assert_eq!(plural_categories("lv"), vec!["zero", "one", "other"]);
+        assert_eq!(plural_categories("uk"), vec!["one", "few", "many", "other"]);
+        assert_eq!(
+            plural_categories("ar"),
+            vec!["zero", "one", "two", "few", "many", "other"]
         );
     }
 
@@ -4262,7 +4901,10 @@ mod tests {
         let from_variable =
             find_generate_selector_target(source, path, Position::new(0, 23)).unwrap();
         assert_eq!(
-            from_variable.selected_variable.as_ref().map(|variable| variable.name.as_str()),
+            from_variable
+                .selected_variable
+                .as_ref()
+                .map(|variable| variable.name.as_str()),
             Some("$coins")
         );
     }
@@ -4274,12 +4916,18 @@ mod tests {
         let target = find_generate_selector_target(source, path, Position::new(2, 34)).unwrap();
 
         assert_eq!(
-            target.selected_variable.as_ref().map(|variable| variable.name.as_str()),
+            target
+                .selected_variable
+                .as_ref()
+                .map(|variable| variable.name.as_str()),
             Some("$coins")
         );
         let selected = target.selected_variable.as_ref().unwrap();
         assert_eq!(target.pattern_span, selected.container_span);
-        assert_eq!(source.get(target.pattern_span.clone()).unwrap(), "Ella tiene { $coins } monedas.");
+        assert_eq!(
+            source.get(target.pattern_span.clone()).unwrap(),
+            "Ella tiene { $coins } monedas."
+        );
     }
 
     #[test]
@@ -4287,12 +4935,8 @@ mod tests {
         let source = "range-summary = Entre { $min } y { $max } elementos.\n";
         let path = Path::new("locales/es/app.ftl");
 
-        assert!(
-            find_generate_selector_target(source, path, Position::new(0, 2)).is_none()
-        );
-        assert!(
-            find_generate_selector_target(source, path, Position::new(0, 26)).is_some()
-        );
+        assert!(find_generate_selector_target(source, path, Position::new(0, 2)).is_none());
+        assert!(find_generate_selector_target(source, path, Position::new(0, 26)).is_some());
     }
 
     #[test]
@@ -4300,9 +4944,7 @@ mod tests {
         let source = "nested-coins =\n    { $gender ->\n        [female] Ella tiene { $coins } monedas.\n       *[other] Elle tiene { $coins } monedas.\n    }\n";
         let path = Path::new("locales/es/app.ftl");
 
-        assert!(
-            find_generate_selector_target(source, path, Position::new(0, 2)).is_none()
-        );
+        assert!(find_generate_selector_target(source, path, Position::new(0, 2)).is_none());
     }
 
     #[test]
@@ -4374,7 +5016,11 @@ mod tests {
         assert_eq!(from_key.variables[0].name, "$downloads");
         assert_eq!(
             available_selector_styles(&from_key),
-            vec![SelectorStyle::Prefix, SelectorStyle::Whole, SelectorStyle::Suffix]
+            vec![
+                SelectorStyle::Prefix,
+                SelectorStyle::Whole,
+                SelectorStyle::Suffix
+            ]
         );
         assert_eq!(
             generate_number_selector_edit(source, &from_key, "es", SelectorStyle::Prefix, true)
@@ -4433,7 +5079,10 @@ mod tests {
         let target = find_generate_selector_target(source, path, Position::new(0, 44)).unwrap();
 
         assert_eq!(
-            target.selected_variable.as_ref().map(|variable| variable.name.as_str()),
+            target
+                .selected_variable
+                .as_ref()
+                .map(|variable| variable.name.as_str()),
             Some("$downloads")
         );
         assert_eq!(
@@ -4504,7 +5153,8 @@ mod tests {
     fn rewrites_suffix_selector_to_whole_and_prefix() {
         let source = "suffix-coins = Tienes { $coins ->\n    [one] { $coins } moneda.\n   *[other] { $coins } monedas.\n}\n";
         let path = Path::new("locales/es/app.ftl");
-        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(1, 10)).unwrap();
+        let (_, actions) =
+            find_selector_rewrite_target(source, path, Position::new(1, 10)).unwrap();
 
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Whole);
@@ -4525,7 +5175,8 @@ mod tests {
     fn bare_suffix_like_selector_only_offers_prefix_rewrite() {
         let source = "bare-suffix-coins = { $coins ->\n    [one] { $coins } moneda.\n   *[other] { $coins } monedas.\n}\n";
         let path = Path::new("locales/es/app.ftl");
-        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(1, 10)).unwrap();
+        let (_, actions) =
+            find_selector_rewrite_target(source, path, Position::new(1, 10)).unwrap();
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Prefix);
@@ -4540,7 +5191,8 @@ mod tests {
     fn rewrites_nested_whole_selector_inside_variant() {
         let source = "nested-whole-coins =\n    { $gender ->\n        [female] { $coins ->\n            [one] Ella tiene { $coins } moneda.\n           *[other] Ella tiene { $coins } monedas.\n        }\n       *[other] Elle tiene { $coins } monedas.\n    }\n";
         let path = Path::new("locales/es/app.ftl");
-        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(3, 24)).unwrap();
+        let (_, actions) =
+            find_selector_rewrite_target(source, path, Position::new(3, 24)).unwrap();
 
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Prefix);
@@ -4561,8 +5213,7 @@ mod tests {
     fn rewrites_whole_selector_inside_attribute_value() {
         let source = "commented-download =\n    .tooltip = { $files ->\n        [one] Descarga { $files } archivo.\n       *[other] Descarga { $files } archivos.\n    }\n";
         let path = Path::new("locales/es/app.ftl");
-        let (_, actions) =
-            find_selector_rewrite_target(source, path, Position::new(1, 6)).unwrap();
+        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(1, 6)).unwrap();
 
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Prefix);
@@ -4596,7 +5247,8 @@ mod tests {
     fn rewrites_selected_count_selector_with_trailing_suffix_text() {
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
         let path = Path::new("locales/en/app.ftl");
-        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(5, 31)).unwrap();
+        let (_, actions) =
+            find_selector_rewrite_target(source, path, Position::new(5, 31)).unwrap();
 
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Whole);
@@ -4617,7 +5269,8 @@ mod tests {
     fn rewrites_selected_gender_selector_to_whole_with_nested_count_selector_preserved() {
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
         let path = Path::new("locales/en/app.ftl");
-        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(1, 35)).unwrap();
+        let (_, actions) =
+            find_selector_rewrite_target(source, path, Position::new(1, 35)).unwrap();
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Whole);
@@ -4646,7 +5299,8 @@ mod tests {
 
     #[test]
     fn generated_multiline_attribute_pattern_parses() {
-        let generated = "Instala { $files } { $files ->\n    [one] ahora.\n    *[other] ahora mismo.\n}";
+        let generated =
+            "Instala { $files } { $files ->\n    [one] ahora.\n    *[other] ahora mismo.\n}";
         assert_generated_pattern_parses(generated);
     }
 
