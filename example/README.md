@@ -33,8 +33,8 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - Extra translation target for references and locale comparisons
 - `example/locales/lv/app.ftl`
   - Hover `zero-rollout` inside `[zero]` or `[one]` to verify category-style selector matching across source and Latvian local text
-  - Enable `warn_on_missing_plural_categories` and open `incomplete-zero` to verify a Latvian missing-`zero` warning
-  - Enable `error_on_unsupported_plural_categories` and open `bad-zero` to verify an exact-span error on `[few]`
+  - Enable `warn_on_missing_plural_categories` and save `incomplete-zero` to verify a Latvian missing-`zero` warning
+  - Enable `error_on_unsupported_plural_categories` and save `bad-zero` to verify an exact-span error on `[few]`
 - `example/locales/ar/app.ftl`
   - Use `arabic-rollout` when you want a locale whose supported plural-category set is wider than English or Latvian
   - Enable diagnostics to verify `zero/one/two/few/many/other` are treated as valid Arabic category names
@@ -62,4 +62,5 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - `error_on_unsupported_plural_categories = true`
   - `warn_on_missing_plural_categories = true`
   - `warn_on_selector_style_mismatch = true`
+- Numeric-selector diagnostics are published on save, not on every edit, so use `:write` or an equivalent save action after changing a file.
 - This example workspace is intentionally small, but it keeps multiple translation targets where they are useful for trying references and cross-locale behavior.

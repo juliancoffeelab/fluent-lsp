@@ -20,12 +20,13 @@ use tower_lsp::ls_types::{
     CodeActionProviderCapability, CodeActionResponse, CodeLens, CodeLensOptions, CodeLensParams,
     Command, Diagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, Location, MarkupContent, MarkupKind,
-    MessageType, OneOf, OneOf3, OptionalVersionedTextDocumentIdentifier, Position, Range,
-    ReferenceParams, ServerCapabilities, ShowDocumentParams, SnippetTextEdit, TextDocumentEdit,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
+    DidSaveTextDocumentParams, DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, Location,
+    MarkupContent, MarkupKind, MessageType, OneOf, OneOf3, OptionalVersionedTextDocumentIdentifier,
+    Position, Range, ReferenceParams, ServerCapabilities, ShowDocumentParams, SnippetTextEdit,
+    TextDocumentEdit, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TextEdit, Uri, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -504,16 +505,6 @@ impl Backend {
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, None)
             .await;
-    }
-
-    async fn republish_open_document_diagnostics(&self) {
-        let uris = {
-            let state = self.state.read().await;
-            state.open_documents.keys().cloned().collect::<Vec<_>>()
-        };
-        for uri in uris {
-            self.publish_document_diagnostics(&uri).await;
-        }
     }
 
     async fn definition_for(&self, params: GotoDefinitionParams) -> Option<Location> {
@@ -1156,8 +1147,13 @@ impl LanguageServer for Backend {
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::FULL,
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        open_close: Some(true),
+                        change: Some(TextDocumentSyncKind::FULL),
+                        save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                        ..Default::default()
+                    },
                 )),
                 ..ServerCapabilities::default()
             },
@@ -1207,7 +1203,6 @@ impl LanguageServer for Backend {
             .await
             .open_documents
             .insert(uri.clone(), params.text_document.text);
-        self.publish_document_diagnostics(&uri).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -1218,7 +1213,6 @@ impl LanguageServer for Backend {
                 .await
                 .open_documents
                 .insert(uri.clone(), change.text);
-            self.publish_document_diagnostics(&uri).await;
         }
     }
 
@@ -1228,11 +1222,22 @@ impl LanguageServer for Backend {
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        let uri = params.text_document.uri;
+        if let Some(text) = params.text {
+            self.state
+                .write()
+                .await
+                .open_documents
+                .insert(uri.clone(), text);
+        }
+        self.publish_document_diagnostics(&uri).await;
+    }
+
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         let mut state = self.state.write().await;
         state.client_config = parse_client_config(&params.settings);
         drop(state);
-        self.republish_open_document_diagnostics().await;
     }
 
     async fn goto_definition(

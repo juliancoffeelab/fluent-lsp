@@ -1627,17 +1627,7 @@ fn diagnostics_are_absent_by_default() {
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = initialized_lsp(&root, 114);
-    send_open_document(&mut lsp, &source_path, &source_text);
-
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
-    assert_eq!(
-        notification["params"]["uri"],
-        Value::String(format!("file://{}", source_path.display()))
-    );
-    assert_eq!(
-        notification["params"]["diagnostics"],
-        Value::Array(Vec::new())
-    );
+    open_document(&mut lsp, &source_path, &source_text);
 }
 
 #[test]
@@ -1647,9 +1637,6 @@ fn diagnostics_report_unsupported_and_missing_categories_when_enabled() {
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = initialized_lsp(&root, 115);
-    send_open_document(&mut lsp, &source_path, &source_text);
-    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
-
     change_configuration(
         &mut lsp,
         json!({
@@ -1659,6 +1646,8 @@ fn diagnostics_report_unsupported_and_missing_categories_when_enabled() {
             }
         }),
     );
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
 
     let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
@@ -1715,6 +1704,7 @@ fn diagnostics_report_selector_style_mismatches_when_enabled() {
         }),
     );
     send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
 
     let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
@@ -1758,6 +1748,7 @@ fn file_config_overrides_client_style_diagnostic_settings() {
         }),
     );
     send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
 
     let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
@@ -1796,6 +1787,7 @@ fn diagnostics_report_invalid_numeric_identifier_keys_when_enabled() {
         }),
     );
     send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
 
     let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
@@ -1831,6 +1823,7 @@ fn diagnostics_ignore_non_numeric_admin_other_selector() {
         }),
     );
     send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
 
     let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     assert_eq!(
@@ -1859,6 +1852,7 @@ fn diagnostics_do_not_warn_for_complete_numeric_selectors_or_matching_style() {
 
     let mut lsp = initialized_lsp(temp.path(), 123);
     send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
 
     let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     assert_eq!(
@@ -1884,6 +1878,7 @@ fn diagnostics_report_local_selector_style_mismatches_when_enabled() {
         }),
     );
     send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
 
     let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
@@ -1914,6 +1909,7 @@ fn diagnostics_use_unicode_plural_categories_for_ukrainian() {
         }),
     );
     send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
 
     let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
@@ -1955,6 +1951,7 @@ fn did_close_clears_document_diagnostics() {
         }),
     );
     send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
     let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
 
     send_close_document(&mut lsp, &source_path);
@@ -2065,6 +2062,28 @@ fn send_open_document(lsp: &mut LspProcess, path: &Path, text: &str) {
     }));
 }
 
+fn send_save_document(lsp: &mut LspProcess, path: &Path, text: Option<&str>) {
+    let params = if let Some(text) = text {
+        json!({
+            "textDocument": {
+                "uri": format!("file://{}", path.display())
+            },
+            "text": text
+        })
+    } else {
+        json!({
+            "textDocument": {
+                "uri": format!("file://{}", path.display())
+            }
+        })
+    };
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didSave",
+        "params": params
+    }));
+}
+
 fn send_close_document(lsp: &mut LspProcess, path: &Path) {
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -2079,6 +2098,7 @@ fn send_close_document(lsp: &mut LspProcess, path: &Path) {
 
 fn open_document(lsp: &mut LspProcess, path: &Path, text: &str) {
     send_open_document(lsp, path, text);
+    send_save_document(lsp, path, Some(text));
     let notification = recv_notification(lsp, "textDocument/publishDiagnostics");
     assert_eq!(
         notification["params"]["uri"],
