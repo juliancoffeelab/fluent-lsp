@@ -62,8 +62,10 @@ json = [
     "dep:serde_json",
 ]
 serde = ["dep:serde"]
+spans = []
 
 [lib]
+doctest = false
 name = "fluent_syntax"
 path = "src/lib.rs"
 
@@ -75,6 +77,19 @@ path = "src/bin/parser.rs"
 name = "update_fixtures"
 path = "src/bin/update_fixtures.rs"
 required-features = ["json"]
+
+[[test]]
+name = "parser_fixtures"
+path = "tests/parser_fixtures.rs"
+required-features = ["json"]
+
+[[test]]
+name = "serializer_fixtures"
+path = "tests/serializer_fixtures.rs"
+
+[[test]]
+name = "unicode"
+path = "tests/unicode.rs"
 
 [[bench]]
 name = "parser"

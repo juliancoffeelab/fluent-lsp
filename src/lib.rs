@@ -13,19 +13,19 @@ use serde_json::Value;
 use tempfile::Builder as TempFileBuilder;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::{Error as LspError, Result as LspResult};
-use tower_lsp::lsp_types::{
+use tower_lsp::ls_types::{
     CodeLens, CodeLensOptions, CodeLensParams, Command, DidChangeTextDocumentParams,
     DidOpenTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverContents, HoverParams, InitializeParams, InitializeResult,
-    Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, Range, ReferenceParams,
-    ServerCapabilities, ShowDocumentParams, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
+    InitializeParams, InitializeResult, InitializedParams, Location, MarkupContent, MarkupKind,
+    MessageType, OneOf, Position, Range, ReferenceParams, ServerCapabilities,
+    ShowDocumentParams, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
 use tower_lsp::{Client, LanguageServer};
 
 const CONFIG_FILE_NAMES: [&str; 2] = ["fluent-lsp.toml", ".fluent-lsp.toml"];
 const SHOW_MESSAGE_SELECTOR_COMBINATIONS_LIMIT: usize = 10;
 const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str = "fluent-lsp.showSelectorCombinations";
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub origin_language: String,
@@ -278,7 +278,7 @@ struct ActiveSelectorContext {
 struct ServerState {
     root_dir: Option<PathBuf>,
     workspace: Option<WorkspaceConfig>,
-    open_documents: HashMap<Url, String>,
+    open_documents: HashMap<Uri, String>,
     supports_show_document: bool,
 }
 
@@ -295,23 +295,24 @@ impl Backend {
         }
     }
 
-    async fn read_document_text(&self, uri: &Url) -> Option<String> {
+    async fn read_document_text(&self, uri: &Uri) -> Option<String> {
         if let Some(text) = self.state.read().await.open_documents.get(uri).cloned() {
             return Some(text);
         }
 
-        let path = uri.to_file_path().ok()?;
+        let path = uri.to_file_path()?.into_owned();
         tokio::fs::read_to_string(path).await.ok()
     }
 
-    async fn read_document_text_required(&self, uri: &Url) -> LspResult<String> {
+    async fn read_document_text_required(&self, uri: &Uri) -> LspResult<String> {
         if let Some(text) = self.state.read().await.open_documents.get(uri).cloned() {
             return Ok(text);
         }
 
         let path = uri
             .to_file_path()
-            .map_err(|()| LspError::invalid_params("expected a file URI"))?;
+            .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
+            .into_owned();
         tokio::fs::read_to_string(&path).await.map_err(|error| {
             internal_error_with_message(format!("failed to read {}: {error}", path.display()))
         })
@@ -334,7 +335,7 @@ impl Backend {
         let state = self.state.read().await;
         let workspace = state.workspace.clone()?;
         let uri = params.text_document_position_params.text_document.uri;
-        let path = uri.to_file_path().ok()?;
+        let path = uri.to_file_path()?.into_owned();
         if !workspace.matches_translation_file(&path) {
             return None;
         }
@@ -352,7 +353,7 @@ impl Backend {
             params.text_document_position_params.position,
         )?;
         let origin_path = workspace.origin_file_for(&path)?;
-        let origin_uri = Url::from_file_path(&origin_path).ok()?;
+        let origin_uri = Uri::from_file_path(&origin_path)?;
         let origin_source = self.read_document_text(&origin_uri).await?;
 
         let definition = find_fluent_definition(&origin_source, &key)?;
@@ -366,7 +367,7 @@ impl Backend {
         let state = self.state.read().await;
         let workspace = state.workspace.clone()?;
         let uri = params.text_document_position.text_document.uri;
-        let path = uri.to_file_path().ok()?;
+        let path = uri.to_file_path()?.into_owned();
         if !workspace.is_origin_file(&path) {
             return None;
         }
@@ -394,9 +395,9 @@ impl Backend {
             if !workspace.matches_origin_counterpart(&translation_path, &origin_match) {
                 continue;
             }
-            let translation_uri = match Url::from_file_path(&translation_path) {
-                Ok(uri) => uri,
-                Err(()) => continue,
+            let translation_uri = match Uri::from_file_path(&translation_path) {
+                Some(uri) => uri,
+                None => continue,
             };
             let translation_source = match self.read_document_text(&translation_uri).await {
                 Some(source) => source,
@@ -422,7 +423,8 @@ impl Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let path = uri
             .to_file_path()
-            .map_err(|()| LspError::invalid_params("expected a file URI"))?;
+            .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
+            .into_owned();
         if workspace.file_match(&path).is_none() {
             return Ok(None);
         }
@@ -467,7 +469,7 @@ impl Backend {
                     path.display()
                 ))
             })?;
-            let origin_uri = Url::from_file_path(&origin_path).map_err(|()| {
+            let origin_uri = Uri::from_file_path(&origin_path).ok_or_else(|| {
                 internal_error_with_message(format!(
                     "failed to convert origin path to URI: {}",
                     origin_path.display()
@@ -499,7 +501,8 @@ impl Backend {
         let uri = params.text_document.uri;
         let path = uri
             .to_file_path()
-            .map_err(|()| LspError::invalid_params("expected a file URI"))?;
+            .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
+            .into_owned();
         if workspace.file_match(&path).is_none() {
             return Ok(None);
         }
@@ -600,7 +603,7 @@ impl Backend {
                 )
                 .await;
         };
-        let Ok(uri) = Url::parse(&uri) else {
+        let Ok(uri) = uri.parse::<Uri>() else {
             return self
                 .respond_to_clicked_command_with_error(
                     LspError::invalid_params("document URI argument must be a valid URI"),
@@ -609,7 +612,7 @@ impl Backend {
                 )
                 .await;
         };
-        let Some(path) = uri.to_file_path().ok() else {
+        let Some(path) = uri.to_file_path().map(|path| path.into_owned()) else {
             return self
                 .respond_to_clicked_command_with_error(
                     LspError::invalid_params("document URI must point to a file"),
@@ -703,7 +706,7 @@ impl Backend {
                         path.display()
                     ))
                 })?;
-                let origin_uri = Url::from_file_path(&origin_path).map_err(|()| {
+                let origin_uri = Uri::from_file_path(&origin_path).ok_or_else(|| {
                     internal_error_with_message(format!(
                         "failed to convert origin path to URI: {}",
                         origin_path.display()
@@ -774,18 +777,21 @@ impl Backend {
     }
 }
 
-#[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
+        #[allow(deprecated)]
         let root_dir = params
-            .root_uri
-            .and_then(|uri| uri.to_file_path().ok())
+            .workspace_folders
+            .as_ref()
+            .and_then(|folders| {
+                folders
+                    .first()
+                    .and_then(|folder| folder.uri.to_file_path().map(|path| path.into_owned()))
+            })
             .or_else(|| {
-                params.workspace_folders.as_ref().and_then(|folders| {
-                    folders
-                        .first()
-                        .and_then(|folder| folder.uri.to_file_path().ok())
-                })
+                params
+                    .root_uri
+                    .and_then(|uri| uri.to_file_path().map(|path| path.into_owned()))
             });
 
         let workspace = root_dir
@@ -814,7 +820,7 @@ impl LanguageServer for Backend {
                     commands: vec![SHOW_SELECTOR_COMBINATIONS_COMMAND.to_string()],
                     work_done_progress_options: Default::default(),
                 }),
-                hover_provider: Some(tower_lsp::lsp_types::HoverProviderCapability::Simple(true)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
@@ -825,7 +831,7 @@ impl LanguageServer for Backend {
         })
     }
 
-    async fn initialized(&self, _: tower_lsp::lsp_types::InitializedParams) {
+    async fn initialized(&self, _: InitializedParams) {
         let state = self.state.read().await;
         match &state.workspace {
             Some(workspace) => {
@@ -955,6 +961,7 @@ pub fn render_fluent_entry(source: &str, key: &str) -> Option<String> {
     let entry = find_fluent_entry(&resource, key)?;
     let rendered = serializer::serialize(&Resource {
         body: vec![entry.clone()],
+        span: fluent_syntax::ast::Span::default(),
     });
     Some(rendered)
 }
@@ -1047,7 +1054,7 @@ fn render_selector_combinations_document(
     sections.join("\n\n")
 }
 
-fn write_selector_combinations_temp_document(key: &str, contents: &str) -> Result<Url, String> {
+fn write_selector_combinations_temp_document(key: &str, contents: &str) -> Result<Uri, String> {
     let mut file = TempFileBuilder::new()
         .prefix("fluent-lsp-selector-combinations-")
         .suffix(&format!("-{}.md", sanitize_document_segment(key)))
@@ -1061,8 +1068,8 @@ fn write_selector_combinations_temp_document(key: &str, contents: &str) -> Resul
     let path = temp_path
         .keep()
         .map_err(|error| format!("failed to persist temp selector document: {error}"))?;
-    Url::from_file_path(&path)
-        .map_err(|()| format!("failed to convert temp path to URI: {}", path.display()))
+    Uri::from_file_path(&path)
+        .ok_or_else(|| format!("failed to convert temp path to URI: {}", path.display()))
 }
 
 fn render_entry_source(entry: &Entry<&str>, key: &str) -> Option<String> {
@@ -1073,6 +1080,7 @@ fn render_entry_source(entry: &Entry<&str>, key: &str) -> Option<String> {
 
     Some(serializer::serialize(&Resource {
         body: vec![entry.clone()],
+        span: fluent_syntax::ast::Span::default(),
     }))
 }
 
@@ -1092,14 +1100,16 @@ fn render_attribute_source(attribute_key: &str, entry: &Entry<&str>) -> Option<S
     let synthetic = Entry::Message(fluent_syntax::ast::Message {
         id: fluent_syntax::ast::Identifier {
             name: "__hover",
-            span: 0..7,
+            span: fluent_syntax::ast::Span(0..7),
         },
         value: None,
         attributes: vec![attribute.clone()],
         comment: None,
+        span: fluent_syntax::ast::Span::default(),
     });
     let rendered = serializer::serialize(&Resource {
         body: vec![synthetic],
+        span: fluent_syntax::ast::Span::default(),
     });
     Some(strip_attribute_container(&rendered))
 }
@@ -1132,11 +1142,11 @@ fn render_pattern_element_preview(
     selector_overrides: Option<&HashMap<String, String>>,
 ) -> MessagePreview {
     match element {
-        fluent_syntax::ast::PatternElement::TextElement { value } => MessagePreview {
+        fluent_syntax::ast::PatternElement::TextElement { value, .. } => MessagePreview {
             selectors: Vec::new(),
             text: (*value).to_string(),
         },
-        fluent_syntax::ast::PatternElement::Placeable { expression } => {
+        fluent_syntax::ast::PatternElement::Placeable { expression, .. } => {
             render_expression_preview(expression, selector_overrides)
         }
     }
@@ -1147,11 +1157,15 @@ fn render_expression_preview(
     selector_overrides: Option<&HashMap<String, String>>,
 ) -> MessagePreview {
     match expression {
-        fluent_syntax::ast::Expression::Inline(inline) => MessagePreview {
+        fluent_syntax::ast::Expression::Inline(inline, _) => MessagePreview {
             selectors: Vec::new(),
             text: render_inline_expression_as_text(inline),
         },
-        fluent_syntax::ast::Expression::Select { selector, variants } => {
+        fluent_syntax::ast::Expression::Select {
+            selector,
+            variants,
+            ..
+        } => {
             let default_variant = variants
                 .iter()
                 .find(|variant| variant.default)
@@ -1355,7 +1369,7 @@ fn count_pattern_combinations(pattern: &fluent_syntax::ast::Pattern<&str>) -> us
 fn count_pattern_element_combinations(element: &fluent_syntax::ast::PatternElement<&str>) -> usize {
     match element {
         fluent_syntax::ast::PatternElement::TextElement { .. } => 1,
-        fluent_syntax::ast::PatternElement::Placeable { expression } => {
+        fluent_syntax::ast::PatternElement::Placeable { expression, .. } => {
             count_expression_combinations(expression)
         }
     }
@@ -1363,7 +1377,7 @@ fn count_pattern_element_combinations(element: &fluent_syntax::ast::PatternEleme
 
 fn count_expression_combinations(expression: &fluent_syntax::ast::Expression<&str>) -> usize {
     match expression {
-        fluent_syntax::ast::Expression::Inline(_) => 1,
+        fluent_syntax::ast::Expression::Inline(..) => 1,
         fluent_syntax::ast::Expression::Select { variants, .. } => {
             variants.iter().fold(0usize, |total, variant| {
                 total.saturating_add(count_pattern_combinations(&variant.value))
@@ -1439,9 +1453,9 @@ fn find_fluent_definition_span(resource: &Resource<&str>, key: &str) -> Option<B
                     .attributes
                     .iter()
                     .find(|attribute| attribute.id.name == attribute_key)
-                    .map(|attribute| attribute.id.span.clone())
+                    .map(|attribute| attribute.id.span.0.clone())
             } else {
-                Some(message.id.span.clone())
+                Some(message.id.span.0.clone())
             }
         }
         Entry::Term(term) if entry_key == format!("-{}", term.id.name) => {
@@ -1449,9 +1463,9 @@ fn find_fluent_definition_span(resource: &Resource<&str>, key: &str) -> Option<B
                 term.attributes
                     .iter()
                     .find(|attribute| attribute.id.name == attribute_key)
-                    .map(|attribute| attribute.id.span.clone())
+                    .map(|attribute| attribute.id.span.0.clone())
             } else {
-                Some(term.id.span.clone())
+                Some(term.id.span.0.clone())
             }
         }
         _ => None,
@@ -1662,14 +1676,14 @@ fn expand_pattern_element(
     max_items: usize,
 ) -> SelectorExpansion {
     match element {
-        fluent_syntax::ast::PatternElement::TextElement { value } => SelectorExpansion {
+        fluent_syntax::ast::PatternElement::TextElement { value, .. } => SelectorExpansion {
             items: vec![SelectorExpansionItem {
                 selectors: Vec::new(),
                 text: (*value).to_string(),
             }],
             total_count: 1,
         },
-        fluent_syntax::ast::PatternElement::Placeable { expression } => {
+        fluent_syntax::ast::PatternElement::Placeable { expression, .. } => {
             expand_expression(expression, max_items)
         }
     }
@@ -1680,14 +1694,18 @@ fn expand_expression(
     max_items: usize,
 ) -> SelectorExpansion {
     match expression {
-        fluent_syntax::ast::Expression::Inline(inline) => SelectorExpansion {
+        fluent_syntax::ast::Expression::Inline(inline, _) => SelectorExpansion {
             items: vec![SelectorExpansionItem {
                 selectors: Vec::new(),
                 text: render_inline_expression_as_text(inline),
             }],
             total_count: 1,
         },
-        fluent_syntax::ast::Expression::Select { selector, variants } => {
+        fluent_syntax::ast::Expression::Select {
+            selector,
+            variants,
+            ..
+        } => {
             let selector_name = render_inline_expression(selector);
             let mut items = Vec::new();
             let mut total_count = 0usize;
@@ -1719,8 +1737,8 @@ fn expand_expression(
 
 fn render_variant_key(key: &fluent_syntax::ast::VariantKey<&str>) -> String {
     match key {
-        fluent_syntax::ast::VariantKey::Identifier { name } => (*name).to_string(),
-        fluent_syntax::ast::VariantKey::NumberLiteral { value } => (*value).to_string(),
+        fluent_syntax::ast::VariantKey::Identifier { name, .. } => (*name).to_string(),
+        fluent_syntax::ast::VariantKey::NumberLiteral { value, .. } => (*value).to_string(),
     }
 }
 
@@ -1730,13 +1748,20 @@ fn render_inline_expression_as_text(expression: &fluent_syntax::ast::InlineExpre
 
 fn render_inline_expression(expression: &fluent_syntax::ast::InlineExpression<&str>) -> String {
     match expression {
-        fluent_syntax::ast::InlineExpression::StringLiteral { value } => format!("\"{value}\""),
-        fluent_syntax::ast::InlineExpression::NumberLiteral { value } => (*value).to_string(),
+        fluent_syntax::ast::InlineExpression::StringLiteral { value, .. } => {
+            format!("\"{value}\"")
+        }
+        fluent_syntax::ast::InlineExpression::NumberLiteral { value, .. } => {
+            (*value).to_string()
+        }
         fluent_syntax::ast::InlineExpression::FunctionReference { id, .. } => {
             format!("{}()", id.name)
         }
-        fluent_syntax::ast::InlineExpression::MessageReference { id, attribute } => match attribute
-        {
+        fluent_syntax::ast::InlineExpression::MessageReference {
+            id,
+            attribute,
+            ..
+        } => match attribute {
             Some(attribute) => format!("{}.{}", id.name, attribute.name),
             None => id.name.to_string(),
         },
@@ -1744,6 +1769,7 @@ fn render_inline_expression(expression: &fluent_syntax::ast::InlineExpression<&s
             id,
             attribute,
             arguments,
+            ..
         } => {
             let mut rendered = format!("-{}", id.name);
             if let Some(attribute) = attribute {
@@ -1755,8 +1781,10 @@ fn render_inline_expression(expression: &fluent_syntax::ast::InlineExpression<&s
             }
             rendered
         }
-        fluent_syntax::ast::InlineExpression::VariableReference { id } => format!("${}", id.name),
-        fluent_syntax::ast::InlineExpression::Placeable { expression } => {
+        fluent_syntax::ast::InlineExpression::VariableReference { id, .. } => {
+            format!("${}", id.name)
+        }
+        fluent_syntax::ast::InlineExpression::Placeable { expression, .. } => {
             format!("{{ {} }}", render_expression_summary(expression))
         }
     }
@@ -1782,7 +1810,7 @@ fn render_ftl_block(text: &str) -> String {
 
 fn render_expression_summary(expression: &fluent_syntax::ast::Expression<&str>) -> String {
     match expression {
-        fluent_syntax::ast::Expression::Inline(inline) => render_inline_expression(inline),
+        fluent_syntax::ast::Expression::Inline(inline, _) => render_inline_expression(inline),
         fluent_syntax::ast::Expression::Select { selector, .. } => {
             format!("{} -> …", render_inline_expression(selector))
         }
@@ -2325,7 +2353,9 @@ mod tests {
     fn local_fluent_syntax_fork_exposes_identifier_spans() {
         let resource = parser::parse("welcome-title = Welcome\n").unwrap();
         match &resource.body[0] {
-            Entry::Message(message) => assert_eq!(message.id.span, 0..13),
+            Entry::Message(message) => {
+                assert_eq!(message.id.span, fluent_syntax::ast::Span(0..13))
+            }
             _ => panic!("expected message entry"),
         }
     }

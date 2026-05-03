@@ -1,0 +1,48 @@
+{
+  "body": [
+    {
+      "type": "Comment",
+      "content": [
+        "This Source Code Form is subject to the terms of the Mozilla Public",
+        "License, v. 2.0. If a copy of the MPL was not distributed with this",
+        "file, You can obtain one at http://mozilla.org/MPL/2.0/."
+      ]
+    },
+    {
+      "type": "Message",
+      "id": {
+        "name": "protections-panel-sendreportview-error"
+      },
+      "value": {
+        "elements": [
+          {
+            "type": "TextElement",
+            "value": "There was an error sending the report. Please try again later."
+          }
+        ]
+      },
+      "attributes": [],
+      "comment": null
+    },
+    {
+      "type": "Message",
+      "id": {
+        "name": "protections-panel-sitefixedsendreport-label"
+      },
+      "value": {
+        "elements": [
+          {
+            "type": "TextElement",
+            "value": "Site fixed? Send report"
+          }
+        ]
+      },
+      "attributes": [],
+      "comment": {
+        "content": [
+          "A link shown when ETP is disabled for a site. Opens the breakage report subview when clicked."
+        ]
+      }
+    }
+  ]
+}
