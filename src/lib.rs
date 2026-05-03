@@ -54,6 +54,23 @@ impl SelectorStyle {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectorRewriteKind {
+    Prefix,
+    Suffix,
+    Whole,
+}
+
+impl SelectorRewriteKind {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Prefix => "Convert selector to prefix form",
+            Self::Suffix => "Convert selector to suffix form",
+            Self::Whole => "Convert selector to whole form",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     origin_language: String,
@@ -332,6 +349,12 @@ struct GenerateSelectorTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct SelectorRewriteAction {
+    kind: SelectorRewriteKind,
+    replacement: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum VariableBinding {
     Concrete(String),
     Placeholder(String),
@@ -590,76 +613,98 @@ impl Backend {
         let supports_snippet_text_edits = state.supports_snippet_text_edits;
         drop(state);
 
-        let Some(target) =
-            find_generate_selector_target(&source, &path, params.range.start)
-        else {
-            return Ok(None);
-        };
-        let Some(file_match) = workspace.file_match(&path) else {
-            return Ok(None);
-        };
-        let Some(edit_range) = byte_range_to_lsp_range(&source, target.pattern_span.clone()) else {
-            return Ok(None);
-        };
-        let ordered_styles = ordered_selector_styles(
-            available_selector_styles(&target),
-            style,
-        );
         let mut actions = Vec::new();
-        for candidate_style in ordered_styles {
-            let Some(generated) = generate_number_selector_edit(
-                &source,
-                &target,
-                &file_match.language,
-                candidate_style,
-                supports_snippet_text_edits,
-            ) else {
-                continue;
+        if let Some(target) = find_generate_selector_target(&source, &path, params.range.start) {
+            let Some(file_match) = workspace.file_match(&path) else {
+                return Ok(None);
             };
+            let Some(edit_range) =
+                byte_range_to_lsp_range(&source, target.pattern_span.clone())
+            else {
+                return Ok(None);
+            };
+            let ordered_styles =
+                ordered_selector_styles(available_selector_styles(&target), style);
+            for candidate_style in ordered_styles {
+                let Some(generated) = generate_number_selector_edit(
+                    &source,
+                    &target,
+                    &file_match.language,
+                    candidate_style,
+                    supports_snippet_text_edits,
+                ) else {
+                    continue;
+                };
 
-            let edit = if supports_snippet_text_edits {
-                WorkspaceEdit {
-                    changes: None,
-                    document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
-                        text_document: OptionalVersionedTextDocumentIdentifier {
-                            uri: uri.clone(),
-                            version: None,
-                        },
-                        edits: vec![OneOf3::Right(SnippetTextEdit {
-                            range: edit_range,
-                            snippet: generated,
-                            annotation_id: None,
-                        })],
-                    }])),
-                    change_annotations: None,
-                }
-            } else {
+                let edit = if supports_snippet_text_edits {
+                    WorkspaceEdit {
+                        changes: None,
+                        document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
+                            text_document: OptionalVersionedTextDocumentIdentifier {
+                                uri: uri.clone(),
+                                version: None,
+                            },
+                            edits: vec![OneOf3::Right(SnippetTextEdit {
+                                range: edit_range,
+                                snippet: generated,
+                                annotation_id: None,
+                            })],
+                        }])),
+                        change_annotations: None,
+                    }
+                } else {
+                    let mut changes = HashMap::new();
+                    changes.insert(uri.clone(), vec![TextEdit::new(edit_range, generated)]);
+                    WorkspaceEdit {
+                        changes: Some(changes),
+                        document_changes: None,
+                        change_annotations: None,
+                    }
+                };
+
+                let title = if let Some(variable) = &target.selected_variable {
+                    format!(
+                        "Generate number selector from {} ({})",
+                        variable.name,
+                        candidate_style.label()
+                    )
+                } else {
+                    format!("Generate number selector ({})", candidate_style.label())
+                };
+
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title,
+                    kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                    edit: Some(edit),
+                    is_preferred: Some(candidate_style == style),
+                    ..CodeAction::default()
+                }));
+            }
+        }
+
+        if let Some((pattern_span, rewrite_actions)) =
+            find_selector_rewrite_target(&source, &path, params.range.start)
+        {
+            let Some(edit_range) = byte_range_to_lsp_range(&source, pattern_span) else {
+                return Ok(None);
+            };
+            for rewrite in rewrite_actions {
                 let mut changes = HashMap::new();
-                changes.insert(uri.clone(), vec![TextEdit::new(edit_range, generated)]);
-                WorkspaceEdit {
-                    changes: Some(changes),
-                    document_changes: None,
-                    change_annotations: None,
-                }
-            };
-
-            let title = if let Some(variable) = &target.selected_variable {
-                format!(
-                    "Generate number selector from {} ({})",
-                    variable.name,
-                    candidate_style.label()
-                )
-            } else {
-                format!("Generate number selector ({})", candidate_style.label())
-            };
-
-            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                title,
-                kind: Some(CodeActionKind::REFACTOR_REWRITE),
-                edit: Some(edit),
-                is_preferred: Some(candidate_style == style),
-                ..CodeAction::default()
-            }));
+                changes.insert(
+                    uri.clone(),
+                    vec![TextEdit::new(edit_range, rewrite.replacement)],
+                );
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: rewrite.kind.title().to_string(),
+                    kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                    edit: Some(WorkspaceEdit {
+                        changes: Some(changes),
+                        document_changes: None,
+                        change_annotations: None,
+                    }),
+                    ..CodeAction::default()
+                }));
+            }
         }
 
         if actions.is_empty() {
@@ -1745,6 +1790,411 @@ fn generate_number_selector_edit(
     Some(replacement)
 }
 
+fn find_selector_rewrite_target(
+    source: &str,
+    path: &Path,
+    position: Position,
+) -> Option<(ByteRange<usize>, Vec<SelectorRewriteAction>)> {
+    if !is_fluent_file(path) {
+        return None;
+    }
+
+    let key = extract_definition_key(source, path, position)?;
+    let definition_range = find_fluent_definition(source, &key)?;
+    let resource = parse_fluent_resource(source);
+    let root_pattern = find_fluent_pattern(&resource, &key)?;
+
+    if range_contains_position(&definition_range, position) {
+        let actions = selector_rewrite_actions_for_pattern(source, root_pattern);
+        if !actions.is_empty() {
+            return Some((
+                trim_trailing_newlines_from_span(source, root_pattern.span.0.clone()),
+                actions,
+            ));
+        }
+    }
+
+    let byte_index = position_to_byte_index(source, position)?;
+    let mut candidate_patterns = Vec::new();
+    collect_pattern_refs(root_pattern, &mut candidate_patterns);
+    candidate_patterns.retain(|pattern| pattern.span.0.contains(&byte_index));
+    candidate_patterns.sort_by_key(|pattern| pattern.span.0.end - pattern.span.0.start);
+
+    for pattern in candidate_patterns {
+        let actions = selector_rewrite_actions_for_pattern(source, pattern);
+        if !actions.is_empty() {
+            return Some((
+                trim_trailing_newlines_from_span(source, pattern.span.0.clone()),
+                actions,
+            ));
+        }
+    }
+
+    None
+}
+
+fn selector_rewrite_actions_for_pattern(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+) -> Vec<SelectorRewriteAction> {
+    let Some(shape) = analyze_selector_pattern_shape(source, pattern) else {
+        return Vec::new();
+    };
+    let current_text = source
+        .get(trim_trailing_newlines_from_span(source, pattern.span.0.clone()))
+        .unwrap_or_default();
+    let mut actions = Vec::new();
+
+    match shape {
+        SelectorPatternShape::Whole(select) => {
+            if let Some(replacement) = rewrite_whole_selector_to_prefix(source, pattern, &select) {
+                if replacement != current_text {
+                    actions.push(SelectorRewriteAction {
+                        kind: SelectorRewriteKind::Prefix,
+                        replacement,
+                    });
+                }
+            }
+            if let Some(replacement) = rewrite_whole_selector_to_suffix(source, pattern, &select) {
+                if replacement != current_text {
+                    actions.push(SelectorRewriteAction {
+                        kind: SelectorRewriteKind::Suffix,
+                        replacement,
+                    });
+                }
+            }
+        }
+        SelectorPatternShape::Prefix {
+            outer_prefix,
+            select,
+        } => {
+            if let Some(replacement) =
+                rewrite_prefixed_selector_to_whole(source, pattern, &outer_prefix, &select)
+            {
+                if replacement != current_text {
+                    actions.push(SelectorRewriteAction {
+                        kind: SelectorRewriteKind::Whole,
+                        replacement,
+                    });
+                }
+            }
+        }
+        SelectorPatternShape::Suffix {
+            outer_prefix,
+            select,
+        } => {
+            if let Some(replacement) =
+                rewrite_prefixed_selector_to_whole(source, pattern, &outer_prefix, &select)
+            {
+                if replacement != current_text {
+                    actions.push(SelectorRewriteAction {
+                        kind: SelectorRewriteKind::Whole,
+                        replacement,
+                    });
+                }
+            }
+            if let Some(replacement) =
+                rewrite_suffix_selector_to_prefix(source, pattern, &outer_prefix, &select)
+            {
+                if replacement != current_text {
+                    actions.push(SelectorRewriteAction {
+                        kind: SelectorRewriteKind::Prefix,
+                        replacement,
+                    });
+                }
+            }
+        }
+    }
+
+    actions
+}
+
+enum SelectorPatternShape<'a> {
+    Whole(ParsedSelectExpression<'a>),
+    Prefix {
+        outer_prefix: Vec<&'a fluent_syntax::ast::PatternElement<&'a str>>,
+        select: ParsedSelectExpression<'a>,
+    },
+    Suffix {
+        outer_prefix: Vec<&'a fluent_syntax::ast::PatternElement<&'a str>>,
+        select: ParsedSelectExpression<'a>,
+    },
+}
+
+struct ParsedSelectExpression<'a> {
+    selector_name: &'a str,
+    selector_text: String,
+    variants: Vec<ParsedVariant<'a>>,
+}
+
+struct ParsedVariant<'a> {
+    key_text: String,
+    default: bool,
+    value: &'a fluent_syntax::ast::Pattern<&'a str>,
+}
+
+fn analyze_selector_pattern_shape<'a>(
+    source: &'a str,
+    pattern: &'a fluent_syntax::ast::Pattern<&'a str>,
+) -> Option<SelectorPatternShape<'a>> {
+    let select = select_expression_from_tail_element(source, pattern)?;
+    let outer_prefix = pattern
+        .elements
+        .iter()
+        .take(pattern.elements.len().checked_sub(1)?)
+        .collect::<Vec<_>>();
+
+    if outer_prefix.is_empty() {
+        return Some(SelectorPatternShape::Whole(select));
+    }
+
+    if selector_prefix_anchor_index(&outer_prefix, select.selector_name).is_some() {
+        return Some(SelectorPatternShape::Prefix {
+            outer_prefix,
+            select,
+        });
+    }
+
+    if select
+        .variants
+        .iter()
+        .all(|variant| variant_starts_with_direct_selector(variant.value, select.selector_name))
+    {
+        return Some(SelectorPatternShape::Suffix {
+            outer_prefix,
+            select,
+        });
+    }
+
+    None
+}
+
+fn select_expression_from_tail_element<'a>(
+    source: &'a str,
+    pattern: &'a fluent_syntax::ast::Pattern<&'a str>,
+) -> Option<ParsedSelectExpression<'a>> {
+    let tail = pattern.elements.last()?;
+    let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = tail else {
+        return None;
+    };
+    let fluent_syntax::ast::Expression::Select {
+        selector,
+        variants,
+        ..
+    } = expression
+    else {
+        return None;
+    };
+    let fluent_syntax::ast::InlineExpression::VariableReference { id, .. } = selector else {
+        return None;
+    };
+
+    let selector_text = source.get(selector.get_span().0.clone())?.to_string();
+    let variants = variants
+        .iter()
+        .map(|variant| {
+            Some(ParsedVariant {
+                key_text: variant_key_source_text(source, &variant.key)?,
+                default: variant.default,
+                value: &variant.value,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    Some(ParsedSelectExpression {
+        selector_name: id.name,
+        selector_text,
+        variants,
+    })
+}
+
+fn rewrite_prefixed_selector_to_whole(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    outer_prefix: &[&fluent_syntax::ast::PatternElement<&str>],
+    select: &ParsedSelectExpression<'_>,
+) -> Option<String> {
+    let prefix_text = render_pattern_elements(source, outer_prefix)?;
+    let variants = select
+        .variants
+        .iter()
+        .map(|variant| {
+            Some(RenderedVariant {
+                key_text: variant.key_text.clone(),
+                default: variant.default,
+                body: format!("{prefix_text}{}", pattern_source_text(source, variant.value)?),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    Some(render_select_block(
+        &select.selector_text,
+        &variants,
+        &line_indentation_at(source, pattern.span.0.start),
+    ))
+}
+
+fn rewrite_whole_selector_to_prefix(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    select: &ParsedSelectExpression<'_>,
+) -> Option<String> {
+    let common_prefix_len = common_prefix_element_count(source, &select.variants);
+    if common_prefix_len == 0 {
+        return None;
+    }
+    let first_variant = select.variants.first()?;
+    let prefix_elements = first_variant
+        .value
+        .elements
+        .iter()
+        .take(common_prefix_len)
+        .collect::<Vec<_>>();
+    if selector_prefix_anchor_index(&prefix_elements, select.selector_name).is_none() {
+        return None;
+    }
+    let outer_prefix_text = render_pattern_elements(source, &prefix_elements)?;
+    let variants = select
+        .variants
+        .iter()
+        .map(|variant| {
+            let remaining = variant.value.elements.get(common_prefix_len..)?;
+            if remaining.is_empty() {
+                return None;
+            }
+            Some(RenderedVariant {
+                key_text: variant.key_text.clone(),
+                default: variant.default,
+                body: trim_rendered_variant_body(render_pattern_element_slice(source, remaining)?),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    Some(concat_prefix_and_selector(
+        &outer_prefix_text,
+        &render_select_block(
+            &select.selector_text,
+            &variants,
+            &line_indentation_at(source, pattern.span.0.start),
+        ),
+    ))
+}
+
+fn rewrite_whole_selector_to_suffix(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    select: &ParsedSelectExpression<'_>,
+) -> Option<String> {
+    let common_prefix_len = common_prefix_element_count(source, &select.variants);
+    let first_variant = select.variants.first()?;
+    let common_prefix = first_variant
+        .value
+        .elements
+        .iter()
+        .take(common_prefix_len)
+        .collect::<Vec<_>>();
+    let anchor_index = common_prefix
+        .iter()
+        .enumerate()
+        .filter_map(|(index, element)| {
+            (direct_variable_placeable_name(element) == Some(select.selector_name)).then_some(index)
+        })
+        .last()?;
+    if anchor_index == 0 {
+        return None;
+    }
+    let outer_prefix_elements = &common_prefix[..anchor_index];
+    let outer_prefix_text = render_pattern_elements(source, outer_prefix_elements)?;
+    let variants = select
+        .variants
+        .iter()
+        .map(|variant| {
+            let remaining = variant.value.elements.get(anchor_index..)?;
+            if remaining.is_empty() {
+                return None;
+            }
+            Some(RenderedVariant {
+                key_text: variant.key_text.clone(),
+                default: variant.default,
+                body: trim_rendered_variant_body(render_pattern_element_slice(source, remaining)?),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    Some(concat_prefix_and_selector(
+        &outer_prefix_text,
+        &render_select_block(
+            &select.selector_text,
+            &variants,
+            &line_indentation_at(source, pattern.span.0.start),
+        ),
+    ))
+}
+
+fn rewrite_suffix_selector_to_prefix(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    outer_prefix: &[&fluent_syntax::ast::PatternElement<&str>],
+    select: &ParsedSelectExpression<'_>,
+) -> Option<String> {
+    let first_variant = select.variants.first()?;
+    let anchor_element = first_variant.value.elements.first()?;
+    if direct_variable_placeable_name(anchor_element) != Some(select.selector_name) {
+        return None;
+    }
+    let mut prefix_elements = outer_prefix.to_vec();
+    prefix_elements.push(anchor_element);
+    let outer_prefix_text = render_pattern_elements(source, &prefix_elements)?;
+    let variants = select
+        .variants
+        .iter()
+        .map(|variant| {
+            let remaining = variant.value.elements.get(1..)?;
+            if remaining.is_empty() {
+                return None;
+            }
+            Some(RenderedVariant {
+                key_text: variant.key_text.clone(),
+                default: variant.default,
+                body: trim_rendered_variant_body(render_pattern_element_slice(source, remaining)?),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    Some(concat_prefix_and_selector(
+        &outer_prefix_text,
+        &render_select_block(
+            &select.selector_text,
+            &variants,
+            &line_indentation_at(source, pattern.span.0.start),
+        ),
+    ))
+}
+
+struct RenderedVariant {
+    key_text: String,
+    default: bool,
+    body: String,
+}
+
+fn render_select_block(
+    selector_text: &str,
+    variants: &[RenderedVariant],
+    line_indent: &str,
+) -> String {
+    let mut lines = vec![format!("{{ {selector_text} ->")];
+    for variant in variants {
+        let default_prefix = if variant.default { "*" } else { "" };
+        lines.push(format!(
+            "    {default_prefix}[{}]{}",
+            variant.key_text,
+            format_variant_body(&variant.body)
+        ));
+    }
+    lines.push("}".to_string());
+    indent_selector_block(&lines.join("\n"), line_indent)
+}
+
 fn render_generated_selector_block(variable: &str, language: &str, branch_body: &str) -> String {
     let mut lines = vec![format!("{{ {variable} ->")];
     let body = format_variant_body(branch_body);
@@ -1982,6 +2432,29 @@ fn collect_pattern_spans(
     }
 }
 
+fn collect_pattern_refs<'a>(
+    pattern: &'a fluent_syntax::ast::Pattern<&'a str>,
+    patterns: &mut Vec<&'a fluent_syntax::ast::Pattern<&'a str>>,
+) {
+    patterns.push(pattern);
+    for element in &pattern.elements {
+        if let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = element {
+            collect_pattern_refs_from_expression(expression, patterns);
+        }
+    }
+}
+
+fn collect_pattern_refs_from_expression<'a>(
+    expression: &'a fluent_syntax::ast::Expression<&'a str>,
+    patterns: &mut Vec<&'a fluent_syntax::ast::Pattern<&'a str>>,
+) {
+    if let fluent_syntax::ast::Expression::Select { variants, .. } = expression {
+        for variant in variants {
+            collect_pattern_refs(&variant.value, patterns);
+        }
+    }
+}
+
 fn collect_pattern_spans_from_expression(
     expression: &fluent_syntax::ast::Expression<&str>,
     spans: &mut Vec<ByteRange<usize>>,
@@ -2024,6 +2497,142 @@ fn render_variable_token(binding: &VariableBinding) -> String {
 
 fn render_variable_placeable(binding: &VariableBinding) -> String {
     format!("{{ {} }}", render_variable_token(binding))
+}
+
+fn direct_variable_placeable_name<'a>(
+    element: &'a fluent_syntax::ast::PatternElement<&'a str>,
+) -> Option<&'a str> {
+    let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = element else {
+        return None;
+    };
+    let fluent_syntax::ast::Expression::Inline(
+        fluent_syntax::ast::InlineExpression::VariableReference { id, .. },
+        _,
+    ) = expression
+    else {
+        return None;
+    };
+    Some(id.name)
+}
+
+fn variant_starts_with_direct_selector(
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    selector_name: &str,
+) -> bool {
+    pattern
+        .elements
+        .first()
+        .and_then(direct_variable_placeable_name)
+        == Some(selector_name)
+}
+
+fn selector_prefix_anchor_index(
+    elements: &[&fluent_syntax::ast::PatternElement<&str>],
+    selector_name: &str,
+) -> Option<usize> {
+    let anchor_index = elements
+        .iter()
+        .enumerate()
+        .filter_map(|(index, element)| {
+            (direct_variable_placeable_name(element) == Some(selector_name)).then_some(index)
+        })
+        .last()?;
+    elements[anchor_index + 1..]
+        .iter()
+        .all(|element| whitespace_text_element(element))
+        .then_some(anchor_index)
+}
+
+fn whitespace_text_element(element: &fluent_syntax::ast::PatternElement<&str>) -> bool {
+    match element {
+        fluent_syntax::ast::PatternElement::TextElement { value, .. } => {
+            value.chars().all(char::is_whitespace)
+        }
+        fluent_syntax::ast::PatternElement::Placeable { .. } => false,
+    }
+}
+
+fn render_pattern_elements(
+    source: &str,
+    elements: &[&fluent_syntax::ast::PatternElement<&str>],
+) -> Option<String> {
+    let mut rendered = String::new();
+    for element in elements {
+        rendered.push_str(pattern_element_source_text(source, element)?);
+    }
+    Some(rendered)
+}
+
+fn render_pattern_element_slice(
+    source: &str,
+    elements: &[fluent_syntax::ast::PatternElement<&str>],
+) -> Option<String> {
+    let mut rendered = String::new();
+    for element in elements {
+        rendered.push_str(pattern_element_source_text(source, element)?);
+    }
+    Some(rendered)
+}
+
+fn trim_rendered_variant_body(body: String) -> String {
+    body.trim_end_matches('\n').to_string()
+}
+
+fn pattern_source_text(
+    source: &str,
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+) -> Option<String> {
+    source
+        .get(trim_trailing_newlines_from_span(source, pattern.span.0.clone()))
+        .map(ToString::to_string)
+}
+
+fn pattern_element_source_text<'a>(
+    source: &'a str,
+    element: &fluent_syntax::ast::PatternElement<&str>,
+) -> Option<&'a str> {
+    match element {
+        fluent_syntax::ast::PatternElement::TextElement { span, .. } => source.get(span.0.clone()),
+        fluent_syntax::ast::PatternElement::Placeable { span, .. } => {
+            source.get(normalize_placeable_span(source, span.0.clone()))
+        }
+    }
+}
+
+fn variant_key_source_text(
+    source: &str,
+    key: &fluent_syntax::ast::VariantKey<&str>,
+) -> Option<String> {
+    match key {
+        fluent_syntax::ast::VariantKey::Identifier { span, .. }
+        | fluent_syntax::ast::VariantKey::NumberLiteral { span, .. } => {
+            source.get(span.0.clone()).map(ToString::to_string)
+        }
+    }
+}
+
+fn common_prefix_element_count(source: &str, variants: &[ParsedVariant<'_>]) -> usize {
+    let Some(first) = variants.first() else {
+        return 0;
+    };
+    let mut common_len = first.value.elements.len();
+
+    for variant in variants.iter().skip(1) {
+        common_len = common_len.min(variant.value.elements.len());
+        let mut index = 0usize;
+        while index < common_len
+            && pattern_element_source_text(source, &first.value.elements[index])
+                == pattern_element_source_text(source, &variant.value.elements[index])
+        {
+            index += 1;
+        }
+        common_len = index;
+        if common_len == 0 {
+            break;
+        }
+    }
+
+    common_len
 }
 
 fn replace_anchor_placeables(
@@ -3364,6 +3973,104 @@ mod tests {
             "Tienes { $coins } { $coins ->\n    [one].\n    *[other].\n}"
         );
         assert_generated_pattern_parses(&generated);
+    }
+
+    #[test]
+    fn rewrites_whole_selector_to_prefix_and_suffix() {
+        let source = "whole-coins = { $coins ->\n    [one] Tienes { $coins } moneda.\n   *[other] Tienes { $coins } monedas.\n}\n";
+        let path = Path::new("locales/es/app.ftl");
+        let (pattern_span, actions) =
+            find_selector_rewrite_target(source, path, Position::new(0, 3)).unwrap();
+
+        assert_eq!(
+            source.get(pattern_span).unwrap(),
+            "{ $coins ->\n    [one] Tienes { $coins } moneda.\n   *[other] Tienes { $coins } monedas.\n}"
+        );
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].kind, SelectorRewriteKind::Prefix);
+        assert_eq!(
+            actions[0].replacement,
+            "Tienes { $coins } { $coins ->\n    [one] moneda.\n    *[other] monedas.\n}"
+        );
+        assert_eq!(actions[1].kind, SelectorRewriteKind::Suffix);
+        assert_eq!(
+            actions[1].replacement,
+            "Tienes { $coins ->\n    [one] { $coins } moneda.\n    *[other] { $coins } monedas.\n}"
+        );
+        assert_generated_pattern_parses(&actions[0].replacement);
+        assert_generated_pattern_parses(&actions[1].replacement);
+    }
+
+    #[test]
+    fn rewrites_prefix_selector_to_whole() {
+        let source = "prefix-coins = Tienes { $coins } { $coins ->\n    [one] moneda.\n   *[other] monedas.\n}\n";
+        let path = Path::new("locales/es/app.ftl");
+        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(0, 3)).unwrap();
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].kind, SelectorRewriteKind::Whole);
+        assert_eq!(
+            actions[0].replacement,
+            "{ $coins ->\n    [one] Tienes { $coins } moneda.\n    *[other] Tienes { $coins } monedas.\n}"
+        );
+        assert_generated_pattern_parses(&actions[0].replacement);
+    }
+
+    #[test]
+    fn rewrites_suffix_selector_to_whole_and_prefix() {
+        let source = "suffix-coins = Tienes { $coins ->\n    [one] { $coins } moneda.\n   *[other] { $coins } monedas.\n}\n";
+        let path = Path::new("locales/es/app.ftl");
+        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(1, 10)).unwrap();
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].kind, SelectorRewriteKind::Whole);
+        assert_eq!(
+            actions[0].replacement,
+            "{ $coins ->\n    [one] Tienes { $coins } moneda.\n    *[other] Tienes { $coins } monedas.\n}"
+        );
+        assert_eq!(actions[1].kind, SelectorRewriteKind::Prefix);
+        assert_eq!(
+            actions[1].replacement,
+            "Tienes { $coins } { $coins ->\n    [one] moneda.\n    *[other] monedas.\n}"
+        );
+        assert_generated_pattern_parses(&actions[0].replacement);
+        assert_generated_pattern_parses(&actions[1].replacement);
+    }
+
+    #[test]
+    fn bare_suffix_like_selector_only_offers_prefix_rewrite() {
+        let source = "bare-suffix-coins = { $coins ->\n    [one] { $coins } moneda.\n   *[other] { $coins } monedas.\n}\n";
+        let path = Path::new("locales/es/app.ftl");
+        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(1, 10)).unwrap();
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].kind, SelectorRewriteKind::Prefix);
+        assert_eq!(
+            actions[0].replacement,
+            "{ $coins } { $coins ->\n    [one] moneda.\n    *[other] monedas.\n}"
+        );
+        assert_generated_pattern_parses(&actions[0].replacement);
+    }
+
+    #[test]
+    fn rewrites_nested_whole_selector_inside_variant() {
+        let source = "nested-whole-coins =\n    { $gender ->\n        [female] { $coins ->\n            [one] Ella tiene { $coins } moneda.\n           *[other] Ella tiene { $coins } monedas.\n        }\n       *[other] Elle tiene { $coins } monedas.\n    }\n";
+        let path = Path::new("locales/es/app.ftl");
+        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(3, 24)).unwrap();
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].kind, SelectorRewriteKind::Prefix);
+        assert_eq!(
+            actions[0].replacement,
+            "Ella tiene { $coins } { $coins ->\n            [one] moneda.\n            *[other] monedas.\n        }"
+        );
+        assert_eq!(actions[1].kind, SelectorRewriteKind::Suffix);
+        assert_eq!(
+            actions[1].replacement,
+            "Ella tiene { $coins ->\n            [one] { $coins } moneda.\n            *[other] { $coins } monedas.\n        }"
+        );
+        assert_generated_pattern_parses(&actions[0].replacement);
+        assert_generated_pattern_parses(&actions[1].replacement);
     }
 
     #[test]

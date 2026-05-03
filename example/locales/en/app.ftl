@@ -65,3 +65,49 @@ zero-rollout =
         [one] one package ready
        *[other] { $count } packages ready
     }.
+
+# Plain generation target with a direct variable placeable
+coins-line = You have { $coins } coins.
+
+# Plain generation target without any existing variable
+plain-count = Coins available.
+
+# Conservative whole-only generation target with a nested variable reference
+formatted-download = Download { NUMBER($downloads) } files.
+
+# Generation target that keeps punctuation attached in branch bodies
+coins-period = You have { $coins }.
+
+# Rewrite target in whole form
+whole-coins = { $coins ->
+    [one] You have { $coins } coin.
+   *[other] You have { $coins } coins.
+}
+
+# Rewrite target in prefix form
+prefix-coins = You have { $coins } { $coins ->
+    [one] coin.
+   *[other] coins.
+}
+
+# Rewrite target in suffix form
+suffix-coins = You have { $coins ->
+    [one] { $coins } coin.
+   *[other] { $coins } coins.
+}
+
+# Ambiguous zero-prefix suffix/whole shape: only prefix collapse is distinct
+bare-suffix-coins = { $coins ->
+    [one] { $coins } coin.
+   *[other] { $coins } coins.
+}
+
+# Nested rewrite target inside an outer selector branch
+nested-whole-coins =
+    { $gender ->
+        [female] { $coins ->
+            [one] She has { $coins } coin.
+           *[other] She has { $coins } coins.
+        }
+       *[other] They have { $coins } coins.
+    }

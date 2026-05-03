@@ -45,3 +45,49 @@ mismatch-rollout =
         [1] un paquete
        *[other] { $count } paquetes
     } listo.
+
+# Objetivo simple para generar selector a partir de una variable directa
+coins-line = Tienes { $coins } monedas.
+
+# Objetivo simple para generar selector sin variable existente
+plain-count = Monedas disponibles.
+
+# Caso conservador de solo whole con referencia anidada dentro de NUMBER(...)
+formatted-download = Descarga { NUMBER($downloads) } archivos.
+
+# Caso para verificar que la puntuacion siga pegada al texto generado
+coins-period = Tienes { $coins }.
+
+# Objetivo de reescritura en forma whole
+whole-coins = { $coins ->
+    [one] Tienes { $coins } moneda.
+   *[other] Tienes { $coins } monedas.
+}
+
+# Objetivo de reescritura en forma prefix
+prefix-coins = Tienes { $coins } { $coins ->
+    [one] moneda.
+   *[other] monedas.
+}
+
+# Objetivo de reescritura en forma suffix
+suffix-coins = Tienes { $coins ->
+    [one] { $coins } moneda.
+   *[other] { $coins } monedas.
+}
+
+# Forma ambigua sin prefijo externo: solo el colapso a prefix es distinto
+bare-suffix-coins = { $coins ->
+    [one] { $coins } moneda.
+   *[other] { $coins } monedas.
+}
+
+# Objetivo de reescritura anidado dentro de otra rama selectora
+nested-whole-coins =
+    { $gender ->
+        [female] { $coins ->
+            [one] Ella tiene { $coins } moneda.
+           *[other] Ella tiene { $coins } monedas.
+        }
+       *[other] Elle tiene { $coins } monedas.
+    }

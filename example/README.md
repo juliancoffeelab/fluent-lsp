@@ -13,10 +13,19 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - Hover `mismatch-rollout` inside `[female]`, `[0]`, or `[1]` to verify that source/local hover matches shared selector names, carries exact numeric selector values, ignores local-only selectors on the source side, and defaults source-only selectors to `*`
   - Run the CodeLens on `install-hint` to open the full selector combinations document in Spanish
   - Run the CodeLens on `download-action.tooltip` to verify attribute-level selector combinations
+  - Request a code action on `coins-line` to generate a selector from a plain message
+  - Request a code action on `{ $coins }` in `coins-line` to generate variable-targeted `prefix`, `whole`, and `suffix` forms
+  - Request a code action on `plain-count` to verify whole-only snippet generation with a placeholder variable
+  - Request a code action on `formatted-download` or `$downloads` to verify nested `NUMBER(...)` anchors are detected but only offer `whole`
+  - Request a code action on `coins-period` to verify generated branch bodies keep trailing punctuation attached
+  - Request a code action on `whole-coins`, `prefix-coins`, or `suffix-coins` to exercise selector rewrite actions between the three shapes
+  - Request a code action on `bare-suffix-coins` to verify only `Convert selector to prefix form` is distinct
+  - Request a code action inside the `[female]` branch of `nested-whole-coins` to verify nested selector rewrites target the local branch pattern instead of the whole message
 - `example/locales/en/app.ftl`
   - Run references from `welcome-title` or `.label`
   - Hover `install-hint` on the key line for default selector choices, or inside a specific branch for explicit selector choices
-  - This is the denser top-level file: terms, message values, multiple attributes, and both message-level and attribute-level selectors
+  - Use the matching English `coins-line`, `whole-coins`, `prefix-coins`, `suffix-coins`, and `nested-whole-coins` entries to inspect the same code-action shapes in the origin language
+  - This is the denser top-level file: terms, message values, multiple attributes, selector-generation examples, and selector-rewrite examples
 - `example/locales/fr/app.ftl`
   - Extra translation target for references and locale comparisons
 - `example/locales/lv/app.ftl`

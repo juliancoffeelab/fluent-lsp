@@ -1446,6 +1446,136 @@ fn code_action_keeps_punctuation_attached_in_prefix_generation() {
 }
 
 #[test]
+fn code_action_rewrites_whole_selector_to_prefix_and_suffix() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 94);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        95,
+        &source_path,
+        position_of(&source_text, "whole-coins"),
+    );
+    assert!(actions.iter().any(|action| action["title"] == Value::String("Convert selector to prefix form".to_string())));
+    assert!(actions.iter().any(|action| action["title"] == Value::String("Convert selector to suffix form".to_string())));
+
+    let prefix = find_code_action(&actions, "Convert selector to prefix form");
+    assert_eq!(
+        prefix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "Tienes { $coins } { $coins ->\n    [one] moneda.\n    *[other] monedas.\n}"
+                .to_string()
+        )
+    );
+
+    let suffix = find_code_action(&actions, "Convert selector to suffix form");
+    assert_eq!(
+        suffix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "Tienes { $coins ->\n    [one] { $coins } moneda.\n    *[other] { $coins } monedas.\n}"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn code_action_rewrites_prefix_selector_to_whole() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 96);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        97,
+        &source_path,
+        position_of(&source_text, "prefix-coins"),
+    );
+    let action = find_code_action(&actions, "Convert selector to whole form");
+    assert_eq!(
+        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "{ $coins ->\n    [one] Tienes { $coins } moneda.\n    *[other] Tienes { $coins } monedas.\n}"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn code_action_rewrites_suffix_selector_to_whole_and_prefix() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 98);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        99,
+        &source_path,
+        position_of(&source_text, "suffix-coins"),
+    );
+    assert!(actions.iter().any(|action| action["title"] == Value::String("Convert selector to whole form".to_string())));
+    assert!(actions.iter().any(|action| action["title"] == Value::String("Convert selector to prefix form".to_string())));
+}
+
+#[test]
+fn code_action_bare_suffix_like_selector_only_offers_prefix() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 100);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        101,
+        &source_path,
+        position_of(&source_text, "bare-suffix-coins"),
+    );
+    assert_eq!(actions.len(), 1);
+    let action = find_code_action(&actions, "Convert selector to prefix form");
+    assert_eq!(
+        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String("{ $coins } { $coins ->\n    [one] moneda.\n    *[other] monedas.\n}".to_string())
+    );
+}
+
+#[test]
+fn code_action_rewrites_nested_whole_selector_inside_variant() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 102);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        103,
+        &source_path,
+        position_of_nth(&source_text, "Ella tiene", 2),
+    );
+    let action = find_code_action(&actions, "Convert selector to prefix form");
+    assert_eq!(
+        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "Ella tiene { $coins } { $coins ->\n            [one] moneda.\n            *[other] monedas.\n        }"
+                .to_string()
+        )
+    );
+    assert!(actions.iter().any(|candidate| candidate["title"] == Value::String("Convert selector to suffix form".to_string())));
+}
+
+#[test]
 fn code_action_is_hidden_for_ambiguous_message_keys() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
