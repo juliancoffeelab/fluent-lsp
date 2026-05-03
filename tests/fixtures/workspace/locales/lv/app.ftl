@@ -6,3 +6,4 @@ zero-rollout =
     }.
 
 coins-line = Tev ir { $coins } monetas.
+plain-count = Pakotnes pieejamas.

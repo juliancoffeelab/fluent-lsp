@@ -2,21 +2,38 @@
 
 Number-selector generation code action
 
-This scenario covers the first `textDocument/codeAction` slice for numeric selector generation.
-It verifies three client-visible behaviors:
+This scenario covers numeric selector generation code actions.
+It verifies these client-visible behaviors:
 
-- requesting a code action on a message key with a direct variable placeable offers generated selector output
-- requesting a code action on the variable itself uses the variable-targeted title path
-- when the client advertises `workspace.workspaceEdit.snippetEditSupport`, the edit is returned as a snippet-capable `documentChanges` entry
+- requesting a code action on a message key offers all applicable selector styles
+- message-level generation uses snippet placeholders when the client supports snippet text edits
+- requesting a code action on the variable itself offers variable-targeted prefix/whole/suffix actions
+- plain messages without an existing variable only offer whole-form generation
+- ambiguous message keys with multiple candidate variables do not advertise generation
+- root entries that already branch but have no clear local anchor do not advertise generation
+- attributes participate in generation
+- variables nested inside function arguments still participate, but only whole-form generation is offered because prefix/suffix would split the function call
+- punctuation tails stay attached in generated variant bodies instead of turning `.` into ` .`
+- nested selector branches are rewritten within their local variant pattern instead of breaking the outer select
 - `fluent-lsp.toml` `selector_style` overrides client settings after the server is restarted
 
 How the scenario is exercised:
 
 - opens `workspace/locales/es/app.ftl`
 - requests `textDocument/codeAction` on `coins-line`
-- asserts the default generated action is `prefix`
+- asserts the message-level `prefix` action is a snippet edit
 - requests `textDocument/codeAction` on `{ $coins }`
-- asserts the variable-targeted title path is used
+- asserts variable-targeted prefix/whole/suffix actions are all present
+- requests `textDocument/codeAction` on `plain-count`
+- asserts only whole-form generation is offered
+- requests `textDocument/codeAction` on `download-count.tooltip`
+- asserts attribute generation is available
+- requests `textDocument/codeAction` on `formatted-download` and on `$downloads`
+- asserts a variable inside `NUMBER(...)` is detected but only whole-form generation is advertised
+- requests `textDocument/codeAction` on `coins-period`
+- asserts generated variant text keeps `.` attached without an extra leading space
+- requests `textDocument/codeAction` inside `nested-coins`
+- asserts the nested rewrite stays within the selected branch pattern
 - rewrites `workspace/fluent-lsp.toml` to `selector_style = "whole"`
 - restarts the client, sends client settings preferring `prefix`, and asserts the file config still forces `whole`
 
@@ -29,4 +46,5 @@ Assumptions:
 Source under test:
 
 - `tests/nvim/code_action_generate_selector/workspace/locales/es/app.ftl`
+- `tests/nvim/code_action_generate_selector/workspace/locales/en/app.ftl`
 - `tests/nvim/code_action_generate_selector/workspace/fluent-lsp.toml`

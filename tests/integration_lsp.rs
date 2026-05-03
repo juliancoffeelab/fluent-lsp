@@ -1142,7 +1142,8 @@ fn code_action_generates_prefix_selector_by_default() {
         &source_path,
         position_of(&source_text, "coins-line"),
     );
-    let action = &actions[0];
+    assert_eq!(actions.len(), 3);
+    let action = find_code_action(&actions, "Generate number selector (prefix)");
     assert_eq!(
         action["title"],
         Value::String("Generate number selector (prefix)".to_string())
@@ -1161,12 +1162,33 @@ fn code_action_generates_prefix_selector_by_default() {
 }
 
 #[test]
-fn code_action_uses_client_selector_style_setting() {
+fn code_action_returns_all_styles_for_variable_occurrence() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = initialized_lsp(&root, 72);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        73,
+        &source_path,
+        position_of(&source_text, "{ $coins }"),
+    );
+    assert_eq!(actions.len(), 3);
+    assert!(actions.iter().any(|action| action["title"] == Value::String("Generate number selector from $coins (prefix)".to_string())));
+    assert!(actions.iter().any(|action| action["title"] == Value::String("Generate number selector from $coins (whole)".to_string())));
+    assert!(actions.iter().any(|action| action["title"] == Value::String("Generate number selector from $coins (suffix)".to_string())));
+}
+
+#[test]
+fn code_action_uses_client_selector_style_setting() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 74);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "method": "workspace/didChangeConfiguration",
@@ -1182,7 +1204,7 @@ fn code_action_uses_client_selector_style_setting() {
 
     let actions = request_code_actions(
         &mut lsp,
-        73,
+        75,
         &source_path,
         position_of(&source_text, "{ $coins }"),
     );
@@ -1214,7 +1236,7 @@ fn file_config_selector_style_overrides_client_setting() {
     let source_path = temp.path().join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
-    let mut lsp = initialized_lsp(temp.path(), 74);
+    let mut lsp = initialized_lsp(temp.path(), 76);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "method": "workspace/didChangeConfiguration",
@@ -1230,7 +1252,7 @@ fn file_config_selector_style_overrides_client_setting() {
 
     let actions = request_code_actions(
         &mut lsp,
-        75,
+        77,
         &source_path,
         position_of(&source_text, "coins-line"),
     );
@@ -1249,7 +1271,7 @@ fn code_action_uses_snippet_text_edit_when_supported() {
 
     let mut lsp = initialized_lsp_with_capabilities(
         &root,
-        76,
+        78,
         json!({
             "workspace": {
                 "workspaceEdit": {
@@ -1263,19 +1285,215 @@ fn code_action_uses_snippet_text_edit_when_supported() {
 
     let actions = request_code_actions(
         &mut lsp,
-        77,
+        79,
         &source_path,
         position_of(&source_text, "coins-line"),
     );
-    let action = &actions[0];
+    let action = find_code_action(&actions, "Generate number selector (prefix)");
     assert_eq!(
         action["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
-            "Tienes { $coins } { $coins ->\n    [one] monedas.\n    *[other] monedas.\n}"
+            "Tienes { \\$${1:coins} } { \\$${1:coins} ->\n    [one] monedas.\n    *[other] monedas.\n}"
                 .to_string()
         )
     );
     assert!(action["edit"]["changes"].is_null());
+}
+
+#[test]
+fn code_action_generates_whole_snippet_when_no_variable_exists() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp_with_capabilities(
+        &root,
+        80,
+        json!({
+            "workspace": {
+                "workspaceEdit": {
+                    "documentChanges": true,
+                    "snippetEditSupport": true
+                }
+            }
+        }),
+    );
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        81,
+        &source_path,
+        position_of(&source_text, "plain-count"),
+    );
+    assert_eq!(actions.len(), 1);
+    assert_eq!(
+        actions[0]["title"],
+        Value::String("Generate number selector (whole)".to_string())
+    );
+    assert_eq!(
+        actions[0]["edit"]["documentChanges"][0]["edits"][0]["snippet"],
+        Value::String(
+            "{ \\$${1:count} ->\n    [one] Monedas disponibles.\n    *[other] Monedas disponibles.\n}"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn code_action_supports_attributes() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp_with_capabilities(
+        &root,
+        82,
+        json!({
+            "workspace": {
+                "workspaceEdit": {
+                    "documentChanges": true,
+                    "snippetEditSupport": true
+                }
+            }
+        }),
+    );
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        83,
+        &source_path,
+        position_of(&source_text, "$files"),
+    );
+    assert!(actions.iter().any(|action| action["title"] == Value::String("Generate number selector from $files (prefix)".to_string())));
+}
+
+#[test]
+fn code_action_limits_nested_function_argument_variables_to_whole() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp_with_capabilities(
+        &root,
+        84,
+        json!({
+            "workspace": {
+                "workspaceEdit": {
+                    "documentChanges": true,
+                    "snippetEditSupport": true
+                }
+            }
+        }),
+    );
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_actions = request_code_actions(
+        &mut lsp,
+        85,
+        &source_path,
+        position_of(&source_text, "formatted-download"),
+    );
+    assert_eq!(key_actions.len(), 1);
+    assert_eq!(
+        key_actions[0]["title"],
+        Value::String("Generate number selector (whole)".to_string())
+    );
+    assert_eq!(
+        key_actions[0]["edit"]["documentChanges"][0]["edits"][0]["snippet"],
+        Value::String(
+            "{ \\$${1:downloads} ->\n    [one] Descarga { NUMBER($downloads) } archivos.\n    *[other] Descarga { NUMBER($downloads) } archivos.\n}"
+                .to_string()
+        )
+    );
+
+    let variable_actions = request_code_actions(
+        &mut lsp,
+        91,
+        &source_path,
+        position_of(&source_text, "$downloads"),
+    );
+    assert_eq!(variable_actions.len(), 1);
+    assert_eq!(
+        variable_actions[0]["title"],
+        Value::String("Generate number selector from $downloads (whole)".to_string())
+    );
+}
+
+#[test]
+fn code_action_keeps_punctuation_attached_in_prefix_generation() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 92);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        93,
+        &source_path,
+        position_of(&source_text, "coins-period"),
+    );
+    let action = find_code_action(&actions, "Generate number selector (prefix)");
+    assert_eq!(
+        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "Tienes { $coins } { $coins ->\n    [one].\n    *[other].\n}".to_string()
+        )
+    );
+}
+
+#[test]
+fn code_action_is_hidden_for_ambiguous_message_keys() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 86);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions_allow_empty(
+        &mut lsp,
+        87,
+        &source_path,
+        position_of(&source_text, "range-summary"),
+    );
+    assert!(actions.is_empty());
+
+    let nested_actions = request_code_actions_allow_empty(
+        &mut lsp,
+        88,
+        &source_path,
+        position_of(&source_text, "nested-coins"),
+    );
+    assert!(nested_actions.is_empty());
+}
+
+#[test]
+fn code_action_preserves_nested_selector_when_generating_inside_variant() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 89);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        90,
+        &source_path,
+        position_of_nth(&source_text, "$coins", 2),
+    );
+    let action = find_code_action(&actions, "Generate number selector from $coins (prefix)");
+    assert_eq!(
+        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        Value::String(
+            "Ella tiene { $coins } { $coins ->\n            [one] monedas.\n            *[other] monedas.\n        }"
+                .to_string()
+        )
+    );
 }
 
 struct ReferenceExpectation<'a> {
@@ -1379,6 +1597,40 @@ fn request_code_actions(
         .clone()
 }
 
+fn request_code_actions_allow_empty(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    source_path: &Path,
+    position: (u32, u32),
+) -> Vec<Value> {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+
+    let response = lsp.recv();
+    assert_eq!(response["id"], request_id);
+    response["result"].as_array().cloned().unwrap_or_default()
+}
+
+fn find_code_action<'a>(actions: &'a [Value], title: &str) -> &'a Value {
+    actions
+        .iter()
+        .find(|action| action["title"] == Value::String(title.to_string()))
+        .unwrap_or_else(|| panic!("missing code action: {title}"))
+}
+
 fn copy_dir(source: &Path, dest: &Path) {
     std::fs::create_dir_all(dest).unwrap();
     for entry in std::fs::read_dir(source).unwrap() {
@@ -1472,7 +1724,21 @@ fn assert_hover(
 }
 
 fn position_of(source: &str, needle: &str) -> (u32, u32) {
-    let offset = source.find(needle).expect("needle not found in source");
+    position_of_nth(source, needle, 1)
+}
+
+fn position_of_nth(source: &str, needle: &str, instance: usize) -> (u32, u32) {
+    let mut search_offset = 0usize;
+    let mut found_offset = None;
+    for _ in 0..instance {
+        let relative = source[search_offset..]
+            .find(needle)
+            .expect("needle not found in source");
+        let absolute = search_offset + relative;
+        found_offset = Some(absolute);
+        search_offset = absolute + needle.len();
+    }
+    let offset = found_offset.expect("expected at least one match");
     let prefix = &source[..offset];
     let line = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count()).unwrap();
     let line_start = prefix.rfind('\n').map(|idx| idx + 1).unwrap_or(0);

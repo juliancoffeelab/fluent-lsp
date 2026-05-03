@@ -55,6 +55,24 @@ local function request_code_actions(client_id)
   return result
 end
 
+local function request_code_actions_allow_empty(client_id)
+  local responses = vim.lsp.buf_request_sync(0, "textDocument/codeAction", code_action_params(), 5000)
+  local result = responses[client_id] and responses[client_id].result
+  if result == nil then
+    return {}
+  end
+  return result
+end
+
+local function find_action(actions, title)
+  for _, action in ipairs(actions) do
+    if action.title == title then
+      return action
+    end
+  end
+  error("missing code action: " .. title)
+end
+
 local function stop_client(client_id)
   vim.lsp.stop_client(client_id, true)
   vim.wait(5000, function()
@@ -85,16 +103,73 @@ function M.run()
   local found = vim.fn.searchpos("coins-line", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
   local actions = request_code_actions(client_id)
-  local action = actions[1]
+  assert(#actions == 3, "expected three style actions on message key")
+  local action = find_action(actions, "Generate number selector (prefix)")
   assert(action.title == "Generate number selector (prefix)", "unexpected default action title: " .. vim.inspect(action))
   local edits = action.edit.documentChanges[1].edits
-  assert(edits[1].snippet == "Tienes { $coins } { $coins ->\n    [one] monedas.\n    *[other] monedas.\n}", "unexpected default generated text")
+  assert(edits[1].snippet == "Tienes { \\$${1:coins} } { \\$${1:coins} ->\n    [one] monedas.\n    *[other] monedas.\n}", "unexpected default generated text")
 
-  found = vim.fn.searchpos("{ $coins }", "n")
-  vim.api.nvim_win_set_cursor(0, { found[1], found[2] + 2 })
+  found = vim.fn.searchpos("\\$coins", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
   actions = request_code_actions(client_id)
+  assert(#actions == 3, "expected three style actions on variable")
+  assert(find_action(actions, "Generate number selector from $coins (prefix)"), "missing prefix action")
+  assert(find_action(actions, "Generate number selector from $coins (whole)"), "missing whole action")
+  assert(find_action(actions, "Generate number selector from $coins (suffix)"), "missing suffix action")
+
+  found = vim.fn.searchpos("plain-count", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  actions = request_code_actions(client_id)
+  assert(#actions == 1, "plain message without variable should only offer whole")
   action = actions[1]
-  assert(action.title == "Generate number selector from $coins (prefix)", "unexpected variable action title: " .. vim.inspect(action))
+  edits = action.edit.documentChanges[1].edits
+  assert(edits[1].snippet == "{ \\$${1:count} ->\n    [one] Monedas disponibles.\n    *[other] Monedas disponibles.\n}", "unexpected plain whole snippet")
+
+  found = vim.fn.searchpos("range-summary", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  actions = request_code_actions_allow_empty(client_id)
+  assert(#actions == 0, "ambiguous multi-variable message should not advertise actions")
+
+  found = vim.fn.searchpos("nested-coins", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  actions = request_code_actions_allow_empty(client_id)
+  assert(#actions == 0, "nested root message without a clear anchor should not advertise actions")
+
+  found = vim.fn.searchpos("\\$files", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  actions = request_code_actions(client_id)
+  assert(find_action(actions, "Generate number selector from $files (prefix)"), "missing attribute action")
+
+  found = vim.fn.searchpos("formatted-download", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  actions = request_code_actions(client_id)
+  assert(#actions == 1, "function-argument variable should only offer whole generation")
+  action = actions[1]
+  edits = action.edit.documentChanges[1].edits
+  assert(action.title == "Generate number selector (whole)", "unexpected function-argument action title")
+  assert(edits[1].snippet == "{ \\$${1:downloads} ->\n    [one] Descarga { NUMBER($downloads) } archivos.\n    *[other] Descarga { NUMBER($downloads) } archivos.\n}", "unexpected function-argument generated text")
+
+  found = vim.fn.searchpos("\\$downloads", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  actions = request_code_actions(client_id)
+  assert(#actions == 1, "nested function variable under cursor should only offer whole generation")
+  assert(actions[1].title == "Generate number selector from $downloads (whole)", "unexpected nested function variable title")
+
+  found = vim.fn.searchpos("coins-period", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  actions = request_code_actions(client_id)
+  action = find_action(actions, "Generate number selector (prefix)")
+  edits = action.edit.documentChanges[1].edits
+  assert(edits[1].snippet == "Tienes { \\$${1:coins} } { \\$${1:coins} ->\n    [one].\n    *[other].\n}", "unexpected punctuation-preserving generated text")
+
+  found = vim.fn.searchpos("nested-coins", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  found = vim.fn.searchpos("\\$coins", "nW")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  actions = request_code_actions(client_id)
+  action = find_action(actions, "Generate number selector from $coins (prefix)")
+  edits = action.edit.documentChanges[1].edits
+  assert(edits[1].snippet == "Ella tiene { $coins } { $coins ->\n            [one] monedas.\n            *[other] monedas.\n        }", "unexpected nested generated text")
 
   stop_client(client_id)
   vim.fn.writefile({
@@ -121,7 +196,7 @@ function M.run()
   action = actions[1]
   assert(action.title == "Generate number selector (whole)", "file config should override client settings")
   edits = action.edit.documentChanges[1].edits
-  assert(edits[1].snippet == "{ $coins ->\n    [one] Tienes { $coins } monedas.\n    *[other] Tienes { $coins } monedas.\n}", "unexpected whole generated text")
+  assert(edits[1].snippet == "{ \\$${1:coins} ->\n    [one] Tienes { \\$${1:coins} } monedas.\n    *[other] Tienes { \\$${1:coins} } monedas.\n}", "unexpected whole generated text")
 
   write_result(result_path, {
     ok = true,
