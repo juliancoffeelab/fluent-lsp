@@ -184,49 +184,49 @@ Expected behavior:
 Required tests:
 
 Unit tests:
-[] Detect that the current entry is eligible for number-selector generation.
-[] Detect the variable-under-cursor case versus plain-message case.
-[] Build snippet output for `prefix`.
-[] Build snippet output for `suffix`.
-[] Build snippet output for `whole`.
-[] Build snippet output for a language with only `one` and `other`.
-[] Build snippet output for a language with `zero`, `one`, and `other`.
+ [x] Detect that the current entry is eligible for number-selector generation.
+ [x] Detect the variable-under-cursor case versus plain-message case.
+ [x] Build snippet output for `prefix`.
+ [x] Build snippet output for `suffix`.
+ [x] Build snippet output for `whole`.
+ [x] Build snippet output for a language with only `one` and `other`.
+ [x] Build snippet output for a language with `zero`, `one`, and `other`.
 [] Build snippet output for a language with larger sets like `one`, `few`, `many`, `other`.
-[] Preserve surrounding indentation and trailing punctuation.
-[] Preserve existing placeables inside the duplicated text.
-[] Ensure the default branch is starred exactly once.
-[] Ensure exact numeric variants are not emitted when the feature is supposed to use plural categories.
-[] Resolve effective `selector_style` with precedence:
-[] built-in default
-[] editor settings only
-[] `fluent-lsp.toml` only
-[] both set, with file config winning
+ [x] Preserve surrounding indentation and trailing punctuation.
+ [x] Preserve existing placeables inside the duplicated text.
+ [x] Ensure the default branch is starred exactly once.
+ [x] Ensure exact numeric variants are not emitted when the feature is supposed to use plural categories.
+ [x] Resolve effective `selector_style` with precedence:
+ [x] built-in default
+ [x] editor settings only
+ [x] `fluent-lsp.toml` only
+ [x] both set, with file config winning
 
 Integration tests:
-[] `textDocument/codeAction` on a plain message returns the generate-selector action.
-[] `textDocument/codeAction` on a number variable returns the variable-driven generate-selector action.
-[] Returned edit/snippet for English expands to `one` and `other`.
-[] Returned edit/snippet for Latvian expands to `zero`, `one`, `other`.
-[] Returned edit/snippet respects `selector_style=prefix`.
-[] Returned edit/snippet respects `selector_style=suffix`.
-[] Returned edit/snippet respects `selector_style=whole`.
-[] Editor settings alone affect the result when file config is absent.
-[] File config overrides editor settings when both are present.
-[] Non-Fluent files do not advertise the action.
-[] Messages with no clear number candidate do not advertise the action.
+ [x] `textDocument/codeAction` on a plain message returns the generate-selector action.
+ [x] `textDocument/codeAction` on a number variable returns the variable-driven generate-selector action.
+ [x] Returned edit/snippet for English expands to `one` and `other`.
+ [x] Returned edit/snippet for Latvian expands to `zero`, `one`, `other`.
+ [x] Returned edit/snippet respects `selector_style=prefix`.
+ [x] Returned edit/snippet respects `selector_style=suffix`.
+ [x] Returned edit/snippet respects `selector_style=whole`.
+ [x] Editor settings alone affect the result when file config is absent.
+ [x] File config overrides editor settings when both are present.
+ [x] Non-Fluent files do not advertise the action.
+ [x] Messages with no clear number candidate do not advertise the action.
 
 Neovim smoke:
-[] Dedicated scenario for generating a selector from a plain message.
-[] Dedicated scenario for generating a selector from a variable occurrence.
-[] Scenario asserting default `prefix` output.
-[] Scenario asserting file-config override over client settings.
-[] Scenario using Latvian to verify `[zero]`, `[one]`, `*[other]`.
+ [x] Dedicated scenario for generating a selector from a plain message.
+ [x] Dedicated scenario for generating a selector from a variable occurrence.
+ [x] Scenario asserting default `prefix` output.
+ [x] Scenario asserting file-config override over client settings.
+ [x] Scenario using Latvian to verify `[zero]`, `[one]`, `*[other]`.
 
 Examples to add:
-[] English example showing generated `prefix` output from `coins = You have { $coins } coins.`
-[] English example showing generated `whole` output for the same message.
-[] English example showing generated `suffix` output for the same message.
-[] Latvian example showing generated categories including `zero`.
+ [x] English example showing generated `prefix` output from `coins = You have { $coins } coins.`
+ [x] English example showing generated `whole` output for the same message.
+ [x] English example showing generated `suffix` output for the same message.
+ [x] Latvian example showing generated categories including `zero`.
 
 ### 2. Conversion code action: prefix/suffix -> whole
 
@@ -270,23 +270,23 @@ coins = { $coins ->
 ```
 
 Unit tests:
-[] Parse a prefix-form message and normalize it into whole form.
-[] Parse a suffix-form message and normalize it into whole form.
-[] Refuse malformed or ambiguous forms.
-[] Preserve comments, indentation, and attribute scoping.
+ [x] Parse a prefix-form message and normalize it into whole form.
+ [x] Parse a suffix-form message and normalize it into whole form.
+ [x] Refuse malformed or ambiguous forms.
+ [ ] Preserve comments, indentation, and attribute scoping.
 
 Integration tests:
-[] `textDocument/codeAction` advertises conversion for valid prefix form.
-[] `textDocument/codeAction` advertises conversion for valid suffix form.
-[] Applying the edit produces the expected whole form.
-[] Invalid or ambiguous entries do not advertise the action.
+ [x] `textDocument/codeAction` advertises conversion for valid prefix form.
+ [x] `textDocument/codeAction` advertises conversion for valid suffix form.
+ [x] Applying the edit produces the expected whole form.
+ [x] Invalid or ambiguous entries do not advertise the action.
 
 Neovim smoke:
-[] Scenario for prefix -> whole.
-[] Scenario for suffix -> whole.
+ [x] Scenario for prefix -> whole.
+ [x] Scenario for suffix -> whole.
 
 Examples to add:
-[] One whole-form example next to matching prefix/suffix forms so the intended normalization is obvious.
+ [x] One whole-form example next to matching prefix/suffix forms so the intended normalization is obvious.
 
 ### 3. Conversion code action: whole -> prefix/suffix
 
@@ -336,23 +336,23 @@ Convert selector to prefix form
 ```
 
 Unit tests:
-[] Parse whole-form selector and detect whether prefix conversion is valid.
-[] Parse whole-form selector and detect whether suffix conversion is valid.
-[] Refuse conversion when branch text diverges in a way that cannot collapse cleanly.
-[] Preserve punctuation and placeables around the collapsed selector.
+ [x] Parse whole-form selector and detect whether prefix conversion is valid.
+ [x] Parse whole-form selector and detect whether suffix conversion is valid.
+ [x] Refuse conversion when branch text diverges in a way that cannot collapse cleanly.
+ [x] Preserve punctuation and placeables around the collapsed selector.
 
 Integration tests:
-[] Advertise both actions when both prefix and suffix are valid.
-[] Advertise only one action when only one collapse is valid.
-[] Applying each edit yields the expected normalized form.
+ [x] Advertise both actions when both prefix and suffix are valid.
+ [x] Advertise only one action when only one collapse is valid.
+ [x] Applying each edit yields the expected normalized form.
 
 Neovim smoke:
-[] Scenario where both prefix and suffix are offered.
-[] Scenario where only one collapse action is offered.
+ [x] Scenario where both prefix and suffix are offered.
+ [x] Scenario where only one collapse action is offered.
 
 Examples to add:
-[] One whole-form example that can become both prefix and suffix.
-[] One whole-form example that can become only prefix.
+ [x] One whole-form example that can become both prefix and suffix.
+ [x] One whole-form example that can become only prefix.
 
 ### 4. Conversion code action: suffix -> prefix
 
@@ -380,15 +380,15 @@ coins = You have { $coins } { $coins ->
 ```
 
 Unit tests:
-[] Detect suffix forms that can collapse to prefix.
-[] Refuse suffix forms that cannot collapse cleanly.
+ [x] Detect suffix forms that can collapse to prefix.
+ [x] Refuse suffix forms that cannot collapse cleanly.
 
 Integration tests:
-[] Advertise suffix -> prefix only when structurally valid.
-[] Applying the edit yields the expected prefix form.
+ [x] Advertise suffix -> prefix only when structurally valid.
+ [x] Applying the edit yields the expected prefix form.
 
 Neovim smoke:
-[] Dedicated suffix -> prefix scenario.
+ [x] Dedicated suffix -> prefix scenario.
 
 ### 5. Warning/error config: unsupported plural categories
 
