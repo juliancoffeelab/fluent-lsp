@@ -426,6 +426,16 @@ fn hover_from_translation_shows_local_formatted_messages() {
         8,
         0,
     );
+
+    assert_hover(
+        &mut lsp,
+        25,
+        &source_path,
+        position_of(&source_text, "[one] dispositivo"),
+        "`$gender=other`, `$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.\n```",
+        8,
+        0,
+    );
 }
 
 #[test]

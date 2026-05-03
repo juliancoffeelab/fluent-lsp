@@ -67,6 +67,15 @@ function M.run()
   assert(value:match("`%$gender=other`, `%$count=%*`"), "missing post-selector retained header")
   assert(value:match("```ftl\nCopia el enlace de descarga para la cuenta de elle en { %$count } dispositivos ahora%.\n```"), "missing post-selector formatted preview")
 
+  found = vim.fn.searchpos("\\[one\\] dispositivo", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+
+  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 5000)
+  hover = assert(responses[client_id] and responses[client_id].result, "missing second-selector hover")
+  value = hover.contents.value
+  assert(value:match("`%$gender=other`, `%$count=one`"), "missing concatenated selector header")
+  assert(value:match("```ftl\nCopia el enlace de descarga para la cuenta de elle en { %$count } dispositivo ahora%.\n```"), "missing concatenated selector formatted preview")
+
   write_result(result_path, {
     ok = true,
     feature = "hover_translation",

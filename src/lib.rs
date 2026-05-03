@@ -1615,11 +1615,25 @@ fn selector_overrides_for_position(
 
     let lines: Vec<&str> = source.split('\n').collect();
     let mut selectors: Vec<ActiveSelectorContext> = Vec::new();
-    let mut same_line_closed_overrides = Vec::new();
+    let mut resolved_overrides: HashMap<String, String> = HashMap::new();
 
     for (index, line) in lines.iter().enumerate().take(line_index + 1).skip(start_line) {
         let trimmed = line.trim_start();
         let indent = leading_spaces(line);
+
+        if trimmed.starts_with('}') {
+            while selectors
+                .last()
+                .is_some_and(|selector: &ActiveSelectorContext| indent <= selector.indent)
+            {
+                let popped = selectors.pop().expect("checked by is_some_and");
+                if let Some(variant) = popped.current_variant {
+                    if index < line_index || cursor_character > indent {
+                        resolved_overrides.insert(popped.name, variant);
+                    }
+                }
+            }
+        }
 
         if let Some(variant) = parse_variant_line(trimmed) {
             if let Some(selector) = selectors.last_mut() {
@@ -1638,20 +1652,6 @@ fn selector_overrides_for_position(
                 current_variant_line: None,
             });
         }
-
-        if trimmed.starts_with('}') {
-            while selectors
-                .last()
-                .is_some_and(|selector: &ActiveSelectorContext| indent <= selector.indent)
-            {
-                let popped = selectors.pop().expect("checked by is_some_and");
-                if index == line_index && cursor_character > indent {
-                    if let Some(variant) = popped.current_variant {
-                        same_line_closed_overrides.push((popped.name, variant));
-                    }
-                }
-            }
-        }
     }
 
     let mut overrides: HashMap<String, String> = selectors
@@ -1663,7 +1663,7 @@ fn selector_overrides_for_position(
         })
         .collect();
 
-    for (name, variant) in same_line_closed_overrides {
+    for (name, variant) in resolved_overrides {
         overrides.insert(name, variant);
     }
 
@@ -2224,6 +2224,23 @@ mod tests {
                 Position::new(5, 8)
             ),
             HashMap::from([("$gender".to_string(), "other".to_string())])
+        );
+    }
+
+    #[test]
+    fn selector_overrides_track_concatenated_second_selector_variants() {
+        let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
+
+        assert_eq!(
+            selector_overrides_for_position(
+                source,
+                "install-hint",
+                Position::new(6, 12)
+            ),
+            HashMap::from([
+                ("$gender".to_string(), "other".to_string()),
+                ("$count".to_string(), "one".to_string()),
+            ])
         );
     }
 

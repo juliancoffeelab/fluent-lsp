@@ -6,7 +6,7 @@ Hover from translation showing origin entry and comments
 
 ## Exercise
 
-Requests hover on a plain translated message, inside a translated selector branch, and again on the closing-line text after that selector, then asserts that the returned hover text shows the plain preview plus both selector-aware contexts.
+Requests hover on a plain translated message, inside a translated selector branch, on the closing-line text after that selector, and on the concatenated second selector branch (`[one] dispositivo`). It asserts that the returned hover text shows the plain preview plus selector-aware contexts for both selectors.
 
 ## Assumptions
 
