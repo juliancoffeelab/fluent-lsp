@@ -2359,4 +2359,29 @@ mod tests {
             _ => panic!("expected message entry"),
         }
     }
+
+    #[test]
+    fn local_fluent_syntax_fork_exposes_variant_and_variant_key_spans() {
+        let source = "count = { $count ->\n    [0] Zero\n   *[other] Other\n}\n";
+        let resource = parser::parse(source).unwrap();
+        let Entry::Message(message) = &resource.body[0] else {
+            panic!("expected message entry");
+        };
+        let pattern = message.value.as_ref().expect("expected message value");
+        let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = &pattern.elements[0]
+        else {
+            panic!("expected select placeable");
+        };
+        let fluent_syntax::ast::Expression::Select { variants, .. } = expression else {
+            panic!("expected select expression");
+        };
+
+        assert_eq!(&source[variants[0].span.start..variants[0].span.end], "[0] Zero\n");
+        match &variants[1].key {
+            fluent_syntax::ast::VariantKey::Identifier { span, .. } => {
+                assert_eq!(&source[span.start..span.end], "other");
+            }
+            _ => panic!("expected identifier variant key"),
+        }
+    }
 }

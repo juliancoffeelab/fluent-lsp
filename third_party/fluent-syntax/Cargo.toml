@@ -88,6 +88,10 @@ name = "serializer_fixtures"
 path = "tests/serializer_fixtures.rs"
 
 [[test]]
+name = "spans"
+path = "tests/spans.rs"
+
+[[test]]
 name = "unicode"
 path = "tests/unicode.rs"
 
