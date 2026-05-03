@@ -334,6 +334,7 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
         &[
             ReferenceExpectation::new("locales/es/dialogs/menu.ftl", 1, 5),
             ReferenceExpectation::new("locales/fr/dialogs/menu.ftl", 1, 5),
+            ReferenceExpectation::new("locales/lv/dialogs/menu.ftl", 1, 5),
         ],
     );
 }
@@ -509,9 +510,88 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
         &mut lsp,
         29,
         &source_path,
-        position_of(&source_text, "[one] paquete"),
-        "`$platform=*`, `$count=one`\n\n```ftl\nSummary for mobile users with { $count } package ready.\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\nResumen para elle misme con { $count } paquete listo.\n```",
+        position_of(&source_text, "[0] ningun paquete"),
+        "`$platform=*`, `$count=0`\n\n```ftl\nSummary for mobile users with no packages ready.\n```\n\n---\n\n`$gender=other`, `$count=0`\n\n```ftl\nResumen para elle misme con ningun paquete listo.\n```",
         50,
+        0,
+    );
+
+    assert_hover(
+        &mut lsp,
+        30,
+        &source_path,
+        position_of(&source_text, "[1] un paquete"),
+        "`$platform=*`, `$count=1`\n\n```ftl\nSummary for mobile users with one package ready.\n```\n\n---\n\n`$gender=other`, `$count=1`\n\n```ftl\nResumen para elle misme con un paquete listo.\n```",
+        50,
+        0,
+    );
+}
+
+#[test]
+fn hover_from_latvian_translation_preserves_zero_category_selectors() {
+    let root = fixture_root();
+    let source_path = root.join("locales/lv/app.ftl");
+    let source_uri = format!("file://{}", source_path.display());
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 31,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {}
+        }
+    }));
+
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], 31);
+    assert_eq!(
+        initialize["result"]["capabilities"]["hoverProvider"],
+        Value::Bool(true)
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": source_uri,
+                "languageId": "fluent",
+                "version": 1,
+                "text": source_text
+            }
+        }
+    }));
+
+    assert_hover(
+        &mut lsp,
+        32,
+        &source_path,
+        position_of(&source_text, "[zero] neviena pakotne nav gatava"),
+        "`$count=zero`\n\n```ftl\nZero summary: no packages ready.\n```\n\n---\n\n`$count=zero`\n\n```ftl\nKopsavilkums ar neviena pakotne nav gatava.\n```",
+        0,
+        0,
+    );
+
+    assert_hover(
+        &mut lsp,
+        33,
+        &source_path,
+        position_of(&source_text, "[one] viena pakotne ir gatava"),
+        "`$count=one`\n\n```ftl\nZero summary: one package ready.\n```\n\n---\n\n`$count=one`\n\n```ftl\nKopsavilkums ar viena pakotne ir gatava.\n```",
+        0,
         0,
     );
 }

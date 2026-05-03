@@ -38,7 +38,8 @@ mismatch-rollout =
         [female] elle meme
         [male] lui meme
        *[other] iel meme
-    } avec { $count } { $count ->
-        [one] paquet
-       *[other] paquets
+    } avec { $count ->
+        [0] aucun paquet
+        [1] un paquet
+       *[other] { $count } paquets
     } pret.

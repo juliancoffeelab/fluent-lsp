@@ -61,6 +61,12 @@ fn nvim_smoke_hover_selector_mismatch() {
 }
 
 #[test]
+fn nvim_smoke_hover_selector_zero_lv() {
+    let result = run_scenario("hover_selector_zero_lv");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
+
+#[test]
 fn nvim_smoke_hover_comment_structure() {
     let result = run_scenario("hover_comment_structure");
     assert_eq!(result["ok"], Value::Bool(true));

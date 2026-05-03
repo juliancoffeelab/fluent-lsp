@@ -47,31 +47,6 @@ sync-status =
        *[other] { $count } downloads are ready.
     }
 
-secondary-copy = More text
-
-audience-rollout =
-    Summary for { $audience ->
-        [admins] admins
-        [members] members
-       *[others] other people
-    } on { $platform ->
-        [desktop] desktop
-       *[mobile] mobile
-    } with { $count } { $count ->
-        [one] item
-       *[other] items
-    }.
-
-mismatch-rollout =
-    Summary for { $platform ->
-        [desktop] desktop
-       *[mobile] mobile
-    } users with { $count ->
-        [0] no packages
-        [1] one package
-       *[other] { $count } packages
-    } ready.
-
 zero-rollout =
     Zero summary: { $count ->
         [zero] no packages ready

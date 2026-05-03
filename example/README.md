@@ -10,7 +10,7 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - Go to definition on `welcome-title`, `-brand-name`, or `.label`
   - Hover `welcome-title` for the compact local-language preview
   - Hover inside a value like `welcome-body` or `[female]` under `install-hint` to verify source-first hover output separated from the current preview by `---`
-  - Hover `mismatch-rollout` inside `[female]` or `[one]` to verify that source/local hover matches shared selector names, ignores local-only selectors on the source side, and defaults source-only selectors to `*`
+  - Hover `mismatch-rollout` inside `[female]`, `[0]`, or `[1]` to verify that source/local hover matches shared selector names, carries exact numeric selector values, ignores local-only selectors on the source side, and defaults source-only selectors to `*`
   - Run the CodeLens on `install-hint` to open the full selector combinations document in Spanish
   - Run the CodeLens on `download-action.tooltip` to verify attribute-level selector combinations
 - `example/locales/en/app.ftl`
@@ -19,6 +19,8 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - This is the denser top-level file: terms, message values, multiple attributes, and both message-level and attribute-level selectors
 - `example/locales/fr/app.ftl`
   - Extra translation target for references and locale comparisons
+- `example/locales/lv/app.ftl`
+  - Hover `zero-rollout` inside `[zero]` or `[one]` to verify category-style selector matching across source and Latvian local text
 - `example/locales/uk/app.ftl`
   - Extra translation target for references and locale comparisons
 - `example/locales/es/dialogs/menu.ftl`
@@ -27,6 +29,8 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - Hover `menu-save.label` to verify plain attribute preview rendering on a nested file
   - This is the file with top-level comment structure
 - `example/locales/fr/dialogs/menu.ftl`
+  - Extra nested translation target
+- `example/locales/lv/dialogs/menu.ftl`
   - Extra nested translation target
 - `example/locales/uk/dialogs/menu.ftl`
   - Extra nested translation target

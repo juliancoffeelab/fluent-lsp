@@ -1953,6 +1953,8 @@ mod tests {
                 "locales/es/dialogs/menu.ftl".to_string(),
                 "locales/fr/app.ftl".to_string(),
                 "locales/fr/dialogs/menu.ftl".to_string(),
+                "locales/lv/app.ftl".to_string(),
+                "locales/lv/dialogs/menu.ftl".to_string(),
             ]
         );
     }
@@ -2125,12 +2127,12 @@ mod tests {
 
     #[test]
     fn render_message_preview_ignores_local_only_selectors_and_defaults_source_only_ones() {
-        let source = "mismatch-rollout =\n    Summary for { $platform ->\n        [desktop] desktop\n       *[mobile] mobile\n    } users with { $count } { $count ->\n        [one] package\n       *[other] packages\n    } ready.\n";
+        let source = "mismatch-rollout =\n    Summary for { $platform ->\n        [desktop] desktop\n       *[mobile] mobile\n    } users with { $count ->\n        [0] no packages\n        [1] one package\n       *[other] { $count } packages\n    } ready.\n";
         let resource = parse_fluent_resource(source);
         let pattern = find_fluent_pattern(&resource, "mismatch-rollout").unwrap();
         let overrides = HashMap::from([
             ("$gender".to_string(), "female".to_string()),
-            ("$count".to_string(), "one".to_string()),
+            ("$count".to_string(), "1".to_string()),
         ]);
 
         assert_eq!(
@@ -2138,9 +2140,41 @@ mod tests {
             MessagePreview {
                 selectors: vec![
                     ("$platform".to_string(), "*".to_string()),
-                    ("$count".to_string(), "one".to_string()),
+                    ("$count".to_string(), "1".to_string()),
                 ],
-                text: "Summary for mobile users with { $count } package ready.".to_string(),
+                text: "Summary for mobile users with one package ready.".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn render_message_preview_supports_explicit_zero_numeric_variants() {
+        let source = "numeric-rollout =\n    Summary for { $count ->\n        [0] no packages ready\n        [1] one package ready\n       *[other] { $count } packages ready\n    }.\n";
+        let resource = parse_fluent_resource(source);
+        let pattern = find_fluent_pattern(&resource, "numeric-rollout").unwrap();
+        let overrides = HashMap::from([("$count".to_string(), "0".to_string())]);
+
+        assert_eq!(
+            render_message_preview(pattern, Some(&overrides)),
+            MessagePreview {
+                selectors: vec![("$count".to_string(), "0".to_string())],
+                text: "Summary for no packages ready.".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn render_message_preview_supports_zero_category_variants() {
+        let source = "zero-rollout =\n    Zero summary: { $count ->\n        [zero] no packages ready\n        [one] one package ready\n       *[other] { $count } packages ready\n    }.\n";
+        let resource = parse_fluent_resource(source);
+        let pattern = find_fluent_pattern(&resource, "zero-rollout").unwrap();
+        let overrides = HashMap::from([("$count".to_string(), "zero".to_string())]);
+
+        assert_eq!(
+            render_message_preview(pattern, Some(&overrides)),
+            MessagePreview {
+                selectors: vec![("$count".to_string(), "zero".to_string())],
+                text: "Zero summary: no packages ready.".to_string(),
             }
         );
     }
@@ -2229,6 +2263,34 @@ mod tests {
             HashMap::from([
                 ("$gender".to_string(), "other".to_string()),
                 ("$count".to_string(), "one".to_string()),
+            ])
+        );
+    }
+
+    #[test]
+    fn selector_overrides_capture_explicit_numeric_variant_keys() {
+        let source = "mismatch-rollout =\n    Resumen para { $gender ->\n        [female] ella misma\n        [male] el mismo\n       *[other] elle misme\n    } con { $count ->\n        [0] ningun paquete\n        [1] un paquete\n       *[other] { $count } paquetes\n    } listo.\n";
+
+        assert_eq!(
+            selector_overrides_for_position(
+                source,
+                "mismatch-rollout",
+                Position::new(6, 12)
+            ),
+            HashMap::from([
+                ("$gender".to_string(), "other".to_string()),
+                ("$count".to_string(), "0".to_string()),
+            ])
+        );
+        assert_eq!(
+            selector_overrides_for_position(
+                source,
+                "mismatch-rollout",
+                Position::new(7, 12)
+            ),
+            HashMap::from([
+                ("$gender".to_string(), "other".to_string()),
+                ("$count".to_string(), "1".to_string()),
             ])
         );
     }

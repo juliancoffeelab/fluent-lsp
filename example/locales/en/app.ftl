@@ -53,7 +53,15 @@ mismatch-rollout =
     Summary for { $platform ->
         [desktop] desktop
        *[mobile] mobile
-    } users with { $count } { $count ->
-        [one] package
-       *[other] packages
+    } users with { $count ->
+        [0] no packages
+        [1] one package
+       *[other] { $count } packages
     } ready.
+
+zero-rollout =
+    Zero summary: { $count ->
+        [zero] no packages ready
+        [one] one package ready
+       *[other] { $count } packages ready
+    }.

@@ -46,9 +46,10 @@ mismatch-rollout =
         [female] неї
         [male] нього
        *[other] них
-    } з { $count } { $count ->
-        [one] пакунком
-        [few] пакунками
-        [many] пакунками
-       *[other] пакунками
+    } з { $count ->
+        [0] без пакунків
+        [1] з одним пакунком
+        [few] з { $count } пакунками
+        [many] з { $count } пакунками
+       *[other] з { $count } пакунками
     } готовий.
