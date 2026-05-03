@@ -1,3 +1,8 @@
+[workspace]
+members = [".", "third_party/fluent-syntax"]
+default-members = ["."]
+resolver = "2"
+
 [package]
 name = "fluent-lsp"
 version = "0.1.0"
@@ -5,7 +10,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
-fluent-syntax = { version = "0.12.0", features = ["spans"] }
+fluent-syntax = { path = "third_party/fluent-syntax", version = "0.12.0", features = ["spans"] }
 regex = "1.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -13,6 +18,3 @@ tempfile = "3.23"
 tokio = { version = "1.48", features = ["fs", "io-std", "macros", "rt-multi-thread", "sync"] }
 toml = "0.9"
 tower-lsp = { package = "tower-lsp-server", version = "0.23.0", features = ["proposed"] }
-
-[patch.crates-io]
-fluent-syntax = { path = "third_party/fluent-syntax" }
