@@ -1862,6 +1862,51 @@ fn diagnostics_do_not_warn_for_complete_numeric_selectors_or_matching_style() {
 }
 
 #[test]
+fn parse_error_diagnostics_publish_on_save_and_clear_after_fix() {
+    let temp = tempdir().unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+    )
+    .unwrap();
+
+    let source_path = temp.path().join("locales/en/broken.ftl");
+    let invalid_source = "welcome-title = Welcome\n\ng@Rb@ge = broken\n";
+    std::fs::write(&source_path, invalid_source).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 124);
+    send_open_document(&mut lsp, &source_path, invalid_source);
+    send_save_document(&mut lsp, &source_path, None);
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let diagnostics = notification["params"]["diagnostics"]
+        .as_array()
+        .expect("expected diagnostics array");
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0]["message"],
+        Value::String("Fluent syntax error: Expected a token starting with \"=\"".to_string())
+    );
+    assert_eq!(diagnostics[0]["severity"], Value::from(1));
+    assert_eq!(
+        diagnostics[0]["range"]["start"]["line"],
+        Value::from(position_of(invalid_source, "@").0)
+    );
+    assert_eq!(
+        diagnostics[0]["range"]["start"]["character"],
+        Value::from(position_of(invalid_source, "@").1)
+    );
+
+    let valid_source = "welcome-title = Welcome\n\ngarbage = broken\n";
+    send_change_document(&mut lsp, &source_path, 2, valid_source);
+    send_save_document(&mut lsp, &source_path, None);
+
+    let cleared = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(cleared["params"]["diagnostics"], Value::Array(Vec::new()));
+}
+
+#[test]
 fn diagnostics_report_local_selector_style_mismatches_when_enabled() {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");
@@ -2081,6 +2126,24 @@ fn send_save_document(lsp: &mut LspProcess, path: &Path, text: Option<&str>) {
         "jsonrpc": "2.0",
         "method": "textDocument/didSave",
         "params": params
+    }));
+}
+
+fn send_change_document(lsp: &mut LspProcess, path: &Path, version: i32, text: &str) {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didChange",
+        "params": {
+            "textDocument": {
+                "uri": format!("file://{}", path.display()),
+                "version": version
+            },
+            "contentChanges": [
+                {
+                    "text": text
+                }
+            ]
+        }
     }));
 }
 

@@ -1713,16 +1713,24 @@ fn collect_document_diagnostics(
     language: &str,
     settings: EffectiveDiagnosticConfig,
 ) -> Vec<Diagnostic> {
+    let (resource, parse_errors) = parse_fluent_resource_with_errors(source);
+    let mut diagnostics = collect_parse_error_diagnostics(source, &parse_errors);
+
     if !settings.error_on_unsupported_plural_categories
         && !settings.warn_on_missing_plural_categories
         && !settings.warn_on_selector_style_mismatch
     {
-        return Vec::new();
+        diagnostics.sort_by_key(|diagnostic| {
+            (
+                diagnostic.range.start.line,
+                diagnostic.range.start.character,
+                diagnostic.message.clone(),
+            )
+        });
+        return diagnostics;
     }
 
-    let resource = parse_fluent_resource(source);
     let supported_categories = plural_categories(language);
-    let mut diagnostics = Vec::new();
     for entry in &resource.body {
         match entry {
             Entry::Message(message) => {
@@ -1779,6 +1787,33 @@ fn collect_document_diagnostics(
         )
     });
     diagnostics
+}
+
+fn collect_parse_error_diagnostics(
+    source: &str,
+    errors: &[parser::ParserError],
+) -> Vec<Diagnostic> {
+    errors
+        .iter()
+        .filter_map(|error| {
+            parse_error_range(source, error).map(|range| Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::ERROR),
+                source: Some("fluent-lsp".to_string()),
+                message: format!("Fluent syntax error: {error}"),
+                ..Diagnostic::default()
+            })
+        })
+        .collect()
+}
+
+fn parse_error_range(source: &str, error: &parser::ParserError) -> Option<Range> {
+    byte_range_to_lsp_range(source, error.pos.clone()).or_else(|| {
+        error
+            .slice
+            .as_ref()
+            .and_then(|slice| byte_range_to_lsp_range(source, slice.clone()))
+    })
 }
 
 fn collect_pattern_diagnostics(
@@ -3708,9 +3743,14 @@ fn count_expression_combinations(expression: &fluent_syntax::ast::Expression<&st
 }
 
 fn parse_fluent_resource(source: &str) -> Resource<&str> {
+    let (resource, _errors) = parse_fluent_resource_with_errors(source);
+    resource
+}
+
+fn parse_fluent_resource_with_errors(source: &str) -> (Resource<&str>, Vec<parser::ParserError>) {
     match parser::parse(source) {
-        Ok(resource) => resource,
-        Err((resource, _errors)) => resource,
+        Ok(resource) => (resource, Vec::new()),
+        Err((resource, errors)) => (resource, errors),
     }
 }
 
@@ -4781,6 +4821,22 @@ mod tests {
         );
         assert!(diagnostics.iter().any(|diagnostic| diagnostic.message
             == "Numeric selector for `lv` is missing category `one`"));
+    }
+
+    #[test]
+    fn parse_error_diagnostics_are_reported_without_optional_settings() {
+        let source = "welcome-title = Welcome\n\ng@Rb@ge = broken\n";
+        let diagnostics =
+            collect_document_diagnostics(source, "en", EffectiveDiagnosticConfig::default());
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].message,
+            "Fluent syntax error: Expected a token starting with \"=\""
+        );
+        assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(diagnostics[0].range.start, Position::new(2, 1));
+        assert_eq!(diagnostics[0].range.end, Position::new(2, 2));
     }
 
     #[test]

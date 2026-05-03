@@ -101,3 +101,9 @@ fn nvim_smoke_diagnostics_numeric_selectors() {
     let result = run_scenario("diagnostics_numeric_selectors");
     assert_eq!(result["ok"], Value::Bool(true));
 }
+
+#[test]
+fn nvim_smoke_diagnostics_parse_errors() {
+    let result = run_scenario("diagnostics_parse_errors");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
