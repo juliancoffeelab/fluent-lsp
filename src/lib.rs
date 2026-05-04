@@ -18,7 +18,8 @@ use tower_lsp::jsonrpc::{Error as LspError, Result as LspResult};
 use tower_lsp::ls_types::{
     CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, CodeLens, CodeLensOptions, CodeLensParams,
-    Command, Diagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
+    Command, CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams,
+    CompletionResponse, Diagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DidSaveTextDocumentParams, DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
@@ -420,6 +421,12 @@ enum VariableBinding {
     Placeholder(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CompletionSite {
+    MessageKey { prefix: String },
+    AttributeKey { message_key: String, prefix: String },
+}
+
 #[derive(Default)]
 struct ServerState {
     root_dir: Option<PathBuf>,
@@ -677,6 +684,56 @@ impl Backend {
             }),
             range: Some(hover_range),
         }))
+    }
+
+    async fn completions_for(
+        &self,
+        params: CompletionParams,
+    ) -> LspResult<Option<CompletionResponse>> {
+        let state = self.state.read().await;
+        let Some(workspace) = state.workspace.clone() else {
+            return Ok(None);
+        };
+        let uri = params.text_document_position.text_document.uri;
+        let path = uri
+            .to_file_path()
+            .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
+            .into_owned();
+        if !workspace.matches_translation_file(&path) {
+            return Ok(None);
+        }
+
+        let source = state
+            .open_documents
+            .get(&uri)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(&path).ok())
+            .ok_or_else(|| {
+                internal_error_with_message(format!("failed to read {}", path.display()))
+            })?;
+        drop(state);
+
+        let Some(site) =
+            completion_site_for_position(&source, params.text_document_position.position)
+        else {
+            return Ok(None);
+        };
+        let Some(origin_path) = workspace.origin_file_for(&path) else {
+            return Ok(Some(CompletionResponse::Array(Vec::new())));
+        };
+        let origin_source = tokio::fs::read_to_string(&origin_path)
+            .await
+            .map_err(|error| {
+                internal_error_with_message(format!(
+                    "failed to read {}: {error}",
+                    origin_path.display()
+                ))
+            })?;
+
+        Ok(Some(CompletionResponse::Array(completion_items_for_site(
+            &origin_source,
+            &site,
+        ))))
     }
 
     async fn code_actions_for(
@@ -1153,6 +1210,10 @@ impl LanguageServer for Backend {
                 code_lens_provider: Some(CodeLensOptions {
                     resolve_provider: Some(false),
                 }),
+                completion_provider: Some(CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string()]),
+                    ..CompletionOptions::default()
+                }),
                 definition_provider: Some(OneOf::Left(true)),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec![SHOW_SELECTOR_COMBINATIONS_COMMAND.to_string()],
@@ -1269,6 +1330,10 @@ impl LanguageServer for Backend {
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
         self.hover_for(params).await
+    }
+
+    async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
+        self.completions_for(params).await
     }
 
     async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
@@ -3793,6 +3858,156 @@ fn extract_fluent_key_at_position(source: &str, position: Position) -> Option<St
         .map(|(key, _, _)| key)
 }
 
+fn completion_site_for_position(source: &str, position: Position) -> Option<CompletionSite> {
+    let byte_index = position_to_byte_index(source, position)?;
+    let line_start = source[..byte_index]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let line_end = source[byte_index..]
+        .find('\n')
+        .map(|offset| byte_index + offset)
+        .unwrap_or(source.len());
+    let line = source.get(line_start..line_end)?;
+    let cursor_in_line = byte_index.checked_sub(line_start)?;
+    let before_cursor = line.get(..cursor_in_line)?;
+    let trimmed_before = before_cursor.trim_start();
+    if trimmed_before.is_empty() || trimmed_before.starts_with('#') || before_cursor.contains('=') {
+        return None;
+    }
+
+    let indent = leading_spaces(line);
+    if indent == 0 {
+        let prefix = trimmed_before.trim_end();
+        if prefix.starts_with('.') || !is_completion_prefix(prefix, false) {
+            return None;
+        }
+        return Some(CompletionSite::MessageKey {
+            prefix: prefix.to_string(),
+        });
+    }
+
+    if cursor_in_line < indent {
+        return None;
+    }
+    if !trimmed_before.starts_with('.') || !is_completion_prefix(trimmed_before, true) {
+        return None;
+    }
+    let message_key = enclosing_message_key_for_attribute_completion(source, position.line)?;
+    Some(CompletionSite::AttributeKey {
+        message_key,
+        prefix: trimmed_before.to_string(),
+    })
+}
+
+fn is_completion_prefix(prefix: &str, allow_bare_dot: bool) -> bool {
+    if prefix.is_empty() {
+        return false;
+    }
+    if allow_bare_dot && prefix == "." {
+        return true;
+    }
+    prefix.bytes().all(|byte| {
+        if allow_bare_dot && byte == b'.' {
+            return true;
+        }
+        is_key_byte(Some(byte)) && byte != b'.'
+    })
+}
+
+fn enclosing_message_key_for_attribute_completion(source: &str, line: u32) -> Option<String> {
+    let target_line = usize::try_from(line).ok()?;
+    let lines = source.lines().collect::<Vec<_>>();
+    for current in (0..target_line).rev() {
+        let line = *lines.get(current)?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if leading_spaces(line) != 0 {
+            continue;
+        }
+        let (candidate, _) = trimmed.split_once('=')?;
+        let candidate = candidate.trim_end();
+        if candidate.is_empty()
+            || candidate.starts_with('.')
+            || candidate.starts_with('-')
+            || !candidate
+                .bytes()
+                .all(|byte| is_key_byte(Some(byte)) && byte != b'.')
+        {
+            return None;
+        }
+        return Some(candidate.to_string());
+    }
+    None
+}
+
+fn completion_items_for_site(origin_source: &str, site: &CompletionSite) -> Vec<CompletionItem> {
+    match site {
+        CompletionSite::MessageKey { prefix } => origin_message_keys(origin_source)
+            .into_iter()
+            .filter(|key| key.starts_with(prefix))
+            .enumerate()
+            .map(|(index, key)| completion_item(key, "message", CompletionItemKind::TEXT, index))
+            .collect(),
+        CompletionSite::AttributeKey {
+            message_key,
+            prefix,
+        } => origin_message_attributes(origin_source, message_key)
+            .into_iter()
+            .map(|attribute| format!(".{attribute}"))
+            .filter(|attribute| attribute.starts_with(prefix))
+            .enumerate()
+            .map(|(index, key)| completion_item(key, "attribute", CompletionItemKind::FIELD, index))
+            .collect(),
+    }
+}
+
+fn completion_item(
+    label: String,
+    detail: &str,
+    kind: CompletionItemKind,
+    index: usize,
+) -> CompletionItem {
+    CompletionItem {
+        label: label.clone(),
+        insert_text: Some(label),
+        detail: Some(detail.to_string()),
+        kind: Some(kind),
+        sort_text: Some(format!("{index:04}")),
+        ..CompletionItem::default()
+    }
+}
+
+fn origin_message_keys(source: &str) -> Vec<String> {
+    parse_fluent_resource(source)
+        .body
+        .into_iter()
+        .filter_map(|entry| match entry {
+            Entry::Message(message) => Some(message.id.name.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn origin_message_attributes(source: &str, message_key: &str) -> Vec<String> {
+    parse_fluent_resource(source)
+        .body
+        .into_iter()
+        .find_map(|entry| match entry {
+            Entry::Message(message) if message.id.name == message_key => Some(
+                message
+                    .attributes
+                    .into_iter()
+                    .map(|attribute| attribute.id.name.to_string())
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
 fn find_fluent_pattern<'a>(
     resource: &'a Resource<&'a str>,
     key: &str,
@@ -4426,6 +4641,93 @@ mod tests {
         let attribute = find_fluent_definition(source, "button-copy.label").unwrap();
         assert_eq!(attribute.start, Position::new(2, 5));
         assert_eq!(attribute.end, Position::new(2, 10));
+    }
+
+    #[test]
+    fn detects_message_key_completion_site() {
+        let source = "welcome-title = Hola\n\ndown";
+        assert_eq!(
+            completion_site_for_position(source, Position::new(2, 4)),
+            Some(CompletionSite::MessageKey {
+                prefix: "down".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn detects_attribute_completion_site_for_partial_and_bare_dot() {
+        let source = "menu-save =\n    .l";
+        assert_eq!(
+            completion_site_for_position(source, Position::new(1, 6)),
+            Some(CompletionSite::AttributeKey {
+                message_key: "menu-save".to_string(),
+                prefix: ".l".to_string(),
+            })
+        );
+
+        let bare_dot = "menu-save =\n    .";
+        assert_eq!(
+            completion_site_for_position(bare_dot, Position::new(1, 5)),
+            Some(CompletionSite::AttributeKey {
+                message_key: "menu-save".to_string(),
+                prefix: ".".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn suppresses_completion_inside_message_values() {
+        let source = "welcome-title = Hola\n    cont";
+        assert_eq!(
+            completion_site_for_position(source, Position::new(1, 8)),
+            None
+        );
+    }
+
+    #[test]
+    fn collects_message_key_completion_items_in_origin_order() {
+        let source = "hello-world = Hello\ndownload-action = Download\ndownload-count = Count\n";
+        let labels = completion_items_for_site(
+            source,
+            &CompletionSite::MessageKey {
+                prefix: "down".to_string(),
+            },
+        )
+        .into_iter()
+        .map(|item| item.label)
+        .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            vec!["download-action".to_string(), "download-count".to_string()]
+        );
+    }
+
+    #[test]
+    fn collects_attribute_completion_items_for_matching_message_only() {
+        let source = "menu-save =\n    .label = Save\n    .tooltip = Save this file\nmenu-cancel =\n    .label = Cancel\n";
+        let labels = completion_items_for_site(
+            source,
+            &CompletionSite::AttributeKey {
+                message_key: "menu-save".to_string(),
+                prefix: ".".to_string(),
+            },
+        )
+        .into_iter()
+        .map(|item| item.label)
+        .collect::<Vec<_>>();
+        assert_eq!(labels, vec![".label".to_string(), ".tooltip".to_string()]);
+
+        let filtered = completion_items_for_site(
+            source,
+            &CompletionSite::AttributeKey {
+                message_key: "menu-save".to_string(),
+                prefix: ".l".to_string(),
+            },
+        )
+        .into_iter()
+        .map(|item| item.label)
+        .collect::<Vec<_>>();
+        assert_eq!(filtered, vec![".label".to_string()]);
     }
 
     #[test]

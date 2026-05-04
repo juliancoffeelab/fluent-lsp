@@ -8,7 +8,7 @@ use fluent_lsp::render_fluent_preview_text;
 use fluent_syntax::parser;
 use serde_json::{Value, json};
 use std::convert::TryFrom;
-use tempfile::tempdir;
+use tempfile::{TempDir, tempdir};
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -306,6 +306,87 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
             ReferenceExpectation::new("locales/lv/dialogs/menu.ftl", 1, 5),
         ],
     );
+}
+
+#[test]
+fn completion_from_translation_uses_origin_language_keys_and_attributes() {
+    let workspace = completion_workspace();
+    let app_path = workspace.path().join("locales/es/app.ftl");
+    let menu_path = workspace.path().join("locales/es/dialogs/menu.ftl");
+
+    let mut lsp = initialized_lsp(workspace.path(), 14);
+
+    let top_level_text = "welcome-title = Bienvenido\n\ndown";
+    send_open_document(&mut lsp, &app_path, top_level_text);
+    let labels = request_completion_labels(
+        &mut lsp,
+        15,
+        &app_path,
+        position_after(top_level_text, "down"),
+    );
+    assert_eq!(
+        labels,
+        vec!["download-action".to_string(), "download-count".to_string()]
+    );
+
+    let attribute_text = "menu-save =\n    .l\n";
+    send_open_document(&mut lsp, &menu_path, attribute_text);
+    let attribute_labels = request_completion_labels(
+        &mut lsp,
+        16,
+        &menu_path,
+        position_after(attribute_text, ".l"),
+    );
+    assert_eq!(attribute_labels, vec![".label".to_string()]);
+
+    let bare_dot_text = "menu-save =\n    .\n";
+    send_open_document(&mut lsp, &menu_path, bare_dot_text);
+    let all_attribute_labels =
+        request_completion_labels(&mut lsp, 17, &menu_path, position_after(bare_dot_text, "."));
+    assert_eq!(
+        all_attribute_labels,
+        vec![".label".to_string(), ".tooltip".to_string()]
+    );
+}
+
+#[test]
+fn completion_uses_nested_origin_counterpart_and_skips_origin_files() {
+    let workspace = completion_workspace();
+    let nested_translation = workspace.path().join("locales/es/dialogs/menu.ftl");
+    let origin_app = workspace.path().join("locales/en/app.ftl");
+    let nested_text = "menu-save =\n    .t\n";
+
+    let mut lsp = initialized_lsp(workspace.path(), 18);
+
+    send_open_document(&mut lsp, &nested_translation, nested_text);
+    let nested_labels = request_completion_labels(
+        &mut lsp,
+        19,
+        &nested_translation,
+        position_after(nested_text, ".t"),
+    );
+    assert_eq!(nested_labels, vec![".tooltip".to_string()]);
+
+    let origin_labels = request_completion_labels(
+        &mut lsp,
+        20,
+        &origin_app,
+        position_after("download-action = Download\n", "download-action"),
+    );
+    assert!(origin_labels.is_empty());
+}
+
+#[test]
+fn completion_returns_empty_results_for_unmatched_prefixes() {
+    let workspace = completion_workspace();
+    let app_path = workspace.path().join("locales/es/app.ftl");
+    let source = "welcome-title = Bienvenido\n\nzzz";
+
+    let mut lsp = initialized_lsp(workspace.path(), 21);
+    send_open_document(&mut lsp, &app_path, source);
+
+    let labels = request_completion_labels(&mut lsp, 22, &app_path, position_after(source, "zzz"));
+    assert!(labels.is_empty());
 }
 
 #[test]
@@ -2119,6 +2200,37 @@ fn change_configuration(lsp: &mut LspProcess, settings: Value) {
     }));
 }
 
+fn request_completion_labels(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    source_path: &Path,
+    position: (u32, u32),
+) -> Vec<String> {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+
+    let response = recv_response(lsp, request_id);
+    let items = if response["result"].is_array() {
+        response["result"].as_array().cloned().unwrap_or_default()
+    } else {
+        response["result"]["items"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    };
+    items
+        .into_iter()
+        .filter_map(|item| item["label"].as_str().map(ToString::to_string))
+        .collect()
+}
+
 fn request_code_actions(
     lsp: &mut LspProcess,
     request_id: i64,
@@ -2356,8 +2468,50 @@ fn initialize_lsp(lsp: &mut LspProcess, root: &Path, request_id: i64) {
     assert_eq!(initialized_log["method"], "window/logMessage");
 }
 
+fn completion_workspace() -> TempDir {
+    let temp = tempdir().unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/en/dialogs")).unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/es/dialogs")).unwrap();
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/en/app.ftl"),
+        "hello-world = Hello\n\
+download-action = Download\n\
+download-count = Download count\n",
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/en/dialogs/menu.ftl"),
+        "menu-save =\n    .label = Save\n    .tooltip = Save this file\n",
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/es/app.ftl"),
+        "welcome-title = Bienvenido\n",
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/es/dialogs/menu.ftl"),
+        "menu-save =\n    .label = Guardar\n",
+    )
+    .unwrap();
+    temp
+}
+
 fn position_of(source: &str, needle: &str) -> (u32, u32) {
     position_of_nth(source, needle, 1)
+}
+
+fn position_after(source: &str, needle: &str) -> (u32, u32) {
+    let (line, character) = position_of(source, needle);
+    (
+        line,
+        character + u32::try_from(needle.chars().count()).unwrap(),
+    )
 }
 
 fn position_of_nth(source: &str, needle: &str, instance: usize) -> (u32, u32) {
