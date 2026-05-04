@@ -34,3 +34,7 @@ sync-status =
        *[other] Hay { $count } descargas listas.
     }
 secondary-copy = Mas texto
+
+# Cobertura de hover con comentarios
+# Mantener visible esta nota para traduccion en el hover de clave
+commented-preview = Texto de vista previa para comentarios de hover.

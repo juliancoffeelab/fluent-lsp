@@ -54,8 +54,15 @@ function M.run()
   local workspace = assert(vim.env.FLUENT_LSP_WORKSPACE ~= "" and vim.env.FLUENT_LSP_WORKSPACE)
   local server = assert(vim.env.FLUENT_LSP_BIN ~= "" and vim.env.FLUENT_LSP_BIN)
   local result_path = assert(vim.env.FLUENT_LSP_RESULT ~= "" and vim.env.FLUENT_LSP_RESULT)
+  local broken_path = workspace .. "/locales/en/broken.ftl"
 
-  vim.cmd.edit(workspace .. "/locales/en/broken.ftl")
+  vim.fn.writefile({
+    "welcome-title = Welcome",
+    "",
+    "g@Rb@ge = broken",
+  }, broken_path)
+
+  vim.cmd.edit(broken_path)
   local client_id = start_client(server, workspace)
   wait_for_client(client_id)
 
@@ -85,7 +92,10 @@ function M.run()
   assert(#diagnostics == 0, "parse diagnostics should clear after a valid save")
 
   stop_client(client_id)
-  write_result(result_path, { ok = true })
+  write_result(result_path, {
+    ok = true,
+    final_buffer = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n") .. "\n",
+  })
   vim.cmd("qa!")
 end
 

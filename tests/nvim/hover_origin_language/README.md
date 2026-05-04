@@ -6,11 +6,11 @@ Hover directly on the origin-language file
 
 ## Exercise
 
-Requests hover on an origin-language menu attribute and asserts that the formatted attribute value is shown as a plain preview block.
+Requests hover on an origin-language menu attribute key and then on that attribute body. It asserts that key hover returns the menu comments and that body hover shows the plain rendered preview block.
 
 ## Assumptions
 
-Origin-language hover uses the current document source and does not require translation lookup.
+Origin-language key hover should prefer local comment context when it exists. Body hover uses the current document source and does not require translation lookup.
 
 ## Source Under Test
 

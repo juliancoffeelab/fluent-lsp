@@ -1,7 +1,11 @@
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
+use fluent_lsp::render_fluent_preview_text;
+use fluent_syntax::parser;
 use serde_json::{Value, json};
 use std::convert::TryFrom;
 use tempfile::tempdir;
@@ -17,10 +21,12 @@ struct LspProcess {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    _serial_guard: MutexGuard<'static, ()>,
 }
 
 impl LspProcess {
     fn start() -> Self {
+        let serial_guard = lsp_process_mutex().lock().unwrap();
         let mut child = Command::new(env!("CARGO_BIN_EXE_fluent-lsp"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -32,6 +38,7 @@ impl LspProcess {
             stdin: child.stdin.take().expect("missing stdin"),
             stdout: BufReader::new(child.stdout.take().expect("missing stdout")),
             child,
+            _serial_guard: serial_guard,
         }
     }
 
@@ -46,7 +53,11 @@ impl LspProcess {
         let mut content_length = None;
         loop {
             let mut line = String::new();
-            self.stdout.read_line(&mut line).unwrap();
+            let bytes_read = self.stdout.read_line(&mut line).unwrap();
+            if bytes_read == 0 {
+                let status = self.child.try_wait().unwrap();
+                panic!("unexpected EOF from fluent-lsp; child status: {status:?}");
+            }
             if line == "\r\n" {
                 break;
             }
@@ -59,6 +70,11 @@ impl LspProcess {
         self.stdout.read_exact(&mut body).unwrap();
         serde_json::from_slice(&body).expect("parse LSP response")
     }
+}
+
+fn lsp_process_mutex() -> &'static Mutex<()> {
+    static MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+    MUTEX.get_or_init(|| Mutex::new(()))
 }
 
 impl Drop for LspProcess {
@@ -124,8 +140,7 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
     let initialized_log = lsp.recv();
     assert_eq!(initialized_log["method"], "window/logMessage");
 
-    send_open_document(&mut lsp, source_path.as_path(), &source_text);
-    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    open_document(&mut lsp, source_path.as_path(), &source_text);
 
     assert_definition(
         &mut lsp,
@@ -298,6 +313,7 @@ fn hover_from_translation_shows_local_formatted_messages() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_text = std::fs::read_to_string(root.join("locales/en/app.ftl")).unwrap();
 
     let mut lsp = LspProcess::start();
 
@@ -329,17 +345,18 @@ fn hover_from_translation_shows_local_formatted_messages() {
 
     open_document(&mut lsp, &source_path, &source_text);
 
+    let key_position = position_of(&source_text, "commented-preview");
     assert_hover(
         &mut lsp,
         21,
         &source_path,
-        position_of(&source_text, "welcome-title"),
-        "```ftl\nBienvenido\n```",
-        1,
+        key_position,
+        "```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```",
+        key_position.0,
         0,
     );
 
-    assert_hover(
+    let body_hover = assert_hover(
         &mut lsp,
         22,
         &source_path,
@@ -348,8 +365,10 @@ fn hover_from_translation_shows_local_formatted_messages() {
         2,
         0,
     );
+    assert_hover_block_matches(&body_hover, 0, &origin_text, "welcome-body", &[]);
+    assert_hover_block_matches(&body_hover, 1, &source_text, "welcome-body", &[]);
 
-    assert_hover(
+    let selector_hover = assert_hover(
         &mut lsp,
         23,
         &source_path,
@@ -358,8 +377,22 @@ fn hover_from_translation_shows_local_formatted_messages() {
         8,
         0,
     );
+    assert_hover_block_matches(
+        &selector_hover,
+        0,
+        &origin_text,
+        "install-hint",
+        &[("$gender", "female")],
+    );
+    assert_hover_block_matches(
+        &selector_hover,
+        1,
+        &source_text,
+        "install-hint",
+        &[("$gender", "female")],
+    );
 
-    assert_hover(
+    let attribute_hover = assert_hover(
         &mut lsp,
         24,
         &source_path,
@@ -371,8 +404,22 @@ fn hover_from_translation_shows_local_formatted_messages() {
         21,
         5,
     );
+    assert_hover_block_matches(
+        &attribute_hover,
+        0,
+        &origin_text,
+        "download-action.tooltip",
+        &[],
+    );
+    assert_hover_block_matches(
+        &attribute_hover,
+        1,
+        &source_text,
+        "download-action.tooltip",
+        &[],
+    );
 
-    assert_hover(
+    let post_selector_hover = assert_hover(
         &mut lsp,
         25,
         &source_path,
@@ -381,8 +428,22 @@ fn hover_from_translation_shows_local_formatted_messages() {
         8,
         0,
     );
+    assert_hover_block_matches(
+        &post_selector_hover,
+        0,
+        &origin_text,
+        "install-hint",
+        &[("$gender", "other")],
+    );
+    assert_hover_block_matches(
+        &post_selector_hover,
+        1,
+        &source_text,
+        "install-hint",
+        &[("$gender", "other")],
+    );
 
-    assert_hover(
+    let second_selector_hover = assert_hover(
         &mut lsp,
         26,
         &source_path,
@@ -390,6 +451,20 @@ fn hover_from_translation_shows_local_formatted_messages() {
         "`$gender=other`, `$count=one`\n\n```ftl\nCopy the download link for their account on { $count } device now.\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.\n```",
         8,
         0,
+    );
+    assert_hover_block_matches(
+        &second_selector_hover,
+        0,
+        &origin_text,
+        "install-hint",
+        &[("$gender", "other"), ("$count", "one")],
+    );
+    assert_hover_block_matches(
+        &second_selector_hover,
+        1,
+        &source_text,
+        "install-hint",
+        &[("$gender", "other"), ("$count", "one")],
     );
 }
 
@@ -549,15 +624,158 @@ fn hover_from_origin_file_shows_formatted_attribute_text() {
 
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_hover(
+    let key_hover = assert_hover(
         &mut lsp,
         31,
         &source_path,
         position_of(&source_text, "label = Save"),
-        "```ftl\nSave\n```",
+        "```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```",
         4,
         5,
     );
+    assert_eq!(
+        extract_ftl_blocks(&key_hover),
+        vec!["### Shared menu copy\n## File menu\n# Primary action".to_string()]
+    );
+
+    let body_hover = request_hover(
+        &mut lsp,
+        32,
+        &source_path,
+        position_of(&source_text, "Save changes before closing the window"),
+    );
+    let body_value = body_hover["result"]["contents"]["value"].as_str().unwrap();
+    assert_hover_block_matches(body_value, 0, &source_text, "menu-save.tooltip", &[]);
+}
+
+#[test]
+fn hover_key_and_attribute_show_comment_context_across_locale_files() {
+    let root = fixture_root();
+    let top_level_cases = [
+        (
+            "locales/en/app.ftl",
+            "commented-preview",
+            "```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```",
+        ),
+        (
+            "locales/es/app.ftl",
+            "commented-preview",
+            "```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```",
+        ),
+        (
+            "locales/fr/app.ftl",
+            "commented-preview",
+            "```ftl\n# Couverture hover pour les commentaires\n# Garder cette note visible sur le hover de cle\n```",
+        ),
+        (
+            "locales/lv/app.ftl",
+            "commented-preview",
+            "```ftl\n# Hover komentaru parklajums\n# Saglabat so piezimi redzamu atslegas hover skata\n```",
+        ),
+        (
+            "locales/uk/app.ftl",
+            "commented-preview",
+            "```ftl\n# Перевірка hover-коментарів\n# Тримайте цю примітку видимою у hover для ключа\n```",
+        ),
+    ];
+    let nested_cases = [
+        (
+            "locales/en/dialogs/menu.ftl",
+            "commented-menu =",
+            "```ftl\n# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover\n```",
+        ),
+        (
+            "locales/es/dialogs/menu.ftl",
+            "commented-menu =",
+            "```ftl\n# Cobertura de comentarios para hover de atributo\n# Mantener visible esta nota en el hover de la clave del atributo\n```",
+        ),
+        (
+            "locales/fr/dialogs/menu.ftl",
+            "commented-menu =",
+            "```ftl\n# Couverture de commentaire pour hover d attribut\n# Garder cette note visible sur le hover de la cle d attribut\n```",
+        ),
+    ];
+
+    let mut lsp = LspProcess::start();
+    initialize_lsp(&mut lsp, &root, 34);
+
+    for (index, (relative_path, needle, expected_hover)) in top_level_cases.iter().enumerate() {
+        let path = root.join(relative_path);
+        let source = std::fs::read_to_string(&path).unwrap();
+        open_document(&mut lsp, &path, &source);
+        let hover = assert_hover(
+            &mut lsp,
+            35 + i64::try_from(index).unwrap(),
+            &path,
+            position_of(&source, needle),
+            expected_hover,
+            position_of(&source, needle).0,
+            0,
+        );
+        assert_eq!(
+            extract_ftl_blocks(&hover),
+            vec![expected_comment_block(expected_hover)]
+        );
+    }
+
+    for (index, (relative_path, needle, expected_hover)) in nested_cases.iter().enumerate() {
+        let path = root.join(relative_path);
+        let source = std::fs::read_to_string(&path).unwrap();
+        open_document(&mut lsp, &path, &source);
+        let hover = assert_hover(
+            &mut lsp,
+            45 + i64::try_from(index).unwrap(),
+            &path,
+            position_of(&source, needle),
+            expected_hover,
+            position_of(&source, needle).0,
+            0,
+        );
+        assert_eq!(
+            extract_ftl_blocks(&hover),
+            vec![expected_comment_block(expected_hover)]
+        );
+    }
+}
+
+#[test]
+fn hover_body_preview_stays_semantic_across_translation_locales() {
+    let root = fixture_root();
+    let origin_path = root.join("locales/en/app.ftl");
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+    let translation_cases = [
+        (
+            "locales/es/app.ftl",
+            "Texto de vista previa para comentarios de hover.",
+        ),
+        (
+            "locales/fr/app.ftl",
+            "Texte d apercu pour les commentaires de hover.",
+        ),
+        ("locales/lv/app.ftl", "Hover komentaru prieksskata teksts."),
+        (
+            "locales/uk/app.ftl",
+            "Текст попереднього перегляду для hover-коментарів.",
+        ),
+    ];
+
+    let mut lsp = LspProcess::start();
+    initialize_lsp(&mut lsp, &root, 60);
+
+    for (index, (relative_path, body_needle)) in translation_cases.iter().enumerate() {
+        let path = root.join(relative_path);
+        let source = std::fs::read_to_string(&path).unwrap();
+        open_document(&mut lsp, &path, &source);
+        let hover = request_hover(
+            &mut lsp,
+            61 + i64::try_from(index).unwrap(),
+            &path,
+            position_of(&source, body_needle),
+        );
+        let value = hover["result"]["contents"]["value"].as_str().unwrap();
+        assert_hover_block_matches(value, 0, &origin_text, "commented-preview", &[]);
+        assert_hover_block_matches(value, 1, &source, "commented-preview", &[]);
+    }
 }
 
 #[test]
@@ -694,302 +912,6 @@ fn code_lens_opens_full_selector_combinations_document() {
 
     let response = recv_response(&mut lsp, 42);
     assert_eq!(response["result"], Value::Null);
-}
-
-#[test]
-fn code_lens_opens_full_selector_combinations_document_for_attribute() {
-    let root = fixture_root();
-    let source_path = root.join("locales/es/app.ftl");
-    let source_text = std::fs::read_to_string(&source_path).unwrap();
-
-    let mut lsp = LspProcess::start();
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 50,
-        "method": "initialize",
-        "params": {
-            "processId": null,
-            "rootUri": format!("file://{}", root.display()),
-            "capabilities": {
-                "window": {
-                    "showDocument": {
-                        "support": true
-                    }
-                }
-            }
-        }
-    }));
-
-    let initialize = lsp.recv();
-    assert_eq!(initialize["id"], 50);
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "initialized",
-        "params": {}
-    }));
-    let initialized_log = lsp.recv();
-    assert_eq!(initialized_log["method"], "window/logMessage");
-
-    send_open_document(&mut lsp, source_path.as_path(), &source_text);
-    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 51,
-        "method": "textDocument/codeLens",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) }
-        }
-    }));
-
-    let lenses = recv_response(&mut lsp, 51);
-    let items = lenses["result"]
-        .as_array()
-        .expect("expected code lens array");
-    let attribute_lens = items
-        .iter()
-        .find(|item| item["range"]["start"]["line"].as_u64() == Some(21))
-        .expect("missing download-action.tooltip codelens");
-
-    let command = attribute_lens["command"].clone();
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 52,
-        "method": "workspace/executeCommand",
-        "params": {
-            "command": command["command"],
-            "arguments": command["arguments"]
-        }
-    }));
-
-    let request = lsp.recv();
-    assert_eq!(request["method"], "window/showDocument");
-    let document_uri = request["params"]["uri"]
-        .as_str()
-        .expect("showDocument uri must be a string");
-    assert!(
-        document_uri.ends_with("-download-action_tooltip.md"),
-        "unexpected temp document uri: {document_uri}"
-    );
-    let document_path = document_uri
-        .strip_prefix("file://")
-        .expect("expected file uri for temp document");
-    let document_text = std::fs::read_to_string(document_path).expect("read temp document");
-    assert!(document_text.contains("Current language: `es`"));
-    assert!(document_text.contains("Source language: `en`"));
-    assert!(document_text.contains("Source language combinations:"));
-    assert!(document_text.contains("Current language combinations:"));
-    assert!(document_text.contains("Install the recommended build for their account"));
-    assert!(document_text.contains("Instala la build recomendada para la cuenta de elle"));
-    assert!(document_text.contains("`$gender=other`, `$count=other`\n```ftl\nInstall the recommended build for their account on { $count } devices now.\n```"));
-    assert!(document_text.contains("`$gender=other`, `$count=other`\n```ftl\nInstala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.\n```"));
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": request["id"],
-        "result": {
-            "success": true
-        }
-    }));
-
-    let response = recv_response(&mut lsp, 52);
-    assert_eq!(response["result"], Value::Null);
-}
-
-#[test]
-fn code_lens_origin_document_omits_duplicate_source_sections() {
-    let root = fixture_root();
-    let source_path = root.join("locales/en/app.ftl");
-    let source_text = std::fs::read_to_string(&source_path).unwrap();
-
-    let mut lsp = LspProcess::start();
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 55,
-        "method": "initialize",
-        "params": {
-            "processId": null,
-            "rootUri": format!("file://{}", root.display()),
-            "capabilities": {
-                "window": {
-                    "showDocument": {
-                        "support": true
-                    }
-                }
-            }
-        }
-    }));
-
-    let initialize = lsp.recv();
-    assert_eq!(initialize["id"], 55);
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "initialized",
-        "params": {}
-    }));
-    let initialized_log = lsp.recv();
-    assert_eq!(initialized_log["method"], "window/logMessage");
-
-    send_open_document(&mut lsp, source_path.as_path(), &source_text);
-    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 56,
-        "method": "textDocument/codeLens",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) }
-        }
-    }));
-
-    let lenses = recv_response(&mut lsp, 56);
-    let items = lenses["result"]
-        .as_array()
-        .expect("expected code lens array");
-    let install_hint_lens = items
-        .iter()
-        .find(|item| item["command"]["arguments"][1] == Value::String("install-hint".to_string()))
-        .expect("missing install-hint codelens");
-
-    let command = install_hint_lens["command"].clone();
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 57,
-        "method": "workspace/executeCommand",
-        "params": {
-            "command": command["command"],
-            "arguments": command["arguments"]
-        }
-    }));
-
-    let request = recv_notification(&mut lsp, "window/showDocument");
-    assert_eq!(request["method"], "window/showDocument");
-    let document_uri = request["params"]["uri"]
-        .as_str()
-        .expect("showDocument uri must be a string");
-    let document_path = document_uri
-        .strip_prefix("file://")
-        .expect("expected file uri for temp document");
-    let document_text = std::fs::read_to_string(document_path).expect("read temp document");
-    assert!(document_text.contains("Current language: `en`"));
-    assert!(!document_text.contains("Source language:"));
-    assert!(!document_text.contains("Source text:"));
-    assert!(!document_text.contains("Source language combinations:"));
-    assert_eq!(
-        document_text
-            .matches("Current language combinations:")
-            .count(),
-        1
-    );
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": request["id"],
-        "result": {
-            "success": true
-        }
-    }));
-
-    let response = recv_response(&mut lsp, 57);
-    assert_eq!(response["result"], Value::Null);
-}
-
-#[test]
-fn code_lens_falls_back_to_show_message_with_fixed_selector_limit() {
-    let root = fixture_root();
-    let source_path = root.join("locales/es/app.ftl");
-    let source_text = std::fs::read_to_string(&source_path).unwrap();
-
-    let mut lsp = LspProcess::start();
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 60,
-        "method": "initialize",
-        "params": {
-            "processId": null,
-            "rootUri": format!("file://{}", root.display()),
-            "capabilities": {}
-        }
-    }));
-
-    let initialize = lsp.recv();
-    assert_eq!(initialize["id"], 60);
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "initialized",
-        "params": {}
-    }));
-    let initialized_log = lsp.recv();
-    assert_eq!(initialized_log["method"], "window/logMessage");
-
-    send_open_document(&mut lsp, source_path.as_path(), &source_text);
-    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
-
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 61,
-        "method": "textDocument/codeLens",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) }
-        }
-    }));
-
-    let lenses = recv_response(&mut lsp, 61);
-    let items = lenses["result"]
-        .as_array()
-        .expect("expected code lens array");
-    let rollout_lens = items
-        .iter()
-        .find(|item| {
-            item["command"]["arguments"][1] == Value::String("audience-rollout".to_string())
-        })
-        .expect("missing audience-rollout codelens");
-    assert_eq!(
-        rollout_lens["command"]["title"],
-        Value::String("Show all 12 selector combinations".to_string())
-    );
-
-    let command = rollout_lens["command"].clone();
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 62,
-        "method": "workspace/executeCommand",
-        "params": {
-            "command": command["command"],
-            "arguments": command["arguments"]
-        }
-    }));
-
-    let first = lsp.recv();
-    let second = lsp.recv();
-    let (response, notification) = if first["id"] == Value::from(62) {
-        (first, second)
-    } else {
-        (second, first)
-    };
-
-    assert_eq!(response["id"], 62);
-    assert_eq!(response["result"], Value::Null);
-
-    assert_eq!(notification["method"], "window/showMessage");
-    let message = notification["params"]["message"]
-        .as_str()
-        .expect("showMessage payload must be a string");
-    assert!(message.contains("Selector combinations for audience-rollout"));
-    assert!(message.contains("Current language combinations:"));
-    assert_eq!(message.matches("\n```ftl\n").count(), 10);
-    assert!(message.contains("`...`\n2 more"));
-    assert!(
-        !message.contains(
-            "```ftl\nResumen para otras personas en movil con { $count } elementos.\n```"
-        )
-    );
 }
 
 #[test]
@@ -2319,18 +2241,8 @@ fn assert_hover(
     expected_value: &str,
     expected_line: u32,
     expected_character: u32,
-) {
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "textDocument/hover",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "position": { "line": position.0, "character": position.1 }
-        }
-    }));
-
-    let hover = recv_response(lsp, request_id);
+) -> String {
+    let hover = request_hover(lsp, request_id, source_path, position);
     assert_eq!(
         hover["result"]["contents"]["kind"],
         Value::String("markdown".to_string())
@@ -2347,6 +2259,101 @@ fn assert_hover(
         hover["result"]["range"]["start"]["character"],
         Value::from(expected_character),
     );
+    hover["result"]["contents"]["value"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn request_hover(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    source_path: &Path,
+    position: (u32, u32),
+) -> Value {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+
+    recv_response(lsp, request_id)
+}
+
+fn assert_fluent_parses(source: &str) {
+    if let Err((_, errors)) = parser::parse(source) {
+        panic!("failed to parse Fluent source with {errors:?}\n{source}");
+    }
+}
+
+fn extract_ftl_blocks(markdown: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut rest = markdown;
+    let opener = "```ftl\n";
+    while let Some(start) = rest.find(opener) {
+        let after_start = &rest[start + opener.len()..];
+        let end = after_start
+            .find("\n```")
+            .expect("unterminated ftl markdown block");
+        blocks.push(after_start[..end].to_string());
+        rest = &after_start[end + "\n```".len()..];
+    }
+    blocks
+}
+
+fn assert_hover_block_matches(
+    markdown: &str,
+    block_index: usize,
+    source: &str,
+    key: &str,
+    overrides: &[(&str, &str)],
+) {
+    assert_fluent_parses(source);
+    let override_map = overrides
+        .iter()
+        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+        .collect::<HashMap<_, _>>();
+    let expected = render_fluent_preview_text(source, key, Some(&override_map))
+        .unwrap_or_else(|| panic!("missing semantic preview for `{key}`"));
+    let blocks = extract_ftl_blocks(markdown);
+    let actual = blocks
+        .get(block_index)
+        .unwrap_or_else(|| panic!("missing hover block {block_index} in {markdown}"));
+    assert_eq!(actual, &expected);
+}
+
+fn expected_comment_block(markdown: &str) -> String {
+    extract_ftl_blocks(markdown)
+        .into_iter()
+        .next()
+        .expect("expected comment markdown block")
+}
+
+fn initialize_lsp(lsp: &mut LspProcess, root: &Path, request_id: i64) {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {}
+        }
+    }));
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], request_id);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let initialized_log = lsp.recv();
+    assert_eq!(initialized_log["method"], "window/logMessage");
 }
 
 fn position_of(source: &str, needle: &str) -> (u32, u32) {

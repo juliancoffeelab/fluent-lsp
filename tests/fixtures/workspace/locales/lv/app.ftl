@@ -19,3 +19,7 @@ incomplete-zero =
 
 coins-line = Tev ir { $coins } monetas.
 plain-count = Pakotnes pieejamas.
+
+# Hover komentaru parklajums
+# Saglabat so piezimi redzamu atslegas hover skata
+commented-preview = Hover komentaru prieksskata teksts.

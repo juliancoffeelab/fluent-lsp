@@ -122,3 +122,7 @@ nested-whole-coins =
         }
        *[other] They have { $coins } coins.
     }
+
+# Comment-only hover coverage
+# Keep this translator guidance visible on key hover
+commented-preview = Preview text for hover comments.

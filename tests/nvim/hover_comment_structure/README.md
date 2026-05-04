@@ -2,15 +2,15 @@
 
 ## Feature
 
-Hover selector defaults
+Hover comment-vs-body split in an origin-language file
 
 ## Exercise
 
-Requests hover on a selector-bearing origin-language message key and asserts that the hover output shows default selector choices plus the formatted message preview.
+Requests hover on the origin-language `commented-preview` key and then on its value text. It asserts that key hover returns only the entry comments, while body hover returns only the rendered preview text.
 
 ## Assumptions
 
-Hover on the message key itself should use default selector branches for every unresolved selector.
+Hover on a definition key should prefer comment context when comments exist, while body hover should stay on rendered preview content.
 
 ## Source Under Test
 

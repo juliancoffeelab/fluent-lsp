@@ -32,3 +32,7 @@ sync-status =
        *[other] { $count } telechargements sont prets.
     }
 secondary-copy = Plus de texte
+
+# Couverture hover pour les commentaires
+# Garder cette note visible sur le hover de cle
+commented-preview = Texte d apercu pour les commentaires de hover.

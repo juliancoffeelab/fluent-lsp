@@ -22,6 +22,12 @@ local function position_params()
   }
 end
 
+local function request_hover(client_id)
+  local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
+  local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
+  return hover.contents.value
+end
+
 function M.run()
   local workspace = assert(vim.env.FLUENT_LSP_WORKSPACE ~= "" and vim.env.FLUENT_LSP_WORKSPACE)
   local server = assert(vim.env.FLUENT_LSP_BIN ~= "" and vim.env.FLUENT_LSP_BIN)
@@ -43,23 +49,23 @@ function M.run()
   local found = vim.fn.searchpos("\\[zero\\] neviena pakotne nav gatava", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
-  local hover = assert(responses[client_id] and responses[client_id].result, "missing zero-category hover")
-  local value = hover.contents.value
-  assert(value:match("^`%$count=zero`\n\n```ftl\nZero summary: no packages ready%.\n```\n\n---\n\n`%$count=zero`\n\n```ftl\nKopsavilkums ar neviena pakotne nav gatava%.\n```$"), "missing zero-category preview")
+  local zero_hover = request_hover(client_id)
+  assert(zero_hover:match("^`%$count=zero`\n\n```ftl\nZero summary: no packages ready%.\n```\n\n---\n\n`%$count=zero`\n\n```ftl\nKopsavilkums ar neviena pakotne nav gatava%.\n```$"), "missing zero-category preview")
 
   vim.api.nvim_win_set_cursor(0, { 1, 0 })
   found = vim.fn.searchpos("\\[one\\] viena pakotne ir gatava", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
-  hover = assert(responses[client_id] and responses[client_id].result, "missing one-category hover")
-  value = hover.contents.value
-  assert(value:match("^`%$count=one`\n\n```ftl\nZero summary: one package ready%.\n```\n\n---\n\n`%$count=one`\n\n```ftl\nKopsavilkums ar viena pakotne ir gatava%.\n```$"), "missing one-category preview")
+  local one_hover = request_hover(client_id)
+  assert(one_hover:match("^`%$count=one`\n\n```ftl\nZero summary: one package ready%.\n```\n\n---\n\n`%$count=one`\n\n```ftl\nKopsavilkums ar viena pakotne ir gatava%.\n```$"), "missing one-category preview")
 
   write_result(result_path, {
     ok = true,
     feature = "hover_selector_zero_lv",
+    hovers = {
+      zero = zero_hover,
+      one = one_hover,
+    },
   })
   vim.cmd.qa()
 end

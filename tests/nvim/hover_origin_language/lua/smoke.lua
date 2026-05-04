@@ -22,6 +22,12 @@ local function position_params()
   }
 end
 
+local function request_hover(client_id)
+  local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
+  local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
+  return hover.contents.value
+end
+
 function M.run()
   local workspace = assert(vim.env.FLUENT_LSP_WORKSPACE ~= "" and vim.env.FLUENT_LSP_WORKSPACE)
   local server = assert(vim.env.FLUENT_LSP_BIN ~= "" and vim.env.FLUENT_LSP_BIN)
@@ -40,18 +46,29 @@ function M.run()
   end, 50)
   assert(attached, "hover provider not ready")
 
-  local found = vim.fn.searchpos("label = Save", "n")
+  local found = vim.fn.searchpos("label = Save copy", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
-  local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
-  local value = hover.contents.value
-  assert(value == "```ftl\nSave\n```", "unexpected origin hover preview: " .. value)
-  assert(not value:match("\n\n---\n\n"), "origin hover should not duplicate source/current sections")
+  local key_hover = request_hover(client_id)
+  assert(
+    key_hover == "```ftl\n# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover\n```",
+    "unexpected origin key hover comments: " .. key_hover
+  )
+
+  found = vim.fn.searchpos("Save a copy before closing the dialog", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+
+  local body_hover = request_hover(client_id)
+  assert(body_hover == "```ftl\nSave a copy before closing the dialog\n```", "unexpected origin body hover preview: " .. body_hover)
+  assert(not body_hover:match("\n\n---\n\n"), "origin hover should not duplicate source/current sections")
 
   write_result(result_path, {
     ok = true,
     feature = "hover_origin_language",
+    hovers = {
+      key = key_hover,
+      body = body_hover,
+    },
   })
   vim.cmd.qa()
 end

@@ -622,14 +622,27 @@ impl Backend {
         ) else {
             return Ok(None);
         };
-        let resource = parse_fluent_resource(&source);
-        let Some(pattern) = find_fluent_pattern(&resource, &key) else {
-            return Ok(None);
-        };
         let Some(hover_range) = find_fluent_definition(&source, &key) else {
             return Ok(None);
         };
         let hover_position = params.text_document_position_params.position;
+        if range_contains_position(&hover_range, hover_position) {
+            if let Some(rendered) = render_fluent_source(&source, &key) {
+                if let Some(comments) = rendered.comments.filter(|comments| !comments.is_empty()) {
+                    return Ok(Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: render_ftl_block(&comments),
+                        }),
+                        range: Some(hover_range),
+                    }));
+                }
+            }
+        }
+        let resource = parse_fluent_resource(&source);
+        let Some(pattern) = find_fluent_pattern(&resource, &key) else {
+            return Ok(None);
+        };
         let selector_overrides = selector_overrides_for_position(&source, &key, hover_position);
         let current_preview = render_message_preview(pattern, Some(&selector_overrides));
         let source_preview = if !workspace.is_origin_file(&path)
@@ -1324,6 +1337,16 @@ pub fn render_fluent_entry(source: &str, key: &str) -> Option<String> {
         span: fluent_syntax::ast::Span::default(),
     });
     Some(rendered)
+}
+
+pub fn render_fluent_preview_text(
+    source: &str,
+    key: &str,
+    selector_overrides: Option<&HashMap<String, String>>,
+) -> Option<String> {
+    let resource = parse_fluent_resource(source);
+    let pattern = find_fluent_pattern(&resource, key)?;
+    Some(render_message_preview(pattern, selector_overrides).text)
 }
 
 fn render_fluent_source(source: &str, key: &str) -> Option<SourceRender> {
@@ -4436,6 +4459,46 @@ mod tests {
         assert_eq!(
             rendered,
             "Current language combinations:\n`$gender=female`, `$count=one`\n```ftl\nCopy the download link for her account on { $count } device now.\n```\n`$gender=female`, `$count=other`\n```ftl\nCopy the download link for her account on { $count } devices now.\n```\n`$gender=male`, `$count=one`\n```ftl\nCopy the download link for his account on { $count } device now.\n```\n`...`\n3 more"
+        );
+    }
+
+    #[test]
+    fn renders_selector_combinations_section_for_attribute_patterns() {
+        let source = "download-action =\n    .tooltip =\n        Install the recommended build for { $gender ->\n            [female] her\n            [male] his\n           *[other] their\n        } account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n";
+
+        let rendered = render_selector_combinations_section(
+            "Current language combinations:",
+            source,
+            "download-action.tooltip",
+            usize::MAX,
+        )
+        .unwrap();
+        assert!(rendered.contains("`$gender=female`, `$count=one`"));
+        assert!(rendered.contains(
+            "```ftl\nInstall the recommended build for her account on { $count } device now.\n```"
+        ));
+        assert!(rendered.contains("`$gender=other`, `$count=other`"));
+        assert!(rendered.contains(
+            "```ftl\nInstall the recommended build for their account on { $count } devices now.\n```"
+        ));
+    }
+
+    #[test]
+    fn renders_selector_combinations_section_with_fixed_limit_for_rollouts() {
+        let source = "audience-rollout =\n    Summary for { $audience ->\n        [admins] admins\n        [members] members\n       *[others] other people\n    } on { $platform ->\n        [desktop] desktop\n       *[mobile] mobile\n    } with { $count } { $count ->\n        [one] item\n       *[other] items\n    }.\n";
+
+        let rendered = render_selector_combinations_section(
+            "Current language combinations:",
+            source,
+            "audience-rollout",
+            10,
+        )
+        .unwrap();
+        assert_eq!(rendered.matches("\n```ftl\n").count(), 10);
+        assert!(rendered.contains("`...`\n2 more"));
+        assert!(
+            !rendered
+                .contains("```ftl\nSummary for other people on mobile with { $count } items.\n```")
         );
     }
 

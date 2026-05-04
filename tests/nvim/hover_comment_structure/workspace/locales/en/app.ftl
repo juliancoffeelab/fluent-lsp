@@ -48,3 +48,7 @@ sync-status =
     }
 
 secondary-copy = More text
+
+# Comment-only hover coverage
+# Keep this translator guidance visible on key hover
+commented-preview = Preview text for hover comments.

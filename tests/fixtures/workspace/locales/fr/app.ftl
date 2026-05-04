@@ -43,3 +43,7 @@ mismatch-rollout =
         [1] un paquet
        *[other] { $count } paquets
     } pret.
+
+# Couverture hover pour les commentaires
+# Garder cette note visible sur le hover de cle
+commented-preview = Texte d apercu pour les commentaires de hover.

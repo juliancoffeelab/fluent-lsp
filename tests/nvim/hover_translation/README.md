@@ -6,7 +6,7 @@ Hover from translation showing origin entry and comments
 
 ## Exercise
 
-Requests hover on a translated key, a translated plain-value line, a translated selector-bearing attribute value, inside a translated selector branch, on the closing-line text after that selector, and on the concatenated second selector branch (`[one] dispositivo`). It asserts that key hover stays compact while non-key translation hover renders the source preview block first, then `---`, then the current-language block, with selector-aware previews when selector context is available.
+Requests hover on a translated key with comments, a translated plain-value line, a translated selector-bearing attribute value, inside a translated selector branch, on the closing-line text after that selector, and on the concatenated second selector branch (`[one] dispositivo`). It asserts that key hover returns the translation comments, while non-key translation hover renders the source preview block first, then `---`, then the current-language block, with selector-aware previews when selector context is available.
 
 ## Assumptions
 
