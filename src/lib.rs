@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range as ByteRange;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -34,6 +34,7 @@ use tower_lsp::{Client, LanguageServer};
 const CONFIG_FILE_NAMES: [&str; 2] = ["fluent-lsp.toml", ".fluent-lsp.toml"];
 const SHOW_MESSAGE_SELECTOR_COMBINATIONS_LIMIT: usize = 10;
 const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str = "fluent-lsp.showSelectorCombinations";
+const LSP_COPY_MARKER: &str = "# [LSP-COPY]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -427,6 +428,32 @@ enum CompletionSite {
     AttributeKey { message_key: String, prefix: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OriginMessageTemplate {
+    key: String,
+    has_value: bool,
+    attributes: Vec<OriginAttributeTemplate>,
+    source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OriginAttributeTemplate {
+    key: String,
+    source: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct MissingTranslationEntries {
+    missing_messages: Vec<OriginMessageTemplate>,
+    missing_attributes: Vec<MissingAttributePatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MissingAttributePatch {
+    message_key: String,
+    attributes: Vec<OriginAttributeTemplate>,
+}
+
 #[derive(Default)]
 struct ServerState {
     root_dir: Option<PathBuf>,
@@ -767,8 +794,47 @@ impl Backend {
             .unwrap_or_default();
         let supports_snippet_text_edits = state.supports_snippet_text_edits;
         drop(state);
+        let origin_source = if workspace.matches_translation_file(&path) {
+            workspace
+                .origin_file_for(&path)
+                .and_then(|origin_path| std::fs::read_to_string(origin_path).ok())
+        } else {
+            None
+        };
 
         let mut actions = Vec::new();
+        if let Some(origin_source) = origin_source.as_deref() {
+            let missing = collect_missing_translation_entries(origin_source, &source);
+            if !missing.is_empty() {
+                if let Some(edit) = build_missing_entries_workspace_edit(
+                    &uri,
+                    &source,
+                    &missing,
+                    MissingEntryRenderMode::EmptyStub,
+                ) {
+                    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                        title: "Add missing keys and attributes from source".to_string(),
+                        kind: Some(CodeActionKind::QUICKFIX),
+                        edit: Some(edit),
+                        ..CodeAction::default()
+                    }));
+                }
+                if let Some(edit) = build_missing_entries_workspace_edit(
+                    &uri,
+                    &source,
+                    &missing,
+                    MissingEntryRenderMode::CopySource,
+                ) {
+                    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                        title: "Copy missing keys and attributes from source".to_string(),
+                        kind: Some(CodeActionKind::QUICKFIX),
+                        edit: Some(edit),
+                        ..CodeAction::default()
+                    }));
+                }
+            }
+        }
+
         if let Some(target) = find_generate_selector_target(&source, &path, params.range.start) {
             let Some(file_match) = workspace.file_match(&path) else {
                 return Ok(None);
@@ -1202,7 +1268,10 @@ impl LanguageServer for Backend {
             capabilities: ServerCapabilities {
                 code_action_provider: Some(CodeActionProviderCapability::Options(
                     CodeActionOptions {
-                        code_action_kinds: Some(vec![CodeActionKind::REFACTOR_REWRITE]),
+                        code_action_kinds: Some(vec![
+                            CodeActionKind::QUICKFIX,
+                            CodeActionKind::REFACTOR_REWRITE,
+                        ]),
                         resolve_provider: Some(false),
                         work_done_progress_options: Default::default(),
                     },
@@ -1803,6 +1872,7 @@ fn collect_document_diagnostics(
 ) -> Vec<Diagnostic> {
     let (resource, parse_errors) = parse_fluent_resource_with_errors(source);
     let mut diagnostics = collect_parse_error_diagnostics(source, &parse_errors);
+    diagnostics.extend(collect_lsp_copy_marker_diagnostics(source));
 
     if !settings.error_on_unsupported_plural_categories
         && !settings.warn_on_missing_plural_categories
@@ -1891,6 +1961,35 @@ fn collect_parse_error_diagnostics(
                 message: format!("Fluent syntax error: {error}"),
                 ..Diagnostic::default()
             })
+        })
+        .collect()
+}
+
+fn collect_lsp_copy_marker_diagnostics(source: &str) -> Vec<Diagnostic> {
+    source
+        .lines()
+        .enumerate()
+        .filter_map(|(line_index, line)| {
+            let marker_start = line.find(LSP_COPY_MARKER)?;
+            if line[..marker_start].trim().is_empty() && line[marker_start..].trim() == LSP_COPY_MARKER {
+                let start = u32::try_from(marker_start).ok()?;
+                let line = u32::try_from(line_index).ok()?;
+                Some(Diagnostic {
+                    range: Range::new(
+                        Position::new(line, start),
+                        Position::new(
+                            line,
+                            start + u32::try_from(LSP_COPY_MARKER.chars().count()).ok()?,
+                        ),
+                    ),
+                    severity: Some(DiagnosticSeverity::WARNING),
+                    source: Some("fluent-lsp".to_string()),
+                    message: "Entry still contains an `# [LSP-COPY]` marker".to_string(),
+                    ..Diagnostic::default()
+                })
+            } else {
+                None
+            }
         })
         .collect()
 }
@@ -4008,6 +4107,234 @@ fn origin_message_attributes(source: &str, message_key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MissingEntryRenderMode {
+    EmptyStub,
+    CopySource,
+}
+
+impl MissingTranslationEntries {
+    fn is_empty(&self) -> bool {
+        self.missing_messages.is_empty() && self.missing_attributes.is_empty()
+    }
+}
+
+fn collect_missing_translation_entries(
+    origin_source: &str,
+    translation_source: &str,
+) -> MissingTranslationEntries {
+    let templates = origin_message_templates(origin_source);
+    let existing = translation_message_attributes(translation_source);
+    let mut missing = MissingTranslationEntries::default();
+
+    for template in templates {
+        let Some(existing_attributes) = existing.get(&template.key) else {
+            missing.missing_messages.push(template);
+            continue;
+        };
+        let attributes = template
+            .attributes
+            .iter()
+            .filter(|attribute| !existing_attributes.contains(attribute.key.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !attributes.is_empty() {
+            missing.missing_attributes.push(MissingAttributePatch {
+                message_key: template.key.clone(),
+                attributes,
+            });
+        }
+    }
+
+    missing
+}
+
+fn origin_message_templates(source: &str) -> Vec<OriginMessageTemplate> {
+    let resource = parse_fluent_resource(source);
+    resource
+        .body
+        .into_iter()
+        .filter_map(|entry| match entry {
+            Entry::Message(message) => {
+                let key = message.id.name.to_string();
+                let source = render_fluent_entry(source, &key)?;
+                let entry = Entry::Message(message.clone());
+                let attributes = message
+                    .attributes
+                    .iter()
+                    .filter_map(|attribute| {
+                        Some(OriginAttributeTemplate {
+                            key: attribute.id.name.to_string(),
+                            source: render_attribute_source(attribute.id.name, &entry)?,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                Some(OriginMessageTemplate {
+                    key,
+                    has_value: message.value.is_some(),
+                    attributes,
+                    source,
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn translation_message_attributes(source: &str) -> HashMap<String, HashSet<String>> {
+    let resource = parse_fluent_resource(source);
+    resource
+        .body
+        .into_iter()
+        .filter_map(|entry| match entry {
+            Entry::Message(message) => Some((
+                message.id.name.to_string(),
+                message
+                    .attributes
+                    .into_iter()
+                    .map(|attribute| attribute.id.name.to_string())
+                    .collect::<HashSet<_>>(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+fn build_missing_entries_workspace_edit(
+    uri: &Uri,
+    source: &str,
+    missing: &MissingTranslationEntries,
+    mode: MissingEntryRenderMode,
+) -> Option<WorkspaceEdit> {
+    let mut insertions = BTreeMap::<usize, String>::new();
+    for patch in &missing.missing_attributes {
+        let insertion = render_missing_attribute_patch(patch, mode);
+        let offset = message_block_insert_offset(source, &patch.message_key)?;
+        insertions
+            .entry(offset)
+            .and_modify(|existing| existing.push_str(&insertion))
+            .or_insert(insertion);
+    }
+
+    if !missing.missing_messages.is_empty() {
+        let insertion = render_missing_messages_appendix(source, &missing.missing_messages, mode);
+        insertions
+            .entry(source.len())
+            .and_modify(|existing| existing.push_str(&insertion))
+            .or_insert(insertion);
+    }
+
+    if insertions.is_empty() {
+        return None;
+    }
+    let edits = insertions
+        .into_iter()
+        .map(|(offset, insertion)| {
+            let range = byte_range_to_lsp_range(source, offset..offset)?;
+            Some(TextEdit::new(range, insertion))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), edits);
+    Some(WorkspaceEdit {
+        changes: Some(changes),
+        document_changes: None,
+        change_annotations: None,
+    })
+}
+
+fn render_missing_messages_appendix(
+    source: &str,
+    missing_messages: &[OriginMessageTemplate],
+    mode: MissingEntryRenderMode,
+) -> String {
+    let rendered = missing_messages
+        .iter()
+        .map(|message| render_missing_message(message, mode))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if source.trim().is_empty() {
+        rendered
+    } else if source.ends_with("\n\n") {
+        rendered
+    } else if source.ends_with('\n') {
+        format!("\n{rendered}")
+    } else {
+        format!("\n\n{rendered}")
+    }
+}
+
+fn render_missing_message(message: &OriginMessageTemplate, mode: MissingEntryRenderMode) -> String {
+    match mode {
+        MissingEntryRenderMode::EmptyStub => {
+            let mut rendered = if message.has_value {
+                format!("{} = {{ \"\" }}\n", message.key)
+            } else {
+                format!("{} =\n", message.key)
+            };
+            for attribute in &message.attributes {
+                rendered.push_str(&format!("    .{} =\n", attribute.key));
+            }
+            rendered
+        }
+        MissingEntryRenderMode::CopySource => {
+            let mut rendered = format!("{LSP_COPY_MARKER}\n{}", message.source);
+            if !rendered.ends_with('\n') {
+                rendered.push('\n');
+            }
+            rendered
+        }
+    }
+}
+
+fn render_missing_attribute_patch(
+    patch: &MissingAttributePatch,
+    mode: MissingEntryRenderMode,
+) -> String {
+    match mode {
+        MissingEntryRenderMode::EmptyStub => patch
+            .attributes
+            .iter()
+            .map(|attribute| format!("    .{} = {{ \"\" }}\n", attribute.key))
+            .collect::<String>(),
+        MissingEntryRenderMode::CopySource => patch
+            .attributes
+            .iter()
+            .map(|attribute| {
+                let mut rendered = format!("    {LSP_COPY_MARKER}\n");
+                for line in attribute.source.lines() {
+                    rendered.push_str("    ");
+                    rendered.push_str(line);
+                    rendered.push('\n');
+                }
+                rendered
+            })
+            .collect::<String>(),
+    }
+}
+
+fn message_block_insert_offset(source: &str, message_key: &str) -> Option<usize> {
+    let (_, end_line) = find_fluent_block_line_range(source, message_key)?;
+    end_of_line_offset(source, end_line)
+}
+
+fn end_of_line_offset(source: &str, line_index: usize) -> Option<usize> {
+    let mut current_line = 0usize;
+    let mut offset = 0usize;
+    for line in source.split_inclusive('\n') {
+        if current_line == line_index {
+            return Some(offset + line.len());
+        }
+        offset += line.len();
+        current_line += 1;
+    }
+    if current_line == line_index {
+        Some(source.len())
+    } else {
+        None
+    }
+}
+
 fn find_fluent_pattern<'a>(
     resource: &'a Resource<&'a str>,
     key: &str,
@@ -4106,7 +4433,7 @@ fn find_fluent_block_line_range(source: &str, key: &str) -> Option<(usize, usize
             if indent <= start_indent {
                 break;
             }
-        } else if indent == 0 || trimmed.starts_with('.') {
+        } else if indent == 0 {
             break;
         }
 
@@ -4731,6 +5058,131 @@ mod tests {
     }
 
     #[test]
+    fn detects_missing_messages_and_attributes_from_origin() {
+        let origin = "hello = Hello\n\
+download-action =\n\
+    .label = Download\n\
+    .tooltip = Download this build\n\
+";
+        let translation = "hello = Hola\n\
+download-action =\n\
+    .label = Descargar\n\
+";
+
+        let missing = collect_missing_translation_entries(origin, translation);
+        assert!(missing.missing_messages.is_empty());
+        assert_eq!(missing.missing_attributes.len(), 1);
+        assert_eq!(missing.missing_attributes[0].message_key, "download-action");
+        assert_eq!(
+            missing.missing_attributes[0]
+                .attributes
+                .iter()
+                .map(|attribute| attribute.key.clone())
+                .collect::<Vec<_>>(),
+            vec!["tooltip".to_string()]
+        );
+    }
+
+    #[test]
+    fn preserves_origin_order_for_missing_message_appendix() {
+        let origin = "alpha = Alpha\nbeta = Beta\ngamma = Gamma\n";
+        let translation = "alpha = Alfa\n";
+
+        let missing = collect_missing_translation_entries(origin, translation);
+        assert_eq!(
+            missing
+                .missing_messages
+                .iter()
+                .map(|message| message.key.clone())
+                .collect::<Vec<_>>(),
+            vec!["beta".to_string(), "gamma".to_string()]
+        );
+    }
+
+    #[test]
+    fn builds_empty_stub_edit_for_missing_messages_and_attributes() {
+        let origin = "hello = Hello\n\
+download-action =\n\
+    .label = Download\n\
+    .tooltip = Download this build\n\
+";
+        let translation = "download-action =\n    .label = Descargar\n";
+        let missing = collect_missing_translation_entries(origin, translation);
+        let edit = build_missing_entries_workspace_edit(
+            &Uri::from_file_path("/tmp/app.ftl").unwrap(),
+            translation,
+            &missing,
+            MissingEntryRenderMode::EmptyStub,
+        )
+        .unwrap();
+        let updated = apply_workspace_edit_to_source(translation, &edit);
+
+        assert_eq!(
+            updated,
+            "download-action =\n    .label = Descargar\n    .tooltip = { \"\" }\n\nhello = { \"\" }\n"
+        );
+        assert_fluent_source_parses(&updated);
+    }
+
+    #[test]
+    fn builds_copy_edit_with_marker_for_missing_messages_and_attributes() {
+        let origin = "hello = Hello\n\
+download-action =\n\
+    .label = Download\n\
+    .tooltip = Download this build\n\
+";
+        let translation = "download-action =\n    .label = Descargar\n";
+        let missing = collect_missing_translation_entries(origin, translation);
+        let edit = build_missing_entries_workspace_edit(
+            &Uri::from_file_path("/tmp/app.ftl").unwrap(),
+            translation,
+            &missing,
+            MissingEntryRenderMode::CopySource,
+        )
+        .unwrap();
+        let updated = apply_workspace_edit_to_source(translation, &edit);
+
+        assert_eq!(
+            updated,
+            "download-action =\n    .label = Descargar\n    # [LSP-COPY]\n    .tooltip = Download this build\n\n# [LSP-COPY]\nhello = Hello\n"
+        );
+        assert_fluent_source_parses(&updated);
+        assert_eq!(
+            render_fluent_preview_text(&updated, "hello", None).as_deref(),
+            Some("Hello")
+        );
+        assert_eq!(
+            render_fluent_preview_text(&updated, "download-action.tooltip", None).as_deref(),
+            Some("Download this build")
+        );
+    }
+
+    #[test]
+    fn lsp_copy_marker_diagnostics_cover_top_level_and_attribute_markers_only() {
+        let source = concat!(
+            "# [LSP-COPY]\n",
+            "hello = Hello\n",
+            "\n",
+            "download-action =\n",
+            "    .label = Descargar\n",
+            "    # [LSP-COPY]\n",
+            "    .tooltip = Download this build\n",
+            "# Normal translator comment\n",
+        );
+        let diagnostics = collect_lsp_copy_marker_diagnostics(source);
+
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].range.start, Position::new(0, 0));
+        assert_eq!(diagnostics[1].range.start, Position::new(5, 4));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.message
+                    == "Entry still contains an `# [LSP-COPY]` marker")
+        );
+    }
+
+    #[test]
     fn renders_fluent_entry_with_comments() {
         let source = "# Shown on first launch\nwelcome-title = Welcome\n# Product naming\n# Keep in title case\n-brand-name = Nightly\n";
 
@@ -4868,6 +5320,40 @@ mod tests {
         );
         assert_eq!(rendered.matches("---").count(), 0);
         assert_eq!(rendered, "```ftl\nSave\n```");
+    }
+
+    fn assert_fluent_source_parses(source: &str) {
+        if let Err((_, errors)) = parser::parse(source) {
+            panic!("failed to parse Fluent source with {errors:?}\n{source}");
+        }
+    }
+
+    fn apply_workspace_edit_to_source(source: &str, edit: &WorkspaceEdit) -> String {
+        let mut updated = source.to_string();
+        let mut edits = edit
+            .changes
+            .as_ref()
+            .and_then(|changes| changes.values().next())
+            .cloned()
+            .unwrap_or_default();
+        edits.sort_by_key(|text_edit| {
+            (
+                std::cmp::Reverse(text_edit.range.start.line),
+                std::cmp::Reverse(text_edit.range.start.character),
+                std::cmp::Reverse(text_edit.range.end.line),
+                std::cmp::Reverse(text_edit.range.end.character),
+            )
+        });
+
+        for text_edit in edits {
+            let start = position_to_byte_index(&updated, text_edit.range.start)
+                .expect("text edit start should map into source");
+            let end = position_to_byte_index(&updated, text_edit.range.end)
+                .expect("text edit end should map into source");
+            updated.replace_range(start..end, &text_edit.new_text);
+        }
+
+        updated
     }
 
     #[test]

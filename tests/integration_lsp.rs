@@ -26,7 +26,9 @@ struct LspProcess {
 
 impl LspProcess {
     fn start() -> Self {
-        let serial_guard = lsp_process_mutex().lock().unwrap();
+        let serial_guard = lsp_process_mutex()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut child = Command::new(env!("CARGO_BIN_EXE_fluent-lsp"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -387,6 +389,164 @@ fn completion_returns_empty_results_for_unmatched_prefixes() {
 
     let labels = request_completion_labels(&mut lsp, 22, &app_path, position_after(source, "zzz"));
     assert!(labels.is_empty());
+}
+
+#[test]
+fn code_action_fills_missing_translation_entries_with_parseable_stubs() {
+    let workspace = missing_entry_workspace();
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 30);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        31,
+        &source_path,
+        position_of(&source_text, "hello = Hola Mundo"),
+    );
+    let action = find_code_action(&actions, "Add missing keys and attributes from source");
+    assert_eq!(action["kind"], Value::String("quickfix".to_string()));
+
+    let updated = apply_code_action_edit(
+        &source_text,
+        action,
+        &format!("file://{}", source_path.display()),
+    );
+    assert_fluent_parses(&updated);
+    assert!(updated.contains("    .tooltip = { \"\" }\n"));
+    assert!(updated.contains("\n\nsync-status = { \"\" }\n"));
+    assert_eq!(
+        render_fluent_preview_text(&updated, "hello", None).as_deref(),
+        Some("Hola Mundo")
+    );
+}
+
+#[test]
+fn code_action_copies_missing_translation_entries_with_markers() {
+    let workspace = missing_entry_workspace();
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 40);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        41,
+        &source_path,
+        position_of(&source_text, "hello = Hola Mundo"),
+    );
+    let action = find_code_action(&actions, "Copy missing keys and attributes from source");
+    assert_eq!(action["kind"], Value::String("quickfix".to_string()));
+
+    let updated = apply_code_action_edit(
+        &source_text,
+        action,
+        &format!("file://{}", source_path.display()),
+    );
+    assert_fluent_parses(&updated);
+    assert_eq!(updated.matches("# [LSP-COPY]").count(), 2);
+    assert!(updated.contains("    # [LSP-COPY]\n    .tooltip = Save this file\n"));
+    assert!(updated.contains("\n\n# [LSP-COPY]\nsync-status = Sync ready\n"));
+    assert_eq!(
+        render_fluent_preview_text(&updated, "hello", None).as_deref(),
+        Some("Hola Mundo")
+    );
+    assert_eq!(
+        render_fluent_preview_text(&updated, "menu-save.tooltip", None).as_deref(),
+        render_fluent_preview_text(&origin_text, "menu-save.tooltip", None).as_deref()
+    );
+    assert_eq!(
+        render_fluent_preview_text(&updated, "sync-status", None).as_deref(),
+        render_fluent_preview_text(&origin_text, "sync-status", None).as_deref()
+    );
+}
+
+#[test]
+fn whole_file_missing_entry_actions_are_absent_when_translation_is_complete() {
+    let workspace = missing_entry_workspace();
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = concat!(
+        "hello = Hola Mundo\n",
+        "menu-save =\n",
+        "    .label = Guardar\n",
+        "    .tooltip = Guarda este archivo\n",
+        "\n",
+        "sync-status = Sincronizacion lista\n",
+    );
+    std::fs::write(&source_path, source_text).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 50);
+    open_document(&mut lsp, &source_path, source_text);
+
+    let actions = request_code_actions_allow_empty(
+        &mut lsp,
+        51,
+        &source_path,
+        position_of(source_text, "hello = Hola Mundo"),
+    );
+    assert!(
+        actions.iter().all(|action| {
+            action["title"] != Value::String("Add missing keys and attributes from source".to_string())
+                && action["title"]
+                    != Value::String("Copy missing keys and attributes from source".to_string())
+        }),
+        "unexpected whole-file missing-entry action(s): {actions:?}"
+    );
+}
+
+#[test]
+fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
+    let workspace = copy_marker_workspace();
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let cleaned = concat!(
+        "hello = Hola Mundo\n",
+        "\n",
+        "download-action =\n",
+        "    .label = Descargar\n",
+        "    .tooltip = Download this build\n",
+    );
+
+    let mut lsp = initialized_lsp(workspace.path(), 60);
+    open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let diagnostics = notification["params"]["diagnostics"]
+        .as_array()
+        .expect("expected diagnostics array");
+    let marker_diagnostics = diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic["message"]
+                == Value::String("Entry still contains an `# [LSP-COPY]` marker".to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(marker_diagnostics.len(), 2);
+    assert_fluent_parses(&source_text);
+    assert_eq!(
+        marker_diagnostics[0]["message"],
+        Value::String("Entry still contains an `# [LSP-COPY]` marker".to_string())
+    );
+    assert_eq!(marker_diagnostics[0]["range"]["start"]["line"], Value::from(0));
+    assert_eq!(marker_diagnostics[0]["range"]["start"]["character"], Value::from(0));
+    assert_eq!(marker_diagnostics[1]["range"]["start"]["line"], Value::from(5));
+    assert_eq!(marker_diagnostics[1]["range"]["start"]["character"], Value::from(4));
+
+    send_change_document(&mut lsp, &source_path, 2, cleaned);
+    send_save_document(&mut lsp, &source_path, Some(cleaned));
+    let cleared = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(cleared["params"]["diagnostics"], Value::Array(Vec::new()));
+    assert_fluent_parses(cleaned);
+    assert_eq!(
+        render_fluent_preview_text(cleaned, "download-action.tooltip", None).as_deref(),
+        Some("Download this build")
+    );
 }
 
 #[test]
@@ -1010,6 +1170,7 @@ fn code_action_generates_prefix_selector_by_default() {
         &source_path,
         position_of(&source_text, "coins-line"),
     );
+    let actions = rewrite_actions_only(actions);
     assert_eq!(actions.len(), 3);
     let action = find_code_action(&actions, "Generate number selector (prefix)");
     assert_eq!(
@@ -1044,6 +1205,7 @@ fn code_action_returns_all_styles_for_variable_occurrence() {
         &source_path,
         position_of(&source_text, "{ $coins }"),
     );
+    let actions = rewrite_actions_only(actions);
     assert_eq!(actions.len(), 3);
     assert!(actions.iter().any(|action| action["title"]
         == Value::String("Generate number selector from $coins (prefix)".to_string())));
@@ -1079,6 +1241,7 @@ fn code_action_uses_client_selector_style_setting() {
         &source_path,
         position_of(&source_text, "{ $coins }"),
     );
+    let actions = rewrite_actions_only(actions);
     let action = &actions[0];
     assert_eq!(
         action["title"],
@@ -1127,6 +1290,7 @@ fn file_config_selector_style_overrides_client_setting() {
         &source_path,
         position_of(&source_text, "coins-line"),
     );
+    let actions = rewrite_actions_only(actions);
     let action = &actions[0];
     assert_eq!(
         action["title"],
@@ -1197,6 +1361,7 @@ fn code_action_generates_whole_snippet_when_no_variable_exists() {
         &source_path,
         position_of(&source_text, "plain-count"),
     );
+    let actions = rewrite_actions_only(actions);
     assert_eq!(actions.len(), 1);
     assert_eq!(
         actions[0]["title"],
@@ -1267,6 +1432,7 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
         &source_path,
         position_of(&source_text, "formatted-download"),
     );
+    let key_actions = rewrite_actions_only(key_actions);
     assert_eq!(key_actions.len(), 3);
     let key_prefix = find_code_action(&key_actions, "Generate number selector (prefix)");
     assert_eq!(
@@ -1283,6 +1449,7 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
         &source_path,
         position_of(&source_text, "$downloads"),
     );
+    let variable_actions = rewrite_actions_only(variable_actions);
     assert_eq!(variable_actions.len(), 3);
     assert_eq!(
         find_code_action(&variable_actions, "Generate number selector from $downloads (prefix)")["edit"]["documentChanges"][0]["edits"][0]["snippet"],
@@ -1298,6 +1465,7 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
         &source_path,
         position_of(&source_text, "NUMBER($downloads)"),
     );
+    let function_actions = rewrite_actions_only(function_actions);
     assert_eq!(function_actions.len(), 3);
     assert_eq!(
         find_code_action(&function_actions, "Generate number selector from NUMBER($downloads) (prefix)")["edit"]["documentChanges"][0]["edits"][0]["snippet"],
@@ -1313,6 +1481,7 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
         &source_path,
         position_of(&source_text, "WRAP(NUMBER($downloads))"),
     );
+    let deep_variable_actions = rewrite_actions_only(deep_variable_actions);
     assert_eq!(deep_variable_actions.len(), 3);
     assert_eq!(
         find_code_action(&deep_variable_actions, "Generate number selector from WRAP(NUMBER($downloads)) (prefix)")["edit"]["documentChanges"][0]["edits"][0]["snippet"],
@@ -1452,6 +1621,7 @@ fn code_action_bare_suffix_like_selector_only_offers_prefix() {
         &source_path,
         position_of(&source_text, "bare-suffix-coins"),
     );
+    let actions = rewrite_actions_only(actions);
     assert_eq!(actions.len(), 1);
     let action = find_code_action(&actions, "Convert selector to prefix form");
     assert_eq!(
@@ -1612,6 +1782,7 @@ fn code_action_is_hidden_for_ambiguous_message_keys() {
         &source_path,
         position_of(&source_text, "range-summary"),
     );
+    let actions = rewrite_actions_only(actions);
     assert!(actions.is_empty());
 
     let nested_actions = request_code_actions_allow_empty(
@@ -1620,6 +1791,7 @@ fn code_action_is_hidden_for_ambiguous_message_keys() {
         &source_path,
         position_of(&source_text, "nested-coins"),
     );
+    let nested_actions = rewrite_actions_only(nested_actions);
     assert!(nested_actions.is_empty());
 }
 
@@ -2079,9 +2251,17 @@ fn initialized_lsp_with_capabilities(
 
     let initialize = lsp.recv();
     assert_eq!(initialize["id"], request_id);
-    assert_eq!(
-        initialize["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"][0],
-        Value::String("refactor.rewrite".to_string())
+    let kinds = initialize["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        kinds.contains(&Value::String("quickfix".to_string())),
+        "missing quickfix code-action kind: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&Value::String("refactor.rewrite".to_string())),
+        "missing rewrite code-action kind: {kinds:?}"
     );
 
     lsp.send(&json!({
@@ -2500,6 +2680,142 @@ download-count = Download count\n",
     )
     .unwrap();
     temp
+}
+
+fn missing_entry_workspace() -> TempDir {
+    let temp = tempdir().unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/es")).unwrap();
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/en/app.ftl"),
+        concat!(
+            "hello = Hello World\n",
+            "\n",
+            "menu-save =\n",
+            "    .label = Save\n",
+            "    .tooltip = Save this file\n",
+            "\n",
+            "sync-status = Sync ready\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/es/app.ftl"),
+        concat!(
+            "hello = Hola Mundo\n",
+            "menu-save =\n",
+            "    .label = Guardar\n",
+        ),
+    )
+    .unwrap();
+    temp
+}
+
+fn copy_marker_workspace() -> TempDir {
+    let temp = tempdir().unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/es")).unwrap();
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/en/app.ftl"),
+        concat!(
+            "hello = Hello World\n",
+            "\n",
+            "download-action =\n",
+            "    .label = Download\n",
+            "    .tooltip = Download this build\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/es/app.ftl"),
+        concat!(
+            "# [LSP-COPY]\n",
+            "hello = Hola Mundo\n",
+            "\n",
+            "download-action =\n",
+            "    .label = Descargar\n",
+            "    # [LSP-COPY]\n",
+            "    .tooltip = Download this build\n",
+        ),
+    )
+    .unwrap();
+    temp
+}
+
+fn apply_code_action_edit(source: &str, action: &Value, target_uri: &str) -> String {
+    let mut updated = source.to_string();
+    let mut edits = action["edit"]["changes"][target_uri]
+        .as_array()
+        .cloned()
+        .expect("expected workspace edit changes");
+    edits.sort_by_key(|text_edit| {
+        (
+            std::cmp::Reverse(text_edit["range"]["start"]["line"].as_u64().unwrap()),
+            std::cmp::Reverse(text_edit["range"]["start"]["character"].as_u64().unwrap()),
+            std::cmp::Reverse(text_edit["range"]["end"]["line"].as_u64().unwrap()),
+            std::cmp::Reverse(text_edit["range"]["end"]["character"].as_u64().unwrap()),
+        )
+    });
+
+    for text_edit in edits {
+        let start = position_to_offset(
+            &updated,
+            (
+                text_edit["range"]["start"]["line"].as_u64().unwrap() as u32,
+                text_edit["range"]["start"]["character"].as_u64().unwrap() as u32,
+            ),
+        );
+        let end = position_to_offset(
+            &updated,
+            (
+                text_edit["range"]["end"]["line"].as_u64().unwrap() as u32,
+                text_edit["range"]["end"]["character"].as_u64().unwrap() as u32,
+            ),
+        );
+        updated.replace_range(start..end, text_edit["newText"].as_str().unwrap());
+    }
+
+    updated
+}
+
+fn rewrite_actions_only(actions: Vec<Value>) -> Vec<Value> {
+    actions
+        .into_iter()
+        .filter(|action| action["kind"] == Value::String("refactor.rewrite".to_string()))
+        .collect()
+}
+
+fn position_to_offset(source: &str, position: (u32, u32)) -> usize {
+    let mut offset = 0usize;
+    let mut line = 0u32;
+    let mut character = 0u32;
+    for ch in source.chars() {
+        if line == position.0 && character == position.1 {
+            return offset;
+        }
+        offset += ch.len_utf8();
+        if ch == '\n' {
+            line += 1;
+            character = 0;
+        } else {
+            character += 1;
+        }
+    }
+    if line == position.0 && character == position.1 {
+        offset
+    } else {
+        panic!("position {position:?} is outside source")
+    }
 }
 
 fn position_of(source: &str, needle: &str) -> (u32, u32) {

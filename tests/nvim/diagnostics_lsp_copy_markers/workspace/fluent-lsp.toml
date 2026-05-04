@@ -1,0 +1,2 @@
+origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]

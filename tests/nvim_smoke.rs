@@ -521,9 +521,73 @@ fn nvim_smoke_code_action_generate_selector() {
 }
 
 #[test]
+fn nvim_smoke_code_action_fill_missing_keys() {
+    let result = run_scenario("code_action_fill_missing_keys");
+    assert_eq!(result["ok"], Value::Bool(true));
+
+    let final_buffer = result["final_buffer"].as_str().unwrap();
+    assert_fluent_parses(final_buffer);
+    assert_eq!(
+        final_buffer,
+        "hello = Hola Mundo\nmenu-save =\n    .label = Guardar\n    .tooltip = { \"\" }\n\nsync-status = { \"\" }\n\n"
+    );
+    assert_eq!(
+        render_fluent_preview_text(final_buffer, "hello", None).as_deref(),
+        Some("Hola Mundo")
+    );
+}
+
+#[test]
+fn nvim_smoke_code_action_copy_missing_keys() {
+    let result = run_scenario("code_action_copy_missing_keys");
+    assert_eq!(result["ok"], Value::Bool(true));
+
+    let final_buffer = result["final_buffer"].as_str().unwrap();
+    let origin = scenario_source("code_action_copy_missing_keys", "locales/en/app.ftl");
+    assert_fluent_parses(final_buffer);
+    assert_eq!(
+        final_buffer,
+        "hello = Hola Mundo\nmenu-save =\n    .label = Guardar\n    # [LSP-COPY]\n    .tooltip = Save this file\n\n# [LSP-COPY]\nsync-status = Sync ready\n\n"
+    );
+    assert_eq!(final_buffer.matches("# [LSP-COPY]").count(), 2);
+    assert_eq!(
+        render_fluent_preview_text(final_buffer, "hello", None).as_deref(),
+        Some("Hola Mundo")
+    );
+    assert_eq!(
+        render_fluent_preview_text(final_buffer, "menu-save.tooltip", None).as_deref(),
+        render_fluent_preview_text(&origin, "menu-save.tooltip", None).as_deref()
+    );
+    assert_eq!(
+        render_fluent_preview_text(final_buffer, "sync-status", None).as_deref(),
+        render_fluent_preview_text(&origin, "sync-status", None).as_deref()
+    );
+}
+
+#[test]
 fn nvim_smoke_diagnostics_numeric_selectors() {
     let result = run_scenario("diagnostics_numeric_selectors");
     assert_eq!(result["ok"], Value::Bool(true));
+}
+
+#[test]
+fn nvim_smoke_diagnostics_lsp_copy_markers() {
+    let result = run_scenario("diagnostics_lsp_copy_markers");
+    assert_eq!(result["ok"], Value::Bool(true));
+
+    let initial_messages = result["initial_messages"].as_array().unwrap();
+    assert_eq!(initial_messages.len(), 2);
+    assert!(initial_messages.iter().all(|message| {
+        message == "Entry still contains an `# [LSP-COPY]` marker"
+    }));
+
+    let final_buffer = result["final_buffer"].as_str().unwrap();
+    assert_fluent_parses(final_buffer);
+    assert_eq!(final_buffer.matches("# [LSP-COPY]").count(), 0);
+    assert_eq!(
+        render_fluent_preview_text(final_buffer, "download-action.tooltip", None).as_deref(),
+        Some("Download this build")
+    );
 }
 
 #[test]

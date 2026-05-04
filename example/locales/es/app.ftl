@@ -94,3 +94,9 @@ nested-whole-coins =
         }
        *[other] Elle tiene { $coins } monedas.
     }
+
+source-copy-card =
+    .label = Revisar copia de origen
+
+# [LSP-COPY]
+release-notes = Latest release notes

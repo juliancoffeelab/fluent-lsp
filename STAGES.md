@@ -56,3 +56,44 @@
 
 - Architectural decision:
   I did not add any new parsing or completion libraries. The completion provider is built on the existing workspace/file-mask resolution and the vendored `fluent-syntax` parser, which keeps the feature aligned with the rest of the server.
+
+## Stage 3: Whole-file missing-entry actions and `# [LSP-COPY]` diagnostics
+
+- Problem:
+  The server had no shared diff model for “what is present in origin but still missing in this translation file,” so there was no safe way to build either empty-stub or source-copy actions.
+- Solution:
+  I added a parsed missing-entry diff in `src/lib.rs` that separates wholly missing messages from missing attributes on existing messages. Both the empty-stub quickfix and the source-copy quickfix now reuse that same diff, which keeps the feature behavior deterministic and origin-order stable.
+
+- Problem:
+  Naive empty stubs like `hello =` or `.tooltip =` are not valid Fluent when the message or attribute needs an actual value pattern.
+- Solution:
+  Value-bearing stubs now render as explicit empty patterns: `= { "" }`. Messages that only exist to hold attributes still render as `key =` with indented attribute stubs beneath them. That keeps whole-file edits parseable without copying source text.
+
+- Problem:
+  Attribute patches on the last message in a file can share the same insertion offset as the appended missing-message section, which makes edit ordering ambiguous for clients.
+- Solution:
+  I changed workspace-edit generation to group insertions by byte offset and concatenate same-position inserts before emitting `TextEdit`s. That removed ordering ambiguity both in tests and in real clients.
+
+- Problem:
+  The first version of the block-range helper stopped a message block at the first attribute line, so missing attributes were being inserted above existing attributes instead of at the end of the message.
+- Solution:
+  I corrected `find_fluent_block_line_range` for message keys so indented attribute lines remain part of the containing message block. That fix also makes later message-scoped edits more reliable.
+
+- Problem:
+  The integration and Neovim smoke coverage needed to prove more than “an edit string exists”; the TODO required end-to-end parseability, user-visible semantic stability, and self-contained scenario fixtures.
+- Solution:
+  I added:
+  - unit coverage for diff detection, stub rendering, source-copy rendering, and marker diagnostics
+  - raw LSP integration tests for whole-file fill/copy actions and save-driven marker warnings
+  - self-contained Neovim smoke scenarios for:
+    - `code_action_fill_missing_keys`
+    - `code_action_copy_missing_keys`
+    - `diagnostics_lsp_copy_markers`
+
+- Problem:
+  Rust string line continuations silently stripped indentation from a few new multi-line integration fixtures, which made some attribute examples invalid Fluent.
+- Solution:
+  I rewrote those helper fixtures with `concat!` so the literal spaces in attribute lines survive exactly as written.
+
+- Architectural decision:
+  I did not add or vendor any new libraries for this phase. The implementation stays on top of the existing vendored `fluent-syntax` parser, standard LSP `WorkspaceEdit` / `publishDiagnostics`, and the current Neovim smoke harness.

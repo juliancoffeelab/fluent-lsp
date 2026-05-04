@@ -23,6 +23,10 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - Request a code action on `whole-coins`, `prefix-coins`, or `suffix-coins` to exercise selector rewrite actions between the three shapes
   - Request a code action on `bare-suffix-coins` to verify only `Convert selector to prefix form` is distinct
   - Request a code action inside the `[female]` branch of `nested-whole-coins` to verify nested selector rewrites target the local branch pattern instead of the whole message
+  - Type `miss` on a new line and request completion to pull `missing-demo` from the English origin file
+  - Request `Add missing keys and attributes from source` to fill the missing `missing-demo` entry and the missing `source-copy-card.tooltip` attribute with parseable stubs
+  - Request `Copy missing keys and attributes from source` to copy the same origin entries directly into Spanish with `# [LSP-COPY]` markers
+  - Save the file while `release-notes` still has its `# [LSP-COPY]` marker to verify the warning diagnostic, then remove the marker and save again to clear it
 - `example/locales/en/app.ftl`
   - Run references from `welcome-title` or `.label`
   - Hover `install-hint` on the key line for default selector choices, or inside a specific branch for explicit selector choices
@@ -63,4 +67,5 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - `warn_on_missing_plural_categories = true`
   - `warn_on_selector_style_mismatch = true`
 - Numeric-selector diagnostics are published on save, not on every edit, so use `:write` or an equivalent save action after changing a file.
+- The `# [LSP-COPY]` warning also refreshes on save, so save after translating or removing copied source blocks.
 - This example workspace is intentionally small, but it keeps multiple translation targets where they are useful for trying references and cross-locale behavior.

@@ -120,3 +120,14 @@ nested-whole-coins =
         }
        *[other] They have { $coins } coins.
     }
+
+# Whole-file missing-entry quickfix example: this key is intentionally absent in Spanish
+missing-demo = Fill this from the source quickfix.
+
+# Attribute-level source-copy example
+source-copy-card =
+    .label = Review source copy
+    .tooltip = Translate this action later
+
+# Marker-warning example for copied source text
+release-notes = Latest release notes
