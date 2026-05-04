@@ -95,6 +95,8 @@ nested-whole-coins =
        *[other] Elle tiene { $coins } monedas.
     }
 
+single-copy-demo = { "" }
+
 source-copy-card =
     .label = Revisar copia de origen
 

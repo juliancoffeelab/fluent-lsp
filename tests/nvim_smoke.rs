@@ -565,6 +565,39 @@ fn nvim_smoke_code_action_copy_missing_keys() {
 }
 
 #[test]
+fn nvim_smoke_code_action_copy_single_key() {
+    let result = run_scenario("code_action_copy_single_key");
+    assert_eq!(result["ok"], Value::Bool(true));
+
+    let origin = scenario_source("code_action_copy_single_key", "locales/en/app.ftl");
+
+    let copied_key_buffer = result["copied_key_buffer"].as_str().unwrap();
+    assert_fluent_parses(copied_key_buffer);
+    assert_eq!(
+        copied_key_buffer,
+        "# [LSP-COPY]\nhello = Hello World\ndownload-action =\n    .label = Descargar\n\nsync-status = { \"\" }\n"
+    );
+    assert_eq!(copied_key_buffer.matches("# [LSP-COPY]").count(), 1);
+    assert_eq!(
+        render_fluent_preview_text(copied_key_buffer, "hello", None).as_deref(),
+        render_fluent_preview_text(&origin, "hello", None).as_deref()
+    );
+
+    let copied_attribute_buffer = result["copied_attribute_buffer"].as_str().unwrap();
+    assert_fluent_parses(copied_attribute_buffer);
+    assert_eq!(
+        copied_attribute_buffer,
+        "hello = { \"\" }\ndownload-action =\n    .label = Descargar\n    # [LSP-COPY]\n    .tooltip = Download this build\n\nsync-status = { \"\" }\n"
+    );
+    assert_eq!(copied_attribute_buffer.matches("# [LSP-COPY]").count(), 1);
+    assert_eq!(
+        render_fluent_preview_text(copied_attribute_buffer, "download-action.tooltip", None)
+            .as_deref(),
+        render_fluent_preview_text(&origin, "download-action.tooltip", None).as_deref()
+    );
+}
+
+#[test]
 fn nvim_smoke_diagnostics_numeric_selectors() {
     let result = run_scenario("diagnostics_numeric_selectors");
     assert_eq!(result["ok"], Value::Bool(true));

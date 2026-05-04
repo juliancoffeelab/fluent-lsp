@@ -26,6 +26,8 @@ The top-level [fluent-lsp.toml](/home/codex/workspace/fluent-lsp/fluent-lsp.toml
   - Type `miss` on a new line and request completion to pull `missing-demo` from the English origin file
   - Request `Add missing keys and attributes from source` to fill the missing `missing-demo` entry and the missing `source-copy-card.tooltip` attribute with parseable stubs
   - Request `Copy missing keys and attributes from source` to copy the same origin entries directly into Spanish with `# [LSP-COPY]` markers
+  - Request `Copy \`single-copy-demo\` from source` on the `single-copy-demo = { "" }` stub to replace just that one entry in place
+  - Request `Copy missing attributes for \`source-copy-card\` from source` to pull only the missing `.tooltip` attribute without touching other incomplete entries
   - Save the file while `release-notes` still has its `# [LSP-COPY]` marker to verify the warning diagnostic, then remove the marker and save again to clear it
 - `example/locales/en/app.ftl`
   - Run references from `welcome-title` or `.label`

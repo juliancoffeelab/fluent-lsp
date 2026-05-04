@@ -124,6 +124,9 @@ nested-whole-coins =
 # Whole-file missing-entry quickfix example: this key is intentionally absent in Spanish
 missing-demo = Fill this from the source quickfix.
 
+# Single-message source-copy example: the Spanish file keeps this as an empty stub
+single-copy-demo = Copy this one message later.
+
 # Attribute-level source-copy example
 source-copy-card =
     .label = Review source copy

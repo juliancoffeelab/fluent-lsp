@@ -550,6 +550,117 @@ fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
 }
 
 #[test]
+fn code_action_copies_single_stub_message_without_touching_other_entries() {
+    let workspace = single_key_copy_workspace();
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 70);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        71,
+        &source_path,
+        position_of(&source_text, "hello = { \"\" }"),
+    );
+    let action = find_code_action(&actions, "Copy `hello` from source");
+    let updated = apply_code_action_edit(
+        &source_text,
+        action,
+        &format!("file://{}", source_path.display()),
+    );
+
+    assert_fluent_parses(&updated);
+    assert!(updated.starts_with("# [LSP-COPY]\nhello = Hello World\n"));
+    assert!(updated.contains("download-action =\n    .label = Descargar\n"));
+    assert!(updated.contains("sync-status = { \"\" }\n"));
+    assert_eq!(updated.matches("# [LSP-COPY]").count(), 1);
+    assert_eq!(
+        render_fluent_preview_text(&updated, "hello", None).as_deref(),
+        render_fluent_preview_text(&origin_text, "hello", None).as_deref()
+    );
+}
+
+#[test]
+fn code_action_copies_missing_attributes_for_selected_message_only() {
+    let workspace = single_key_copy_workspace();
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 80);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        81,
+        &source_path,
+        position_of(&source_text, "download-action ="),
+    );
+    let action = find_code_action(&actions, "Copy missing attributes for `download-action` from source");
+    let updated = apply_code_action_edit(
+        &source_text,
+        action,
+        &format!("file://{}", source_path.display()),
+    );
+
+    assert_fluent_parses(&updated);
+    assert!(updated.contains("hello = { \"\" }\n"));
+    assert!(updated.contains("sync-status = { \"\" }\n"));
+    assert!(updated.contains("    # [LSP-COPY]\n    .tooltip = Download this build\n"));
+    assert_eq!(updated.matches("# [LSP-COPY]").count(), 1);
+    assert_eq!(
+        render_fluent_preview_text(&updated, "download-action.tooltip", None).as_deref(),
+        render_fluent_preview_text(&origin_text, "download-action.tooltip", None).as_deref()
+    );
+}
+
+#[test]
+fn single_message_copy_actions_are_absent_for_complete_entries() {
+    let workspace = single_key_copy_workspace();
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = concat!(
+        "hello = Hola Mundo\n",
+        "download-action =\n",
+        "    .label = Descargar\n",
+        "    .tooltip = Descarga esta build\n",
+        "\n",
+        "sync-status = Sincronizacion lista\n",
+    );
+    std::fs::write(&source_path, source_text).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 90);
+    open_document(&mut lsp, &source_path, source_text);
+
+    let hello_actions = request_code_actions_allow_empty(
+        &mut lsp,
+        91,
+        &source_path,
+        position_of(source_text, "hello = Hola Mundo"),
+    );
+    assert!(
+        hello_actions
+            .iter()
+            .all(|action| action["title"] != Value::String("Copy `hello` from source".to_string()))
+    );
+
+    let download_actions = request_code_actions_allow_empty(
+        &mut lsp,
+        92,
+        &source_path,
+        position_of(source_text, "download-action ="),
+    );
+    assert!(download_actions.iter().all(|action| {
+        action["title"]
+            != Value::String("Copy missing attributes for `download-action` from source".to_string())
+    }));
+}
+
+#[test]
 fn hover_from_translation_shows_local_formatted_messages() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
@@ -2746,6 +2857,41 @@ fn copy_marker_workspace() -> TempDir {
             "    .label = Descargar\n",
             "    # [LSP-COPY]\n",
             "    .tooltip = Download this build\n",
+        ),
+    )
+    .unwrap();
+    temp
+}
+
+fn single_key_copy_workspace() -> TempDir {
+    let temp = tempdir().unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/es")).unwrap();
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/en/app.ftl"),
+        concat!(
+            "hello = Hello World\n",
+            "download-action =\n",
+            "    .label = Download\n",
+            "    .tooltip = Download this build\n",
+            "\n",
+            "sync-status = Sync ready\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/es/app.ftl"),
+        concat!(
+            "hello = { \"\" }\n",
+            "download-action =\n",
+            "    .label = Descargar\n",
+            "\n",
+            "sync-status = { \"\" }\n",
         ),
     )
     .unwrap();

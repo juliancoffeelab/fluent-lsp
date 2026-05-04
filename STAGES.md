@@ -97,3 +97,36 @@
 
 - Architectural decision:
   I did not add or vendor any new libraries for this phase. The implementation stays on top of the existing vendored `fluent-syntax` parser, standard LSP `WorkspaceEdit` / `publishDiagnostics`, and the current Neovim smoke harness.
+
+## Stage 4: Single-message source-copy quickfixes
+
+- Problem:
+  The whole-file source-copy action is useful for bulk progress, but it is too coarse once a translator only wants to replace one generated stub or pull one missing attribute for the current message.
+- Solution:
+  I added message-scoped quickfixes that are offered only when the cursor is on a matching translation message key:
+  - `Copy \`<key>\` from source` replaces one local empty stub with the origin message plus a top-level marker
+  - `Copy missing attributes for \`<key>\` from source` inserts only the missing attributes for that selected message
+
+- Problem:
+  After Stage 3, a “missing message” is represented by a parseable empty stub like `= { "" }`, not by an actually absent entry. The targeted action therefore cannot use the whole-file “missing entry” diff alone.
+- Solution:
+  I added stub detection by comparing the current rendered local entry against the exact Stage-3 empty-stub shape for that origin message. That lets the targeted copy action identify one intentionally empty placeholder and replace it in place without guessing from loose text patterns.
+
+- Problem:
+  Replacing a single stub message is a different edit shape from appending missing entries at the end of the file. The targeted action needs to rewrite only the selected message block and leave surrounding incomplete entries untouched.
+- Solution:
+  I added a message-block replacement edit builder that resolves the full byte span of the selected message and swaps just that block for the copied source text. Missing-attribute copies continue reusing the Stage-3 patching path, but now narrowed to one selected message.
+
+- Problem:
+  The integration and Neovim smoke coverage needed to prove that targeted copies stay local: copying `hello` must not also pull `sync-status`, and copying missing attributes for `download-action` must not rewrite unrelated stubs.
+- Solution:
+  I added:
+  - unit coverage for empty-stub detection and single-message replacement edits
+  - raw LSP integration tests for:
+    - copying one stub message in place
+    - copying only the missing attributes for one selected message
+    - suppressing both targeted actions once the selected entries are complete
+  - a dedicated Neovim smoke scenario, `tests/nvim/code_action_copy_single_key/`, that exercises both targeted actions in one self-contained workspace
+
+- Architectural decision:
+  I kept the targeted copy actions inside standard `textDocument/codeAction` responses with ordinary `WorkspaceEdit.changes`. No new dependencies or client-specific hooks were needed.

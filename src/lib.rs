@@ -833,6 +833,15 @@ impl Backend {
                     }));
                 }
             }
+            if let Some(action) = build_single_message_copy_code_action(
+                &uri,
+                &path,
+                &source,
+                origin_source,
+                params.range.start,
+            ) {
+                actions.push(CodeActionOrCommand::CodeAction(action));
+            }
         }
 
         if let Some(target) = find_generate_selector_target(&source, &path, params.range.start) {
@@ -4243,6 +4252,60 @@ fn build_missing_entries_workspace_edit(
     })
 }
 
+fn build_single_message_copy_code_action(
+    uri: &Uri,
+    path: &Path,
+    translation_source: &str,
+    origin_source: &str,
+    position: Position,
+) -> Option<CodeAction> {
+    let key = extract_definition_key(translation_source, path, position)?;
+    let (message_key, attribute_key) = split_fluent_key(&key);
+    if attribute_key.is_some() {
+        return None;
+    }
+
+    let template = origin_message_templates(origin_source)
+        .into_iter()
+        .find(|template| template.key == message_key)?;
+
+    if message_matches_empty_stub(translation_source, &template) {
+        let edit = build_replace_message_workspace_edit(
+            uri,
+            translation_source,
+            message_key,
+            render_missing_message(&template, MissingEntryRenderMode::CopySource),
+        )?;
+        return Some(CodeAction {
+            title: format!("Copy `{message_key}` from source"),
+            kind: Some(CodeActionKind::QUICKFIX),
+            edit: Some(edit),
+            ..CodeAction::default()
+        });
+    }
+
+    let missing = collect_missing_translation_entries(origin_source, translation_source);
+    let patch = missing
+        .missing_attributes
+        .into_iter()
+        .find(|patch| patch.message_key == message_key)?;
+    let edit = build_missing_entries_workspace_edit(
+        uri,
+        translation_source,
+        &MissingTranslationEntries {
+            missing_messages: Vec::new(),
+            missing_attributes: vec![patch],
+        },
+        MissingEntryRenderMode::CopySource,
+    )?;
+    Some(CodeAction {
+        title: format!("Copy missing attributes for `{message_key}` from source"),
+        kind: Some(CodeActionKind::QUICKFIX),
+        edit: Some(edit),
+        ..CodeAction::default()
+    })
+}
+
 fn render_missing_messages_appendix(
     source: &str,
     missing_messages: &[OriginMessageTemplate],
@@ -4333,6 +4396,51 @@ fn end_of_line_offset(source: &str, line_index: usize) -> Option<usize> {
     } else {
         None
     }
+}
+
+fn line_start_offset(source: &str, line_index: usize) -> Option<usize> {
+    if line_index == 0 {
+        return Some(0);
+    }
+
+    let mut current_line = 0usize;
+    let mut offset = 0usize;
+    for line in source.split_inclusive('\n') {
+        current_line += 1;
+        offset += line.len();
+        if current_line == line_index {
+            return Some(offset);
+        }
+    }
+    None
+}
+
+fn build_replace_message_workspace_edit(
+    uri: &Uri,
+    source: &str,
+    message_key: &str,
+    replacement: String,
+) -> Option<WorkspaceEdit> {
+    let (start_line, end_line) = find_fluent_block_line_range(source, message_key)?;
+    let start = line_start_offset(source, start_line)?;
+    let end = end_of_line_offset(source, end_line)?;
+    let range = byte_range_to_lsp_range(source, start..end)?;
+
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), vec![TextEdit::new(range, replacement)]);
+    Some(WorkspaceEdit {
+        changes: Some(changes),
+        document_changes: None,
+        change_annotations: None,
+    })
+}
+
+fn message_matches_empty_stub(source: &str, template: &OriginMessageTemplate) -> bool {
+    render_fluent_entry(source, &template.key)
+        .map(|entry| {
+            entry.trim_end() == render_missing_message(template, MissingEntryRenderMode::EmptyStub).trim_end()
+        })
+        .unwrap_or(false)
 }
 
 fn find_fluent_pattern<'a>(
@@ -5180,6 +5288,36 @@ download-action =\n\
                 .all(|diagnostic| diagnostic.message
                     == "Entry still contains an `# [LSP-COPY]` marker")
         );
+    }
+
+    #[test]
+    fn detects_empty_stub_message_for_single_copy_action() {
+        let origin = "hello = Hello World\n";
+        let template = origin_message_templates(origin).remove(0);
+        let translation = "hello = { \"\" }\n";
+
+        assert!(message_matches_empty_stub(translation, &template));
+        assert!(!message_matches_empty_stub("hello = Hola Mundo\n", &template));
+    }
+
+    #[test]
+    fn replaces_stub_message_with_source_copy_marker_block() {
+        let source = "hello = { \"\" }\n\
+sync-status = { \"\" }\n";
+        let edit = build_replace_message_workspace_edit(
+            &Uri::from_file_path("/tmp/app.ftl").unwrap(),
+            source,
+            "hello",
+            "# [LSP-COPY]\nhello = Hello World\n".to_string(),
+        )
+        .unwrap();
+        let updated = apply_workspace_edit_to_source(source, &edit);
+
+        assert_eq!(
+            updated,
+            "# [LSP-COPY]\nhello = Hello World\nsync-status = { \"\" }\n"
+        );
+        assert_fluent_source_parses(&updated);
     }
 
     #[test]
