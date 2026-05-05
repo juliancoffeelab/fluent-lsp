@@ -27,7 +27,14 @@ local function wait_for_client(client_id)
 end
 
 local function diagnostics_for_current_buffer()
-  return vim.diagnostic.get(0)
+  local diagnostics = vim.diagnostic.get(0)
+  table.sort(diagnostics, function(left, right)
+    if left.lnum == right.lnum then
+      return left.col < right.col
+    end
+    return left.lnum < right.lnum
+  end)
+  return diagnostics
 end
 
 local function wait_for_diagnostics_count(expected)
@@ -77,8 +84,13 @@ function M.run()
 
   local diagnostics = wait_for_diagnostics_count(2)
   local initial_messages = {}
+  local initial_starts = {}
   for _, diagnostic in ipairs(diagnostics) do
     table.insert(initial_messages, diagnostic.message)
+    table.insert(initial_starts, {
+      line = diagnostic.lnum,
+      character = diagnostic.col,
+    })
   end
 
   vim.api.nvim_buf_set_lines(0, 0, -1, false, {
@@ -97,6 +109,7 @@ function M.run()
   write_result(result_path, {
     ok = true,
     initial_messages = initial_messages,
+    initial_starts = initial_starts,
     final_buffer = final_buffer,
   })
   vim.cmd("qa!")

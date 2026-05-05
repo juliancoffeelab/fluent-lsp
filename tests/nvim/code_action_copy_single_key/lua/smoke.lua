@@ -47,6 +47,23 @@ local function request_code_actions(client_id)
   return result
 end
 
+local function hover_params()
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  return {
+    textDocument = { uri = vim.uri_from_bufnr(0) },
+    position = {
+      line = cursor[1] - 1,
+      character = cursor[2],
+    },
+  }
+end
+
+local function request_hover(client_id)
+  local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", hover_params(), 3000)
+  local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
+  return hover.contents.value
+end
+
 local function find_action(actions, title)
   for _, action in ipairs(actions) do
     if action.title == title then
@@ -88,6 +105,7 @@ function M.run()
   local original_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
   local client_id = start_client(server, workspace)
   wait_for_client(client_id, "codeActionProvider")
+  wait_for_client(client_id, "hoverProvider")
   local client = assert(vim.lsp.get_client_by_id(client_id), "missing client")
 
   local found = vim.fn.searchpos('hello = { "" }', "n")
@@ -106,12 +124,16 @@ function M.run()
   action = find_action(actions, "Copy missing attributes for `download-action` from source")
   vim.lsp.util.apply_workspace_edit(action.edit, client.offset_encoding or "utf-16")
   local copied_attribute_buffer = current_buffer_text()
+  found = vim.fn.searchpos(".tooltip = Download this build", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+  local copied_attribute_hover = request_hover(client_id)
 
   stop_client(client_id)
   write_result(result_path, {
     ok = true,
     copied_key_buffer = copied_key_buffer,
     copied_attribute_buffer = copied_attribute_buffer,
+    copied_attribute_hover = copied_attribute_hover,
   })
   vim.cmd("qa!")
 end

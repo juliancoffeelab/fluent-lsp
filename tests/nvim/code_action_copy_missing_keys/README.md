@@ -11,7 +11,9 @@ How the scenario is exercised:
 - requests `textDocument/codeAction` on the translated `hello` entry
 - selects `Copy missing keys and attributes from source`
 - applies the returned workspace edit through Neovim’s standard LSP workspace-edit helper
-- asserts the final buffer exactly matches the expected copied-source result, including both marker comments
+- asserts the final buffer exactly matches the expected copied-source result
+- verifies that a copied whole message keeps its top-level `# [LSP-COPY]` marker
+- verifies that a copied missing attribute uses a message-level marker comment (`# [LSP-COPY .tooltip]`) above the owning message rather than an indented pseudo-comment inside the attribute list
 
 Assumptions:
 

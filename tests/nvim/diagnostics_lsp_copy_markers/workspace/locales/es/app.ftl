@@ -1,7 +1,7 @@
 # [LSP-COPY]
 hello = Hola Mundo
 
+# [LSP-COPY .tooltip]
 download-action =
     .label = Descargar
-    # [LSP-COPY]
     .tooltip = Download this build

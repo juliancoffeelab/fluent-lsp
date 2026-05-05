@@ -503,8 +503,9 @@ fn code_action_copies_missing_translation_entries_with_markers() {
         &format!("file://{}", source_path.display()),
     );
     assert_fluent_parses(&updated);
-    assert_eq!(updated.matches("# [LSP-COPY]").count(), 2);
-    assert!(updated.contains("    # [LSP-COPY]\n    .tooltip = Save this file\n"));
+    assert_eq!(updated.matches("LSP-COPY").count(), 2);
+    assert!(updated.contains("# [LSP-COPY .tooltip]\nmenu-save =\n    .label = Guardar\n"));
+    assert!(updated.contains("    .tooltip = Save this file\n"));
     assert!(updated.contains("\n\n# [LSP-COPY]\nsync-status = Sync ready\n"));
     assert_eq!(runtime_message_text(&updated, "es", "hello"), "Hola Mundo");
     assert_eq!(
@@ -595,11 +596,11 @@ fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
     );
     assert_eq!(
         marker_diagnostics[1]["range"]["start"]["line"],
-        Value::from(5)
+        Value::from(6)
     );
     assert_eq!(
         marker_diagnostics[1]["range"]["start"]["character"],
-        Value::from(4)
+        Value::from(5)
     );
 
     send_change_document(&mut lsp, &source_path, 2, cleaned);
@@ -641,7 +642,7 @@ fn code_action_copies_single_stub_message_without_touching_other_entries() {
     assert!(updated.starts_with("# [LSP-COPY]\nhello = Hello World\n"));
     assert!(updated.contains("download-action =\n    .label = Descargar\n"));
     assert!(updated.contains("sync-status = { \"\" }\n"));
-    assert_eq!(updated.matches("# [LSP-COPY]").count(), 1);
+    assert_eq!(updated.matches("LSP-COPY").count(), 1);
     assert_eq!(
         runtime_message_text(&updated, "es", "hello"),
         runtime_message_text(&origin_text, "en", "hello")
@@ -678,8 +679,9 @@ fn code_action_copies_missing_attributes_for_selected_message_only() {
     assert_fluent_parses(&updated);
     assert!(updated.contains("hello = { \"\" }\n"));
     assert!(updated.contains("sync-status = { \"\" }\n"));
-    assert!(updated.contains("    # [LSP-COPY]\n    .tooltip = Download this build\n"));
-    assert_eq!(updated.matches("# [LSP-COPY]").count(), 1);
+    assert!(updated.contains("# [LSP-COPY .tooltip]\ndownload-action =\n    .label = Descargar\n"));
+    assert!(updated.contains("    .tooltip = Download this build\n"));
+    assert_eq!(updated.matches("LSP-COPY").count(), 1);
     assert_eq!(
         runtime_message_text(&updated, "es", "download-action.tooltip"),
         runtime_message_text(&origin_text, "en", "download-action.tooltip")
@@ -3031,9 +3033,9 @@ fn copy_marker_workspace() -> TempDir {
             "# [LSP-COPY]\n",
             "hello = Hola Mundo\n",
             "\n",
+            "# [LSP-COPY .tooltip]\n",
             "download-action =\n",
             "    .label = Descargar\n",
-            "    # [LSP-COPY]\n",
             "    .tooltip = Download this build\n",
         ),
     )

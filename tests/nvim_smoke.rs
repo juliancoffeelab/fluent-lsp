@@ -656,9 +656,9 @@ fn nvim_smoke_code_action_copy_missing_keys() {
     assert_fluent_parses(final_buffer);
     assert_eq!(
         final_buffer,
-        "hello = Hola Mundo\nmenu-save =\n    .label = Guardar\n    # [LSP-COPY]\n    .tooltip = Save this file\n\n# [LSP-COPY]\nsync-status = Sync ready\n\n"
+        "hello = Hola Mundo\n# [LSP-COPY .tooltip]\nmenu-save =\n    .label = Guardar\n    .tooltip = Save this file\n\n# [LSP-COPY]\nsync-status = Sync ready\n\n"
     );
-    assert_eq!(final_buffer.matches("# [LSP-COPY]").count(), 2);
+    assert_eq!(final_buffer.matches("LSP-COPY").count(), 2);
     assert_eq!(
         runtime_message_text(final_buffer, "es", "hello"),
         "Hola Mundo"
@@ -696,13 +696,16 @@ fn nvim_smoke_code_action_copy_single_key() {
     assert_fluent_parses(copied_attribute_buffer);
     assert_eq!(
         copied_attribute_buffer,
-        "hello = { \"\" }\ndownload-action =\n    .label = Descargar\n    # [LSP-COPY]\n    .tooltip = Download this build\n\nsync-status = { \"\" }\n"
+        "hello = { \"\" }\n# [LSP-COPY .tooltip]\ndownload-action =\n    .label = Descargar\n    .tooltip = Download this build\n\nsync-status = { \"\" }\n"
     );
-    assert_eq!(copied_attribute_buffer.matches("# [LSP-COPY]").count(), 1);
+    assert_eq!(copied_attribute_buffer.matches("LSP-COPY").count(), 1);
     assert_eq!(
         runtime_message_text(copied_attribute_buffer, "es", "download-action.tooltip"),
         runtime_message_text(&origin, "en", "download-action.tooltip")
     );
+    let copied_attribute_hover = result["copied_attribute_hover"].as_str().unwrap();
+    assert!(!copied_attribute_hover.contains("LSP-COPY"));
+    assert!(copied_attribute_hover.contains("Download this build"));
 }
 
 #[test]
@@ -723,10 +726,14 @@ fn nvim_smoke_diagnostics_lsp_copy_markers() {
             .iter()
             .all(|message| { message == "Entry still contains an `# [LSP-COPY]` marker" })
     );
+    assert_eq!(result["initial_starts"][0]["line"], Value::from(0));
+    assert_eq!(result["initial_starts"][0]["character"], Value::from(0));
+    assert_eq!(result["initial_starts"][1]["line"], Value::from(6));
+    assert_eq!(result["initial_starts"][1]["character"], Value::from(5));
 
     let final_buffer = result["final_buffer"].as_str().unwrap();
     assert_fluent_parses(final_buffer);
-    assert_eq!(final_buffer.matches("# [LSP-COPY]").count(), 0);
+    assert_eq!(final_buffer.matches("LSP-COPY").count(), 0);
     assert_eq!(
         runtime_message_text(final_buffer, "es", "download-action.tooltip"),
         "Download this build"

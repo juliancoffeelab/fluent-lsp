@@ -36,6 +36,7 @@ const CONFIG_FILE_NAMES: [&str; 2] = ["fluent-lsp.toml", ".fluent-lsp.toml"];
 const SHOW_MESSAGE_SELECTOR_COMBINATIONS_LIMIT: usize = 10;
 const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str = "fluent-lsp.showSelectorCombinations";
 const LSP_COPY_MARKER: &str = "# [LSP-COPY]";
+const LSP_COPY_MARKER_PREFIX: &str = "# [LSP-COPY .";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -66,6 +67,12 @@ enum SelectorRewriteKind {
     Prefix,
     Suffix,
     Whole,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LspCopyMarkerKind {
+    Message,
+    Attribute(String),
 }
 
 impl SelectorRewriteKind {
@@ -1811,6 +1818,9 @@ fn append_comment_with_prefix(
     prefix: &str,
 ) {
     for line in &comment.content {
+        if is_lsp_copy_marker_comment_content(line) {
+            continue;
+        }
         buffer.push_str(prefix);
         if !line.trim().is_empty() {
             buffer.push(' ');
@@ -1818,6 +1828,33 @@ fn append_comment_with_prefix(
         }
         buffer.push('\n');
     }
+}
+
+fn is_lsp_copy_marker_comment_content(line: &str) -> bool {
+    parse_lsp_copy_marker_line(&format!("# {}", line.trim_start())).is_some()
+}
+
+fn parse_lsp_copy_marker_line(line: &str) -> Option<LspCopyMarkerKind> {
+    let trimmed = line.trim();
+    if trimmed == LSP_COPY_MARKER {
+        return Some(LspCopyMarkerKind::Message);
+    }
+
+    let attribute = trimmed
+        .strip_prefix(LSP_COPY_MARKER_PREFIX)?
+        .strip_suffix(']')?
+        .trim();
+    if attribute.is_empty() {
+        None
+    } else {
+        Some(LspCopyMarkerKind::Attribute(
+            attribute.trim_start_matches('.').to_string(),
+        ))
+    }
+}
+
+fn render_attribute_copy_marker(attribute_key: &str) -> String {
+    format!("{LSP_COPY_MARKER_PREFIX}{attribute_key}]")
 }
 
 fn render_selector_combinations_section(
@@ -2019,30 +2056,61 @@ fn collect_lsp_copy_marker_diagnostics(source: &str) -> Vec<Diagnostic> {
         .lines()
         .enumerate()
         .filter_map(|(line_index, line)| {
-            let marker_start = line.find(LSP_COPY_MARKER)?;
-            if line[..marker_start].trim().is_empty()
-                && line[marker_start..].trim() == LSP_COPY_MARKER
-            {
-                let start = u32::try_from(marker_start).ok()?;
-                let line = u32::try_from(line_index).ok()?;
-                Some(Diagnostic {
-                    range: Range::new(
-                        Position::new(line, start),
-                        Position::new(
-                            line,
-                            start + u32::try_from(LSP_COPY_MARKER.chars().count()).ok()?,
-                        ),
-                    ),
-                    severity: Some(DiagnosticSeverity::WARNING),
-                    source: Some("fluent-lsp".to_string()),
-                    message: "Entry still contains an `# [LSP-COPY]` marker".to_string(),
-                    ..Diagnostic::default()
-                })
-            } else {
-                None
+            let marker_start = line.find('#')?;
+            if !line[..marker_start].trim().is_empty() {
+                return None;
             }
+            let marker = parse_lsp_copy_marker_line(&line[marker_start..])?;
+            Some(Diagnostic {
+                range: marker_diagnostic_range(source, line_index, marker_start, &marker)?,
+                severity: Some(DiagnosticSeverity::WARNING),
+                source: Some("fluent-lsp".to_string()),
+                message: "Entry still contains an `# [LSP-COPY]` marker".to_string(),
+                ..Diagnostic::default()
+            })
         })
         .collect()
+}
+
+fn marker_diagnostic_range(
+    source: &str,
+    line_index: usize,
+    marker_start: usize,
+    marker: &LspCopyMarkerKind,
+) -> Option<Range> {
+    if let LspCopyMarkerKind::Attribute(attribute_key) = marker {
+        if let Some(message_key) = next_message_key_after_line(source, line_index) {
+            if let Some(range) =
+                find_fluent_definition(source, &format!("{message_key}.{attribute_key}"))
+            {
+                return Some(range);
+            }
+        }
+    }
+
+    let start = u32::try_from(marker_start).ok()?;
+    let line = u32::try_from(line_index).ok()?;
+    Some(Range::new(
+        Position::new(line, start),
+        Position::new(
+            line,
+            start + u32::try_from(LSP_COPY_MARKER.chars().count()).ok()?,
+        ),
+    ))
+}
+
+fn next_message_key_after_line<'a>(source: &'a str, line_index: usize) -> Option<&'a str> {
+    source.lines().skip(line_index + 1).find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+        if line.starts_with(' ') || line.starts_with('\t') {
+            return None;
+        }
+        let key = line.split_once('=')?.0.trim_end();
+        if key.is_empty() { None } else { Some(key) }
+    })
 }
 
 fn parse_error_range(source: &str, error: &parser::ParserError) -> Option<Range> {
@@ -4304,6 +4372,14 @@ fn build_missing_entries_workspace_edit(
             .entry(offset)
             .and_modify(|existing| existing.push_str(&insertion))
             .or_insert(insertion);
+        if mode == MissingEntryRenderMode::CopySource {
+            let marker_insertion = render_missing_attribute_markers(patch);
+            let marker_offset = message_block_start_offset(source, &patch.message_key)?;
+            insertions
+                .entry(marker_offset)
+                .and_modify(|existing| existing.push_str(&marker_insertion))
+                .or_insert(marker_insertion);
+        }
     }
 
     if !missing.missing_messages.is_empty() {
@@ -4445,7 +4521,7 @@ fn render_missing_attribute_patch(
             .attributes
             .iter()
             .map(|attribute| {
-                let mut rendered = format!("    {LSP_COPY_MARKER}\n");
+                let mut rendered = String::new();
                 for line in attribute.source.lines() {
                     rendered.push_str("    ");
                     rendered.push_str(line);
@@ -4457,9 +4533,22 @@ fn render_missing_attribute_patch(
     }
 }
 
+fn render_missing_attribute_markers(patch: &MissingAttributePatch) -> String {
+    patch
+        .attributes
+        .iter()
+        .map(|attribute| format!("{}\n", render_attribute_copy_marker(&attribute.key)))
+        .collect()
+}
+
 fn message_block_insert_offset(source: &str, message_key: &str) -> Option<usize> {
     let (_, end_line) = find_fluent_block_line_range(source, message_key)?;
     end_of_line_offset(source, end_line)
+}
+
+fn message_block_start_offset(source: &str, message_key: &str) -> Option<usize> {
+    let (start_line, _) = find_fluent_block_line_range(source, message_key)?;
+    line_start_offset(source, start_line)
 }
 
 fn end_of_line_offset(source: &str, line_index: usize) -> Option<usize> {
@@ -5372,7 +5461,15 @@ download-action =\n\
 
         assert_eq!(
             updated,
-            "download-action =\n    .label = Descargar\n    # [LSP-COPY]\n    .tooltip = Download this build\n\n# [LSP-COPY]\nhello = Hello\n"
+            concat!(
+                "# [LSP-COPY .tooltip]\n",
+                "download-action =\n",
+                "    .label = Descargar\n",
+                "    .tooltip = Download this build\n",
+                "\n",
+                "# [LSP-COPY]\n",
+                "hello = Hello\n",
+            )
         );
         assert_fluent_source_parses(&updated);
         assert_eq!(
@@ -5391,17 +5488,17 @@ download-action =\n\
             "# [LSP-COPY]\n",
             "hello = Hello\n",
             "\n",
+            "# Normal translator comment\n",
+            "# [LSP-COPY .tooltip]\n",
             "download-action =\n",
             "    .label = Descargar\n",
-            "    # [LSP-COPY]\n",
             "    .tooltip = Download this build\n",
-            "# Normal translator comment\n",
         );
         let diagnostics = collect_lsp_copy_marker_diagnostics(source);
 
         assert_eq!(diagnostics.len(), 2);
         assert_eq!(diagnostics[0].range.start, Position::new(0, 0));
-        assert_eq!(diagnostics[1].range.start, Position::new(5, 4));
+        assert_eq!(diagnostics[1].range.start, Position::new(7, 5));
         assert!(diagnostics.iter().all(
             |diagnostic| diagnostic.message == "Entry still contains an `# [LSP-COPY]` marker"
         ));
@@ -5823,6 +5920,38 @@ download-action =\n\
                 ),
                 source: ".label = Save\n".to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn real_fluent_parser_does_not_attach_indented_marker_between_attributes_as_comment() {
+        let source = "download-action =\n    .label = Descargar\n    # [LSP-COPY]\n    .tooltip = Download this build\n";
+        let resource = parser::parse(source).expect("expected valid Fluent source");
+
+        assert_eq!(resource.body.len(), 1);
+        let Entry::Message(message) = &resource.body[0] else {
+            panic!("expected a message entry");
+        };
+        assert!(message.comment.is_none());
+        assert_eq!(
+            message
+                .attributes
+                .iter()
+                .map(|attribute| attribute.id.name)
+                .collect::<Vec<_>>(),
+            vec!["label", "tooltip"]
+        );
+    }
+
+    #[test]
+    fn render_fluent_source_filters_machine_copy_markers_from_comments() {
+        let source = "# Translator note\n# [LSP-COPY .tooltip]\ndownload-action =\n    .label = Descargar\n    .tooltip = Download this build\n";
+        let rendered = render_fluent_source(source, "download-action.tooltip").unwrap();
+
+        assert_eq!(rendered.comments, Some("# Translator note\n".to_string()));
+        assert_eq!(
+            rendered.source,
+            ".tooltip = Download this build\n".to_string()
         );
     }
 

@@ -5,7 +5,7 @@ Targeted source-copy quickfixes for one selected message
 This scenario covers the fine-grained source-copy quickfixes that operate only on the message under the cursor:
 
 - `Copy \`hello\` from source` replaces a local empty stub with the origin entry and a top-level marker
-- `Copy missing attributes for \`download-action\` from source` inserts only the missing attributes for the selected message
+- `Copy missing attributes for \`download-action\` from source` inserts only the missing attributes for the selected message and adds a message-level attribute marker comment above that message
 
 How the scenario is exercised:
 
@@ -16,6 +16,7 @@ How the scenario is exercised:
 - restores the original scenario-local fixture content
 - requests `textDocument/codeAction` on `download-action =`
 - applies `Copy missing attributes for \`download-action\` from source` and records the resulting buffer
+- requests standard `textDocument/hover` on the copied `.tooltip` key and verifies the machine marker does not surface as translator-comment hover content
 
 Assumptions:
 
