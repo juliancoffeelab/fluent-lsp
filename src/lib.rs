@@ -678,8 +678,8 @@ impl Backend {
                 None
             };
             if let Some(value) = render_hover_comment_markdown(
-                current_comments.as_deref(),
                 origin_comments.as_deref(),
+                current_comments.as_deref(),
             ) {
                 return Ok(Some(Hover {
                     contents: HoverContents::Markup(MarkupContent {
@@ -719,7 +719,7 @@ impl Backend {
         } else {
             None
         };
-        let hover_value = render_hover_markdown(&current_preview, source_preview.as_ref());
+        let hover_value = render_hover_markdown(source_preview.as_ref(), &current_preview);
 
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -1549,14 +1549,14 @@ fn render_preview_markdown(preview: &MessagePreview) -> String {
 }
 
 fn render_hover_markdown(
-    current_preview: &MessagePreview,
     origin_preview: Option<&MessagePreview>,
+    current_preview: &MessagePreview,
 ) -> String {
     match origin_preview {
         Some(origin_preview) => [
-            render_preview_markdown(current_preview),
-            "---".to_string(),
             render_preview_markdown(origin_preview),
+            "---".to_string(),
+            render_preview_markdown(current_preview),
         ]
         .join("\n\n"),
         None => render_preview_markdown(current_preview),
@@ -1564,15 +1564,15 @@ fn render_hover_markdown(
 }
 
 fn render_hover_comment_markdown(
-    current_comments: Option<&str>,
     origin_comments: Option<&str>,
+    current_comments: Option<&str>,
 ) -> Option<String> {
     let mut sections = Vec::new();
-    if let Some(current_comments) = current_comments {
-        sections.push(render_ftl_block(current_comments));
-    }
     if let Some(origin_comments) = origin_comments {
         sections.push(render_ftl_block(origin_comments));
+    }
+    if let Some(current_comments) = current_comments {
+        sections.push(render_ftl_block(current_comments));
     }
     if sections.is_empty() {
         None
@@ -5539,6 +5539,7 @@ download-action =\n\
     #[test]
     fn renders_hover_markdown_for_selector_preview() {
         let rendered = render_hover_markdown(
+            None,
             &MessagePreview {
                 selectors: vec![
                     ("$gender".to_string(), "female".to_string()),
@@ -5547,7 +5548,6 @@ download-action =\n\
                 text: "Copy the download link for her account on { $count } devices now."
                     .to_string(),
             },
-            None,
         );
         assert_eq!(
             rendered,
@@ -5558,14 +5558,6 @@ download-action =\n\
     #[test]
     fn renders_hover_markdown_with_separator_between_source_and_current() {
         let rendered = render_hover_markdown(
-            &MessagePreview {
-                selectors: vec![
-                    ("$gender".to_string(), "female".to_string()),
-                    ("$count".to_string(), "*".to_string()),
-                ],
-                text: "Copia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora."
-                    .to_string(),
-            },
             Some(&MessagePreview {
                 selectors: vec![
                     ("$gender".to_string(), "female".to_string()),
@@ -5574,21 +5566,29 @@ download-action =\n\
                 text: "Copy the download link for her account on { $count } devices now."
                     .to_string(),
             }),
+            &MessagePreview {
+                selectors: vec![
+                    ("$gender".to_string(), "female".to_string()),
+                    ("$count".to_string(), "*".to_string()),
+                ],
+                text: "Copia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora."
+                    .to_string(),
+            },
         );
         assert_eq!(
             rendered,
-            "`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```"
+            "`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```"
         );
     }
 
     #[test]
     fn renders_hover_markdown_without_duplicate_origin_sections() {
         let rendered = render_hover_markdown(
+            None,
             &MessagePreview {
                 selectors: Vec::new(),
                 text: "Save".to_string(),
             },
-            None,
         );
         assert_eq!(rendered.matches("---").count(), 0);
         assert_eq!(rendered, "```ftl\nSave\n```");
@@ -5597,28 +5597,28 @@ download-action =\n\
     #[test]
     fn renders_hover_markdown_with_empty_placeholder_and_comment_sections() {
         let rendered = render_hover_markdown(
-            &MessagePreview {
-                selectors: Vec::new(),
-                text: String::new(),
-            },
             Some(&MessagePreview {
                 selectors: Vec::new(),
                 text: "Hello World".to_string(),
             }),
+            &MessagePreview {
+                selectors: Vec::new(),
+                text: String::new(),
+            },
         );
         assert_eq!(
             rendered,
-            "```ftl\n<empty>\n```\n\n---\n\n```ftl\nHello World\n```"
+            "```ftl\nHello World\n```\n\n---\n\n```ftl\n<empty>\n```"
         );
 
         let comments = render_hover_comment_markdown(
-            Some("# Local comment\n# Keep this visible\n"),
             Some("# Origin comment\n# Keep this too\n"),
+            Some("# Local comment\n# Keep this visible\n"),
         )
         .unwrap();
         assert_eq!(
             comments,
-            "```ftl\n# Local comment\n# Keep this visible\n```\n\n---\n\n```ftl\n# Origin comment\n# Keep this too\n```"
+            "```ftl\n# Origin comment\n# Keep this too\n```\n\n---\n\n```ftl\n# Local comment\n# Keep this visible\n```"
         );
     }
 

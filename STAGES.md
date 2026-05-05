@@ -147,9 +147,9 @@
   I vendored `fluent-bundle`, but not the rest of the Fluent ecosystem. This was the narrowest change that made a real runtime formatter compatible with the existing vendored `fluent-syntax` workspace member. Everything else stayed on normal crates.io dependencies.
 
 - Problem:
-  Translation hover behavior was still origin-first in several paths, and key-hover tests did not fully verify the “local comments first, English comments second” contract across locale files.
+  Translation hover behavior and tests needed explicit cross-locale ordering rules, including merged key comments and empty-message previews.
 - Solution:
-  I changed hover rendering so translation body hovers show current-language preview first and origin second, translation key hovers merge current-language and origin comments in that same order, and empty translated messages render as `<empty>` while still showing the origin-language counterpart when it exists. I then tightened unit, integration, and Neovim smoke expectations around:
+  I changed hover rendering so translation body hovers show the origin-language preview first and the current-language preview second, translation key hovers merge origin comments first and current-language comments second, and empty translated messages render as `<empty>` while still showing the origin-language counterpart when it exists. I then tightened unit, integration, and Neovim smoke expectations around:
   - origin-language key hover showing only origin comments
   - translation key hover showing local comments plus English comments
   - translation body hover showing local preview plus origin preview

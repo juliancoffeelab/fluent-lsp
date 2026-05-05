@@ -410,84 +410,84 @@ fn nvim_smoke_hover_translation() {
     assert_eq!(
         extract_ftl_blocks(hover_value(&result, "key")),
         vec![
-            "# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave".to_string(),
-            "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover".to_string()
+            "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover".to_string(),
+            "# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave".to_string()
         ]
     );
     assert_hover_block_matches(
         hover_value(&result, "body"),
         0,
-        &current,
+        &origin,
         "welcome-body",
         &[],
     );
     assert_hover_block_matches(
         hover_value(&result, "body"),
         1,
-        &origin,
+        &current,
         "welcome-body",
         &[],
     );
     assert_eq!(
         extract_ftl_blocks(hover_value(&result, "empty")),
         vec![
-            "<empty>".to_string(),
-            "English empty preview fallback.".to_string()
+            "English empty preview fallback.".to_string(),
+            "<empty>".to_string()
         ]
     );
     assert_hover_block_matches(
         hover_value(&result, "selector"),
         0,
-        &current,
+        &origin,
         "install-hint",
         &[("$gender", "female")],
     );
     assert_hover_block_matches(
         hover_value(&result, "selector"),
         1,
-        &origin,
+        &current,
         "install-hint",
         &[("$gender", "female")],
     );
     assert_hover_block_matches(
         hover_value(&result, "attribute"),
         0,
-        &current,
+        &origin,
         "download-action.tooltip",
         &[],
     );
     assert_hover_block_matches(
         hover_value(&result, "attribute"),
         1,
-        &origin,
+        &current,
         "download-action.tooltip",
         &[],
     );
     assert_hover_block_matches(
         hover_value(&result, "post_selector"),
         0,
-        &current,
+        &origin,
         "install-hint",
         &[("$gender", "other")],
     );
     assert_hover_block_matches(
         hover_value(&result, "post_selector"),
         1,
-        &origin,
+        &current,
         "install-hint",
         &[("$gender", "other")],
     );
     assert_hover_block_matches(
         hover_value(&result, "second_selector"),
         0,
-        &current,
+        &origin,
         "install-hint",
         &[("$gender", "other"), ("$count", "one")],
     );
     assert_hover_block_matches(
         hover_value(&result, "second_selector"),
         1,
-        &origin,
+        &current,
         "install-hint",
         &[("$gender", "other"), ("$count", "one")],
     );
@@ -503,42 +503,42 @@ fn nvim_smoke_hover_selector_mismatch() {
     assert_hover_block_matches(
         hover_value(&result, "mismatch"),
         0,
-        &current,
-        "mismatch-rollout",
-        &[("$gender", "female")],
-    );
-    assert_hover_block_matches(
-        hover_value(&result, "mismatch"),
-        1,
         &origin,
         "mismatch-rollout",
         &[("$count", "other")],
     );
     assert_hover_block_matches(
+        hover_value(&result, "mismatch"),
+        1,
+        &current,
+        "mismatch-rollout",
+        &[("$gender", "female")],
+    );
+    assert_hover_block_matches(
         hover_value(&result, "zero"),
         0,
-        &current,
+        &origin,
         "mismatch-rollout",
         &[("$count", "0")],
     );
     assert_hover_block_matches(
         hover_value(&result, "zero"),
         1,
-        &origin,
+        &current,
         "mismatch-rollout",
         &[("$count", "0")],
     );
     assert_hover_block_matches(
         hover_value(&result, "one"),
         0,
-        &current,
+        &origin,
         "mismatch-rollout",
         &[("$count", "1")],
     );
     assert_hover_block_matches(
         hover_value(&result, "one"),
         1,
-        &origin,
+        &current,
         "mismatch-rollout",
         &[("$count", "1")],
     );
@@ -554,28 +554,28 @@ fn nvim_smoke_hover_selector_zero_lv() {
     assert_hover_block_matches(
         hover_value(&result, "zero"),
         0,
-        &current,
+        &origin,
         "zero-rollout",
         &[("$count", "zero")],
     );
     assert_hover_block_matches(
         hover_value(&result, "zero"),
         1,
-        &origin,
+        &current,
         "zero-rollout",
         &[("$count", "zero")],
     );
     assert_hover_block_matches(
         hover_value(&result, "one"),
         0,
-        &current,
+        &origin,
         "zero-rollout",
         &[("$count", "one")],
     );
     assert_hover_block_matches(
         hover_value(&result, "one"),
         1,
-        &origin,
+        &current,
         "zero-rollout",
         &[("$count", "one")],
     );

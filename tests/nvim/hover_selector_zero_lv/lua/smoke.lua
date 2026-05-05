@@ -50,14 +50,14 @@ function M.run()
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
   local zero_hover = request_hover(client_id)
-  assert(zero_hover:match("^`%$count=zero`\n\n```ftl\nKopsavilkums ar neviena pakotne nav gatava%.\n```\n\n---\n\n`%$count=zero`\n\n```ftl\nZero summary: no packages ready%.\n```$"), "missing zero-category preview")
+  assert(zero_hover:match("^`%$count=zero`\n\n```ftl\nZero summary: no packages ready%.\n```\n\n---\n\n`%$count=zero`\n\n```ftl\nKopsavilkums ar neviena pakotne nav gatava%.\n```$"), "missing zero-category preview")
 
   vim.api.nvim_win_set_cursor(0, { 1, 0 })
   found = vim.fn.searchpos("\\[one\\] viena pakotne ir gatava", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
   local one_hover = request_hover(client_id)
-  assert(one_hover:match("^`%$count=one`\n\n```ftl\nKopsavilkums ar viena pakotne ir gatava%.\n```\n\n---\n\n`%$count=one`\n\n```ftl\nZero summary: one package ready%.\n```$"), "missing one-category preview")
+  assert(one_hover:match("^`%$count=one`\n\n```ftl\nZero summary: one package ready%.\n```\n\n---\n\n`%$count=one`\n\n```ftl\nKopsavilkums ar viena pakotne ir gatava%.\n```$"), "missing one-category preview")
 
   write_result(result_path, {
     ok = true,

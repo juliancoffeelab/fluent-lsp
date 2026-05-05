@@ -6,7 +6,7 @@ Translation hover with different selector sets between source and local text
 
 ## Exercise
 
-Requests hover inside the translated `mismatch-rollout` selector branch and again inside its explicit `[0]` and `[1]` `$count` branches. It asserts that hover matches selector variables by name, shows the current-language preview first, keeps the source-only `$platform` selector on the English side with its default `*` branch, ignores the local-only `$gender` selector on the English side, and carries the shared explicit numeric `$count` selections through both previews.
+Requests hover inside the translated `mismatch-rollout` selector branch and again inside its explicit `[0]` and `[1]` `$count` branches. It asserts that hover matches selector variables by name, shows the English origin preview first, keeps the source-only `$platform` selector on the English side with its default `*` branch, ignores the local-only `$gender` selector on the English side, and carries the shared explicit numeric `$count` selections through both previews.
 
 ## Assumptions
 

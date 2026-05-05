@@ -772,7 +772,7 @@ fn hover_from_translation_shows_local_formatted_messages() {
         21,
         &source_path,
         key_position,
-        "```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```\n\n---\n\n```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```",
+        "```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```\n\n---\n\n```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```",
         key_position.0,
         0,
     );
@@ -782,12 +782,12 @@ fn hover_from_translation_shows_local_formatted_messages() {
         22,
         &source_path,
         position_of(&source_text, "Abre la build mas reciente de"),
-        "```ftl\nAbre la build mas reciente de { -brand-name } y sigue donde lo dejaste.\n```\n\n---\n\n```ftl\nOpen the latest { -brand-name } build and pick up where you left off.\n```",
+        "```ftl\nOpen the latest { -brand-name } build and pick up where you left off.\n```\n\n---\n\n```ftl\nAbre la build mas reciente de { -brand-name } y sigue donde lo dejaste.\n```",
         2,
         0,
     );
-    assert_hover_block_matches(&body_hover, 0, &source_text, "welcome-body", &[]);
-    assert_hover_block_matches(&body_hover, 1, &origin_text, "welcome-body", &[]);
+    assert_hover_block_matches(&body_hover, 0, &origin_text, "welcome-body", &[]);
+    assert_hover_block_matches(&body_hover, 1, &source_text, "welcome-body", &[]);
 
     let empty_key_position = position_of(&source_text, "empty-preview");
     let empty_hover = assert_hover(
@@ -795,15 +795,15 @@ fn hover_from_translation_shows_local_formatted_messages() {
         221,
         &source_path,
         position_of(&source_text, "\"\""),
-        "```ftl\n<empty>\n```\n\n---\n\n```ftl\nEnglish empty preview fallback.\n```",
+        "```ftl\nEnglish empty preview fallback.\n```\n\n---\n\n```ftl\n<empty>\n```",
         empty_key_position.0,
         0,
     );
     assert_eq!(
         extract_ftl_blocks(&empty_hover),
         vec![
-            "<empty>".to_string(),
-            "English empty preview fallback.".to_string()
+            "English empty preview fallback.".to_string(),
+            "<empty>".to_string()
         ]
     );
 
@@ -812,21 +812,21 @@ fn hover_from_translation_shows_local_formatted_messages() {
         23,
         &source_path,
         position_of(&source_text, "[female] ella"),
-        "`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```",
+        "`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```",
         8,
         0,
     );
     assert_hover_block_matches(
         &selector_hover,
         0,
-        &source_text,
+        &origin_text,
         "install-hint",
         &[("$gender", "female")],
     );
     assert_hover_block_matches(
         &selector_hover,
         1,
-        &origin_text,
+        &source_text,
         "install-hint",
         &[("$gender", "female")],
     );
@@ -839,21 +839,21 @@ fn hover_from_translation_shows_local_formatted_messages() {
             &source_text,
             "Instala la build recomendada para la cuenta de",
         ),
-        "`$gender=*`, `$count=*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.\n```\n\n---\n\n`$gender=*`, `$count=*`\n\n```ftl\nInstall the recommended build for their account on { $count } devices now.\n```",
+        "`$gender=*`, `$count=*`\n\n```ftl\nInstall the recommended build for their account on { $count } devices now.\n```\n\n---\n\n`$gender=*`, `$count=*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.\n```",
         21,
         5,
     );
     assert_hover_block_matches(
         &attribute_hover,
         0,
-        &source_text,
+        &origin_text,
         "download-action.tooltip",
         &[],
     );
     assert_hover_block_matches(
         &attribute_hover,
         1,
-        &origin_text,
+        &source_text,
         "download-action.tooltip",
         &[],
     );
@@ -863,21 +863,21 @@ fn hover_from_translation_shows_local_formatted_messages() {
         25,
         &source_path,
         position_of(&source_text, "en { $count } { $count ->"),
-        "`$gender=other`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```\n\n---\n\n`$gender=other`, `$count=*`\n\n```ftl\nCopy the download link for their account on { $count } devices now.\n```",
+        "`$gender=other`, `$count=*`\n\n```ftl\nCopy the download link for their account on { $count } devices now.\n```\n\n---\n\n`$gender=other`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```",
         8,
         0,
     );
     assert_hover_block_matches(
         &post_selector_hover,
         0,
-        &source_text,
+        &origin_text,
         "install-hint",
         &[("$gender", "other")],
     );
     assert_hover_block_matches(
         &post_selector_hover,
         1,
-        &origin_text,
+        &source_text,
         "install-hint",
         &[("$gender", "other")],
     );
@@ -887,21 +887,21 @@ fn hover_from_translation_shows_local_formatted_messages() {
         26,
         &source_path,
         position_of(&source_text, "[one] dispositivo"),
-        "`$gender=other`, `$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\nCopy the download link for their account on { $count } device now.\n```",
+        "`$gender=other`, `$count=one`\n\n```ftl\nCopy the download link for their account on { $count } device now.\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.\n```",
         8,
         0,
     );
     assert_hover_block_matches(
         &second_selector_hover,
         0,
-        &source_text,
+        &origin_text,
         "install-hint",
         &[("$gender", "other"), ("$count", "one")],
     );
     assert_hover_block_matches(
         &second_selector_hover,
         1,
-        &origin_text,
+        &source_text,
         "install-hint",
         &[("$gender", "other"), ("$count", "one")],
     );
@@ -948,7 +948,7 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
         28,
         &source_path,
         position_of(&source_text, "[female] ella misma"),
-        "`$gender=female`, `$count=*`\n\n```ftl\nResumen para ella misma con { $count } paquetes listo.\n```\n\n---\n\n`$platform=*`, `$count=*`\n\n```ftl\nSummary for mobile users with { $count } packages ready.\n```",
+        "`$platform=*`, `$count=*`\n\n```ftl\nSummary for mobile users with { $count } packages ready.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nResumen para ella misma con { $count } paquetes listo.\n```",
         50,
         0,
     );
@@ -958,7 +958,7 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
         29,
         &source_path,
         position_of(&source_text, "[0] ningun paquete"),
-        "`$gender=other`, `$count=0`\n\n```ftl\nResumen para elle misme con ningun paquete listo.\n```\n\n---\n\n`$platform=*`, `$count=0`\n\n```ftl\nSummary for mobile users with no packages ready.\n```",
+        "`$platform=*`, `$count=0`\n\n```ftl\nSummary for mobile users with no packages ready.\n```\n\n---\n\n`$gender=other`, `$count=0`\n\n```ftl\nResumen para elle misme con ningun paquete listo.\n```",
         50,
         0,
     );
@@ -968,7 +968,7 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
         30,
         &source_path,
         position_of(&source_text, "[1] un paquete"),
-        "`$gender=other`, `$count=1`\n\n```ftl\nResumen para elle misme con un paquete listo.\n```\n\n---\n\n`$platform=*`, `$count=1`\n\n```ftl\nSummary for mobile users with one package ready.\n```",
+        "`$platform=*`, `$count=1`\n\n```ftl\nSummary for mobile users with one package ready.\n```\n\n---\n\n`$gender=other`, `$count=1`\n\n```ftl\nResumen para elle misme con un paquete listo.\n```",
         50,
         0,
     );
@@ -1015,7 +1015,7 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
         32,
         &source_path,
         position_of(&source_text, "[zero] neviena pakotne nav gatava"),
-        "`$count=zero`\n\n```ftl\nKopsavilkums ar neviena pakotne nav gatava.\n```\n\n---\n\n`$count=zero`\n\n```ftl\nZero summary: no packages ready.\n```",
+        "`$count=zero`\n\n```ftl\nZero summary: no packages ready.\n```\n\n---\n\n`$count=zero`\n\n```ftl\nKopsavilkums ar neviena pakotne nav gatava.\n```",
         0,
         0,
     );
@@ -1025,7 +1025,7 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
         33,
         &source_path,
         position_of(&source_text, "[one] viena pakotne ir gatava"),
-        "`$count=one`\n\n```ftl\nKopsavilkums ar viena pakotne ir gatava.\n```\n\n---\n\n`$count=one`\n\n```ftl\nZero summary: one package ready.\n```",
+        "`$count=one`\n\n```ftl\nZero summary: one package ready.\n```\n\n---\n\n`$count=one`\n\n```ftl\nKopsavilkums ar viena pakotne ir gatava.\n```",
         0,
         0,
     );
@@ -1102,32 +1102,32 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
             "locales/es/app.ftl",
             "commented-preview",
             &[
-                "# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave",
                 "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
+                "# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave",
             ][..],
         ),
         (
             "locales/fr/app.ftl",
             "commented-preview",
             &[
-                "# Couverture hover pour les commentaires\n# Garder cette note visible sur le hover de cle",
                 "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
+                "# Couverture hover pour les commentaires\n# Garder cette note visible sur le hover de cle",
             ][..],
         ),
         (
             "locales/lv/app.ftl",
             "commented-preview",
             &[
-                "# Hover komentaru parklajums\n# Saglabat so piezimi redzamu atslegas hover skata",
                 "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
+                "# Hover komentaru parklajums\n# Saglabat so piezimi redzamu atslegas hover skata",
             ][..],
         ),
         (
             "locales/uk/app.ftl",
             "commented-preview",
             &[
-                "# Перевірка hover-коментарів\n# Тримайте цю примітку видимою у hover для ключа",
                 "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
+                "# Перевірка hover-коментарів\n# Тримайте цю примітку видимою у hover для ключа",
             ][..],
         ),
     ];
@@ -1143,16 +1143,16 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
             "locales/es/dialogs/menu.ftl",
             "commented-menu =",
             &[
-                "# Cobertura de comentarios para hover de atributo\n# Mantener visible esta nota en el hover de la clave del atributo",
                 "# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover",
+                "# Cobertura de comentarios para hover de atributo\n# Mantener visible esta nota en el hover de la clave del atributo",
             ][..],
         ),
         (
             "locales/fr/dialogs/menu.ftl",
             "commented-menu =",
             &[
-                "# Couverture de commentaire pour hover d attribut\n# Garder cette note visible sur le hover de la cle d attribut",
                 "# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover",
+                "# Couverture de commentaire pour hover d attribut\n# Garder cette note visible sur le hover de la cle d attribut",
             ][..],
         ),
     ];
@@ -1242,8 +1242,8 @@ fn hover_body_preview_stays_semantic_across_translation_locales() {
             position_of(&source, body_needle),
         );
         let value = hover["result"]["contents"]["value"].as_str().unwrap();
-        assert_hover_block_matches(value, 0, &source, "commented-preview", &[]);
-        assert_hover_block_matches(value, 1, &origin_text, "commented-preview", &[]);
+        assert_hover_block_matches(value, 0, &origin_text, "commented-preview", &[]);
+        assert_hover_block_matches(value, 1, &source, "commented-preview", &[]);
     }
 }
 
