@@ -2519,7 +2519,7 @@ fn code_action_rewrites_selected_gender_selector_to_whole_with_nested_count_pres
     assert_eq!(
         whole["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
         Value::String(
-            "{ $gender ->\n    [female] Copy the download link for her account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n    [male] Copy the download link for his account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n    *[other] Copy the download link for their account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n}"
+            " { $gender ->\n    [female] Copy the download link for her account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n    [male] Copy the download link for his account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n    *[other] Copy the download link for their account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n}"
                 .to_string()
         )
     );
@@ -3103,11 +3103,12 @@ fn send_close_document(lsp: &mut LspProcess, path: &Path) {
 fn open_document(lsp: &mut LspProcess, path: &Path, text: &str) {
     send_open_document(lsp, path, text);
     send_save_document(lsp, path, Some(text));
-    let notification = recv_notification(lsp, "textDocument/publishDiagnostics");
-    assert_eq!(
-        notification["params"]["uri"],
-        Value::String(format!("file://{}", path.display()))
-    );
+    loop {
+        let notification = recv_notification(lsp, "textDocument/publishDiagnostics");
+        if notification["params"]["uri"] == Value::String(format!("file://{}", path.display())) {
+            break;
+        }
+    }
 }
 
 fn recv_notification(lsp: &mut LspProcess, method: &str) -> Value {

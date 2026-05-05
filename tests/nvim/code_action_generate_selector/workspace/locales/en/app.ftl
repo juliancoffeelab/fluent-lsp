@@ -50,3 +50,9 @@ nested-whole-coins =
         }
        *[other] They have { $coins } coins.
     }
+zero-rollout =
+    Zero summary: { $count ->
+        [zero] no packages ready.
+        [one] one package ready.
+       *[other] { $count } packages ready.
+    }

@@ -1546,6 +1546,8 @@ impl Backend {
                 ) else {
                     continue;
                 };
+                let generated =
+                    pad_assignment_replacement(&source, &target.pattern_span, generated);
 
                 let edit = if supports_snippet_text_edits {
                     WorkspaceEdit {
@@ -1602,14 +1604,17 @@ impl Backend {
         if let Some((pattern_span, rewrite_actions)) =
             find_selector_rewrite_target(&source, &path, params.range.start)
         {
-            let Some(edit_range) = byte_range_to_lsp_range(&source, pattern_span) else {
+            let Some(edit_range) = byte_range_to_lsp_range(&source, pattern_span.clone()) else {
                 return Ok(None);
             };
             for rewrite in rewrite_actions {
                 let mut changes = HashMap::new();
                 changes.insert(
                     uri.clone(),
-                    vec![TextEdit::new(edit_range, rewrite.replacement)],
+                    vec![TextEdit::new(
+                        edit_range,
+                        pad_assignment_replacement(&source, &pattern_span, rewrite.replacement),
+                    )],
                 );
                 actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                     title: rewrite.kind.title().to_string(),
@@ -4108,6 +4113,21 @@ fn render_generated_selector_block(variable: &str, language: &str, branch_body: 
     }
     lines.push("}".to_string());
     lines.join("\n")
+}
+
+fn pad_assignment_replacement(
+    source: &str,
+    span: &ByteRange<usize>,
+    replacement: String,
+) -> String {
+    if replacement.starts_with('{')
+        && span.start > 0
+        && source.as_bytes().get(span.start - 1) == Some(&b'=')
+    {
+        format!(" {replacement}")
+    } else {
+        replacement
+    }
 }
 
 fn format_variant_body(body: &str) -> String {
@@ -7691,6 +7711,26 @@ download-action =\n\
         );
         assert_generated_pattern_parses(&actions[0].replacement);
         assert_generated_pattern_parses(&actions[1].replacement);
+    }
+
+    #[test]
+    fn whole_rewrite_after_assignment_keeps_space_after_equals() {
+        let source = "zero-rollout =\n    Zero summary: { $count ->\n        [zero] no packages ready.\n        [one] one package ready.\n       *[other] { $count } packages ready.\n    }\n";
+        let path = Path::new("locales/en/app.ftl");
+        let (pattern_span, actions) =
+            find_selector_rewrite_target(source, path, Position::new(1, 20)).unwrap();
+
+        let whole = actions
+            .into_iter()
+            .find(|action| action.kind == SelectorRewriteKind::Whole)
+            .unwrap();
+        let replacement = pad_assignment_replacement(source, &pattern_span, whole.replacement);
+        let mut updated = source.to_string();
+        updated.replace_range(pattern_span, &replacement);
+
+        assert!(updated.starts_with("zero-rollout = { $count ->\n"));
+        assert_generated_pattern_parses(&replacement);
+        assert_fluent_source_parses(&updated);
     }
 
     #[test]
