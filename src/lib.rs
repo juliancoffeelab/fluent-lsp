@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tempfile::Builder as TempFileBuilder;
 use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::task::JoinHandle;
 use tower_lsp::jsonrpc::{Error as LspError, Result as LspResult};
 use tower_lsp::ls_types::{
     CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
@@ -680,6 +681,7 @@ struct ServerState {
     root_dir: Option<PathBuf>,
     workspace: Option<WorkspaceConfig>,
     index_tx: Option<mpsc::UnboundedSender<IndexMessage>>,
+    refresh_task: Option<JoinHandle<()>>,
     open_documents: HashMap<Uri, String>,
     supports_show_document: bool,
     supports_snippet_text_edits: bool,
@@ -1165,9 +1167,14 @@ impl Backend {
             }
         });
 
-        self.spawn_background_refresh_task(workspace, snapshot, index_tx.clone());
+        let refresh_task =
+            self.spawn_background_refresh_task(workspace, snapshot, index_tx.clone());
         let mut state = self.state.write().await;
+        if let Some(refresh_task) = state.refresh_task.take() {
+            refresh_task.abort();
+        }
         state.index_tx = Some(index_tx);
+        state.refresh_task = Some(refresh_task);
     }
 
     fn spawn_background_refresh_task(
@@ -1175,11 +1182,10 @@ impl Backend {
         workspace: WorkspaceConfig,
         mut previous_snapshot: HashMap<PathBuf, SystemTime>,
         index_tx: mpsc::UnboundedSender<IndexMessage>,
-    ) {
+    ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(BACKGROUND_REFRESH_INTERVAL);
             loop {
-                interval.tick().await;
+                tokio::time::sleep(BACKGROUND_REFRESH_INTERVAL).await;
                 let next_snapshot = disk_snapshot(&workspace);
                 if next_snapshot == previous_snapshot {
                     continue;
@@ -1212,7 +1218,7 @@ impl Backend {
                     break;
                 }
             }
-        });
+        })
     }
 
     async fn request_index<T>(
@@ -2044,6 +2050,11 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> LspResult<()> {
+        let mut state = self.state.write().await;
+        state.index_tx = None;
+        if let Some(refresh_task) = state.refresh_task.take() {
+            refresh_task.abort();
+        }
         Ok(())
     }
 
@@ -2099,6 +2110,9 @@ impl LanguageServer for Backend {
             if let Some(root_dir) = state.root_dir.clone() {
                 state.workspace = WorkspaceConfig::load(root_dir).ok();
                 state.index_tx = None;
+                if let Some(refresh_task) = state.refresh_task.take() {
+                    refresh_task.abort();
+                }
             }
         }
         self.rebuild_index_with_progress().await;
