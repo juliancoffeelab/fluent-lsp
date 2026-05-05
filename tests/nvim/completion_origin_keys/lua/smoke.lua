@@ -4,43 +4,63 @@ local function write_result(result_path, payload)
   vim.fn.writefile({ vim.json.encode(payload) }, result_path)
 end
 
-local function current_buffer_text()
-  return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n") .. "\n"
+local function start_client(server, workspace)
+  local client_id = vim.lsp.start({
+    name = "fluent-lsp",
+    cmd = { server },
+    root_dir = workspace,
+  })
+  assert(client_id, "failed to start fluent-lsp")
+  return client_id
+end
+
+local function wait_for_client(client_id, capability)
+  local ready = vim.wait(3000, function()
+    for _, client in ipairs(vim.lsp.get_clients({ bufnr = 0 })) do
+      if client.id == client_id and client.server_capabilities[capability] then
+        return true
+      end
+    end
+    return false
+  end, 50)
+  assert(ready, capability .. " not ready")
+end
+
+local function stop_client(client_id)
+  vim.lsp.stop_client(client_id, true)
+  vim.wait(3000, function()
+    for _, client in ipairs(vim.lsp.get_clients()) do
+      if client.id == client_id then
+        return false
+      end
+    end
+    return true
+  end, 50)
 end
 
 function M.run()
   local workspace = assert(vim.env.FLUENT_LSP_WORKSPACE ~= "" and vim.env.FLUENT_LSP_WORKSPACE)
+  local server = assert(vim.env.FLUENT_LSP_BIN ~= "" and vim.env.FLUENT_LSP_BIN)
   local result_path = assert(vim.env.FLUENT_LSP_RESULT ~= "" and vim.env.FLUENT_LSP_RESULT)
-  local app_path = workspace .. "/locales/es/app.ftl"
-  local menu_path = workspace .. "/locales/es/dialogs/menu.ftl"
+  local files = {
+    workspace .. "/locales/es/app_download.ftl",
+    workspace .. "/locales/es/app_commented.ftl",
+    workspace .. "/locales/es/dialogs/menu_bare_dot.ftl",
+    workspace .. "/locales/es/dialogs/menu_label_prefix.ftl",
+  }
 
-  vim.cmd.edit(app_path)
-  vim.api.nvim_buf_set_lines(0, 0, -1, false, {
-    "welcome-title = Bienvenido",
-    "",
-    "down",
-  })
-  local top_level_source = current_buffer_text()
+  vim.cmd.edit(files[1])
+  local client_id = start_client(server, workspace)
+  wait_for_client(client_id, "completionProvider")
 
-  vim.cmd.edit(menu_path)
-  vim.api.nvim_buf_set_lines(0, 0, -1, false, {
-    "menu-save =",
-    "    .",
-  })
-  local bare_dot_source = current_buffer_text()
+  for index = 2, #files do
+    vim.cmd.edit(files[index])
+  end
 
-  vim.api.nvim_buf_set_lines(0, 0, -1, false, {
-    "menu-save =",
-    "    .l",
-  })
-  local attribute_prefix_source = current_buffer_text()
-
+  stop_client(client_id)
   write_result(result_path, {
     ok = true,
     feature = "completion_origin_keys",
-    top_level_source = top_level_source,
-    bare_dot_source = bare_dot_source,
-    attribute_prefix_source = attribute_prefix_source,
   })
   vim.cmd("qa!")
 end

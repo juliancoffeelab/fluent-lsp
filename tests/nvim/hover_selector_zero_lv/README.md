@@ -6,7 +6,7 @@ Translation hover for a Latvian `zero` plural-category selector
 
 ## Exercise
 
-Opens the Latvian translation file and requests hover inside the `[zero]` and `[one]` branches of `zero-rollout`. It asserts that both source and current previews preserve the shared selector variable, and that the rendered selector assignment uses the plural-category names `zero` and `one` rather than exact numeric keys.
+Opens the Latvian translation file and requests hover inside the `[zero]` and `[one]` branches of `zero-rollout`. It asserts that the current-language preview is shown first, the English preview is shown second, both sides preserve the shared selector variable, and the rendered selector assignment uses the plural-category names `zero` and `one` rather than exact numeric keys.
 
 ## Assumptions
 

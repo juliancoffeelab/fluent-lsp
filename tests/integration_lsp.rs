@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+use fluent_bundle::{FluentBundle, FluentResource};
 use fluent_lsp::render_fluent_preview_text;
 use fluent_syntax::parser;
 use serde_json::{Value, json};
 use std::convert::TryFrom;
 use tempfile::{TempDir, tempdir};
+use unic_langid::LanguageIdentifier;
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -392,6 +394,61 @@ fn completion_returns_empty_results_for_unmatched_prefixes() {
 }
 
 #[test]
+fn completion_items_include_origin_documentation_for_keys_and_attributes() {
+    let workspace = completion_workspace();
+    let app_path = workspace.path().join("locales/es/app.ftl");
+    let menu_path = workspace.path().join("locales/es/dialogs/menu.ftl");
+
+    let mut lsp = initialized_lsp(workspace.path(), 23);
+
+    let commented_text = "welcome-title = Bienvenido\n\ncommented";
+    send_open_document(&mut lsp, &app_path, commented_text);
+    let key_items = request_completion_items(
+        &mut lsp,
+        24,
+        &app_path,
+        position_after(commented_text, "commented"),
+    );
+    let key_item = key_items
+        .iter()
+        .find(|item| item["label"] == Value::String("commented-preview".to_string()))
+        .expect("missing completion item for commented-preview");
+    assert_eq!(
+        key_item["documentation"]["kind"],
+        Value::String("markdown".to_string())
+    );
+    let key_docs = key_item["documentation"]["value"]
+        .as_str()
+        .expect("expected markdown completion docs");
+    assert!(key_docs.contains("# Completion doc coverage"));
+    assert!(key_docs.contains("# Keep this note in completion hover"));
+    assert!(key_docs.contains("commented-preview = Preview text for completion docs."));
+
+    let attribute_text = "menu-save =\n    .t\n";
+    send_open_document(&mut lsp, &menu_path, attribute_text);
+    let attribute_items = request_completion_items(
+        &mut lsp,
+        25,
+        &menu_path,
+        position_after(attribute_text, ".t"),
+    );
+    let attribute_item = attribute_items
+        .iter()
+        .find(|item| item["label"] == Value::String(".tooltip".to_string()))
+        .expect("missing completion item for .tooltip");
+    assert_eq!(
+        attribute_item["documentation"]["kind"],
+        Value::String("markdown".to_string())
+    );
+    let attribute_docs = attribute_item["documentation"]["value"]
+        .as_str()
+        .expect("expected markdown attribute docs");
+    assert!(attribute_docs.contains("# Menu completion documentation"));
+    assert!(attribute_docs.contains("# Keep this entry visible in completion hover"));
+    assert!(attribute_docs.contains(".tooltip = Save this file"));
+}
+
+#[test]
 fn code_action_fills_missing_translation_entries_with_parseable_stubs() {
     let workspace = missing_entry_workspace();
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -417,10 +474,7 @@ fn code_action_fills_missing_translation_entries_with_parseable_stubs() {
     assert_fluent_parses(&updated);
     assert!(updated.contains("    .tooltip = { \"\" }\n"));
     assert!(updated.contains("\n\nsync-status = { \"\" }\n"));
-    assert_eq!(
-        render_fluent_preview_text(&updated, "hello", None).as_deref(),
-        Some("Hola Mundo")
-    );
+    assert_eq!(runtime_message_text(&updated, "es", "hello"), "Hola Mundo");
 }
 
 #[test]
@@ -452,17 +506,14 @@ fn code_action_copies_missing_translation_entries_with_markers() {
     assert_eq!(updated.matches("# [LSP-COPY]").count(), 2);
     assert!(updated.contains("    # [LSP-COPY]\n    .tooltip = Save this file\n"));
     assert!(updated.contains("\n\n# [LSP-COPY]\nsync-status = Sync ready\n"));
+    assert_eq!(runtime_message_text(&updated, "es", "hello"), "Hola Mundo");
     assert_eq!(
-        render_fluent_preview_text(&updated, "hello", None).as_deref(),
-        Some("Hola Mundo")
+        runtime_message_text(&updated, "es", "menu-save.tooltip"),
+        runtime_message_text(&origin_text, "en", "menu-save.tooltip")
     );
     assert_eq!(
-        render_fluent_preview_text(&updated, "menu-save.tooltip", None).as_deref(),
-        render_fluent_preview_text(&origin_text, "menu-save.tooltip", None).as_deref()
-    );
-    assert_eq!(
-        render_fluent_preview_text(&updated, "sync-status", None).as_deref(),
-        render_fluent_preview_text(&origin_text, "sync-status", None).as_deref()
+        runtime_message_text(&updated, "es", "sync-status"),
+        runtime_message_text(&origin_text, "en", "sync-status")
     );
 }
 
@@ -491,7 +542,8 @@ fn whole_file_missing_entry_actions_are_absent_when_translation_is_complete() {
     );
     assert!(
         actions.iter().all(|action| {
-            action["title"] != Value::String("Add missing keys and attributes from source".to_string())
+            action["title"]
+                != Value::String("Add missing keys and attributes from source".to_string())
                 && action["title"]
                     != Value::String("Copy missing keys and attributes from source".to_string())
         }),
@@ -533,10 +585,22 @@ fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
         marker_diagnostics[0]["message"],
         Value::String("Entry still contains an `# [LSP-COPY]` marker".to_string())
     );
-    assert_eq!(marker_diagnostics[0]["range"]["start"]["line"], Value::from(0));
-    assert_eq!(marker_diagnostics[0]["range"]["start"]["character"], Value::from(0));
-    assert_eq!(marker_diagnostics[1]["range"]["start"]["line"], Value::from(5));
-    assert_eq!(marker_diagnostics[1]["range"]["start"]["character"], Value::from(4));
+    assert_eq!(
+        marker_diagnostics[0]["range"]["start"]["line"],
+        Value::from(0)
+    );
+    assert_eq!(
+        marker_diagnostics[0]["range"]["start"]["character"],
+        Value::from(0)
+    );
+    assert_eq!(
+        marker_diagnostics[1]["range"]["start"]["line"],
+        Value::from(5)
+    );
+    assert_eq!(
+        marker_diagnostics[1]["range"]["start"]["character"],
+        Value::from(4)
+    );
 
     send_change_document(&mut lsp, &source_path, 2, cleaned);
     send_save_document(&mut lsp, &source_path, Some(cleaned));
@@ -544,8 +608,8 @@ fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
     assert_eq!(cleared["params"]["diagnostics"], Value::Array(Vec::new()));
     assert_fluent_parses(cleaned);
     assert_eq!(
-        render_fluent_preview_text(cleaned, "download-action.tooltip", None).as_deref(),
-        Some("Download this build")
+        runtime_message_text(cleaned, "es", "download-action.tooltip"),
+        "Download this build"
     );
 }
 
@@ -579,8 +643,8 @@ fn code_action_copies_single_stub_message_without_touching_other_entries() {
     assert!(updated.contains("sync-status = { \"\" }\n"));
     assert_eq!(updated.matches("# [LSP-COPY]").count(), 1);
     assert_eq!(
-        render_fluent_preview_text(&updated, "hello", None).as_deref(),
-        render_fluent_preview_text(&origin_text, "hello", None).as_deref()
+        runtime_message_text(&updated, "es", "hello"),
+        runtime_message_text(&origin_text, "en", "hello")
     );
 }
 
@@ -601,7 +665,10 @@ fn code_action_copies_missing_attributes_for_selected_message_only() {
         &source_path,
         position_of(&source_text, "download-action ="),
     );
-    let action = find_code_action(&actions, "Copy missing attributes for `download-action` from source");
+    let action = find_code_action(
+        &actions,
+        "Copy missing attributes for `download-action` from source",
+    );
     let updated = apply_code_action_edit(
         &source_text,
         action,
@@ -614,8 +681,8 @@ fn code_action_copies_missing_attributes_for_selected_message_only() {
     assert!(updated.contains("    # [LSP-COPY]\n    .tooltip = Download this build\n"));
     assert_eq!(updated.matches("# [LSP-COPY]").count(), 1);
     assert_eq!(
-        render_fluent_preview_text(&updated, "download-action.tooltip", None).as_deref(),
-        render_fluent_preview_text(&origin_text, "download-action.tooltip", None).as_deref()
+        runtime_message_text(&updated, "es", "download-action.tooltip"),
+        runtime_message_text(&origin_text, "en", "download-action.tooltip")
     );
 }
 
@@ -656,7 +723,9 @@ fn single_message_copy_actions_are_absent_for_complete_entries() {
     );
     assert!(download_actions.iter().all(|action| {
         action["title"]
-            != Value::String("Copy missing attributes for `download-action` from source".to_string())
+            != Value::String(
+                "Copy missing attributes for `download-action` from source".to_string(),
+            )
     }));
 }
 
@@ -703,7 +772,7 @@ fn hover_from_translation_shows_local_formatted_messages() {
         21,
         &source_path,
         key_position,
-        "```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```",
+        "```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```\n\n---\n\n```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```",
         key_position.0,
         0,
     );
@@ -713,33 +782,51 @@ fn hover_from_translation_shows_local_formatted_messages() {
         22,
         &source_path,
         position_of(&source_text, "Abre la build mas reciente de"),
-        "```ftl\nOpen the latest { -brand-name } build and pick up where you left off.\n```\n\n---\n\n```ftl\nAbre la build mas reciente de { -brand-name } y sigue donde lo dejaste.\n```",
+        "```ftl\nAbre la build mas reciente de { -brand-name } y sigue donde lo dejaste.\n```\n\n---\n\n```ftl\nOpen the latest { -brand-name } build and pick up where you left off.\n```",
         2,
         0,
     );
-    assert_hover_block_matches(&body_hover, 0, &origin_text, "welcome-body", &[]);
-    assert_hover_block_matches(&body_hover, 1, &source_text, "welcome-body", &[]);
+    assert_hover_block_matches(&body_hover, 0, &source_text, "welcome-body", &[]);
+    assert_hover_block_matches(&body_hover, 1, &origin_text, "welcome-body", &[]);
+
+    let empty_key_position = position_of(&source_text, "empty-preview");
+    let empty_hover = assert_hover(
+        &mut lsp,
+        221,
+        &source_path,
+        position_of(&source_text, "\"\""),
+        "```ftl\n<empty>\n```\n\n---\n\n```ftl\nEnglish empty preview fallback.\n```",
+        empty_key_position.0,
+        0,
+    );
+    assert_eq!(
+        extract_ftl_blocks(&empty_hover),
+        vec![
+            "<empty>".to_string(),
+            "English empty preview fallback.".to_string()
+        ]
+    );
 
     let selector_hover = assert_hover(
         &mut lsp,
         23,
         &source_path,
         position_of(&source_text, "[female] ella"),
-        "`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```",
+        "`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```",
         8,
         0,
     );
     assert_hover_block_matches(
         &selector_hover,
         0,
-        &origin_text,
+        &source_text,
         "install-hint",
         &[("$gender", "female")],
     );
     assert_hover_block_matches(
         &selector_hover,
         1,
-        &source_text,
+        &origin_text,
         "install-hint",
         &[("$gender", "female")],
     );
@@ -752,21 +839,21 @@ fn hover_from_translation_shows_local_formatted_messages() {
             &source_text,
             "Instala la build recomendada para la cuenta de",
         ),
-        "`$gender=*`, `$count=*`\n\n```ftl\nInstall the recommended build for their account on { $count } devices now.\n```\n\n---\n\n`$gender=*`, `$count=*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.\n```",
+        "`$gender=*`, `$count=*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.\n```\n\n---\n\n`$gender=*`, `$count=*`\n\n```ftl\nInstall the recommended build for their account on { $count } devices now.\n```",
         21,
         5,
     );
     assert_hover_block_matches(
         &attribute_hover,
         0,
-        &origin_text,
+        &source_text,
         "download-action.tooltip",
         &[],
     );
     assert_hover_block_matches(
         &attribute_hover,
         1,
-        &source_text,
+        &origin_text,
         "download-action.tooltip",
         &[],
     );
@@ -776,21 +863,21 @@ fn hover_from_translation_shows_local_formatted_messages() {
         25,
         &source_path,
         position_of(&source_text, "en { $count } { $count ->"),
-        "`$gender=other`, `$count=*`\n\n```ftl\nCopy the download link for their account on { $count } devices now.\n```\n\n---\n\n`$gender=other`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```",
+        "`$gender=other`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```\n\n---\n\n`$gender=other`, `$count=*`\n\n```ftl\nCopy the download link for their account on { $count } devices now.\n```",
         8,
         0,
     );
     assert_hover_block_matches(
         &post_selector_hover,
         0,
-        &origin_text,
+        &source_text,
         "install-hint",
         &[("$gender", "other")],
     );
     assert_hover_block_matches(
         &post_selector_hover,
         1,
-        &source_text,
+        &origin_text,
         "install-hint",
         &[("$gender", "other")],
     );
@@ -800,21 +887,21 @@ fn hover_from_translation_shows_local_formatted_messages() {
         26,
         &source_path,
         position_of(&source_text, "[one] dispositivo"),
-        "`$gender=other`, `$count=one`\n\n```ftl\nCopy the download link for their account on { $count } device now.\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.\n```",
+        "`$gender=other`, `$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\nCopy the download link for their account on { $count } device now.\n```",
         8,
         0,
     );
     assert_hover_block_matches(
         &second_selector_hover,
         0,
-        &origin_text,
+        &source_text,
         "install-hint",
         &[("$gender", "other"), ("$count", "one")],
     );
     assert_hover_block_matches(
         &second_selector_hover,
         1,
-        &source_text,
+        &origin_text,
         "install-hint",
         &[("$gender", "other"), ("$count", "one")],
     );
@@ -861,7 +948,7 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
         28,
         &source_path,
         position_of(&source_text, "[female] ella misma"),
-        "`$platform=*`, `$count=*`\n\n```ftl\nSummary for mobile users with { $count } packages ready.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nResumen para ella misma con { $count } paquetes listo.\n```",
+        "`$gender=female`, `$count=*`\n\n```ftl\nResumen para ella misma con { $count } paquetes listo.\n```\n\n---\n\n`$platform=*`, `$count=*`\n\n```ftl\nSummary for mobile users with { $count } packages ready.\n```",
         50,
         0,
     );
@@ -871,7 +958,7 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
         29,
         &source_path,
         position_of(&source_text, "[0] ningun paquete"),
-        "`$platform=*`, `$count=0`\n\n```ftl\nSummary for mobile users with no packages ready.\n```\n\n---\n\n`$gender=other`, `$count=0`\n\n```ftl\nResumen para elle misme con ningun paquete listo.\n```",
+        "`$gender=other`, `$count=0`\n\n```ftl\nResumen para elle misme con ningun paquete listo.\n```\n\n---\n\n`$platform=*`, `$count=0`\n\n```ftl\nSummary for mobile users with no packages ready.\n```",
         50,
         0,
     );
@@ -881,7 +968,7 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
         30,
         &source_path,
         position_of(&source_text, "[1] un paquete"),
-        "`$platform=*`, `$count=1`\n\n```ftl\nSummary for mobile users with one package ready.\n```\n\n---\n\n`$gender=other`, `$count=1`\n\n```ftl\nResumen para elle misme con un paquete listo.\n```",
+        "`$gender=other`, `$count=1`\n\n```ftl\nResumen para elle misme con un paquete listo.\n```\n\n---\n\n`$platform=*`, `$count=1`\n\n```ftl\nSummary for mobile users with one package ready.\n```",
         50,
         0,
     );
@@ -928,7 +1015,7 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
         32,
         &source_path,
         position_of(&source_text, "[zero] neviena pakotne nav gatava"),
-        "`$count=zero`\n\n```ftl\nZero summary: no packages ready.\n```\n\n---\n\n`$count=zero`\n\n```ftl\nKopsavilkums ar neviena pakotne nav gatava.\n```",
+        "`$count=zero`\n\n```ftl\nKopsavilkums ar neviena pakotne nav gatava.\n```\n\n---\n\n`$count=zero`\n\n```ftl\nZero summary: no packages ready.\n```",
         0,
         0,
     );
@@ -938,7 +1025,7 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
         33,
         &source_path,
         position_of(&source_text, "[one] viena pakotne ir gatava"),
-        "`$count=one`\n\n```ftl\nZero summary: one package ready.\n```\n\n---\n\n`$count=one`\n\n```ftl\nKopsavilkums ar viena pakotne ir gatava.\n```",
+        "`$count=one`\n\n```ftl\nKopsavilkums ar viena pakotne ir gatava.\n```\n\n---\n\n`$count=one`\n\n```ftl\nZero summary: one package ready.\n```",
         0,
         0,
     );
@@ -1007,85 +1094,115 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
         (
             "locales/en/app.ftl",
             "commented-preview",
-            "```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```",
+            &[
+                "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
+            ][..],
         ),
         (
             "locales/es/app.ftl",
             "commented-preview",
-            "```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```",
+            &[
+                "# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave",
+                "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
+            ][..],
         ),
         (
             "locales/fr/app.ftl",
             "commented-preview",
-            "```ftl\n# Couverture hover pour les commentaires\n# Garder cette note visible sur le hover de cle\n```",
+            &[
+                "# Couverture hover pour les commentaires\n# Garder cette note visible sur le hover de cle",
+                "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
+            ][..],
         ),
         (
             "locales/lv/app.ftl",
             "commented-preview",
-            "```ftl\n# Hover komentaru parklajums\n# Saglabat so piezimi redzamu atslegas hover skata\n```",
+            &[
+                "# Hover komentaru parklajums\n# Saglabat so piezimi redzamu atslegas hover skata",
+                "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
+            ][..],
         ),
         (
             "locales/uk/app.ftl",
             "commented-preview",
-            "```ftl\n# Перевірка hover-коментарів\n# Тримайте цю примітку видимою у hover для ключа\n```",
+            &[
+                "# Перевірка hover-коментарів\n# Тримайте цю примітку видимою у hover для ключа",
+                "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
+            ][..],
         ),
     ];
     let nested_cases = [
         (
             "locales/en/dialogs/menu.ftl",
             "commented-menu =",
-            "```ftl\n# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover\n```",
+            &[
+                "# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover",
+            ][..],
         ),
         (
             "locales/es/dialogs/menu.ftl",
             "commented-menu =",
-            "```ftl\n# Cobertura de comentarios para hover de atributo\n# Mantener visible esta nota en el hover de la clave del atributo\n```",
+            &[
+                "# Cobertura de comentarios para hover de atributo\n# Mantener visible esta nota en el hover de la clave del atributo",
+                "# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover",
+            ][..],
         ),
         (
             "locales/fr/dialogs/menu.ftl",
             "commented-menu =",
-            "```ftl\n# Couverture de commentaire pour hover d attribut\n# Garder cette note visible sur le hover de la cle d attribut\n```",
+            &[
+                "# Couverture de commentaire pour hover d attribut\n# Garder cette note visible sur le hover de la cle d attribut",
+                "# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover",
+            ][..],
         ),
     ];
 
     let mut lsp = LspProcess::start();
     initialize_lsp(&mut lsp, &root, 34);
 
-    for (index, (relative_path, needle, expected_hover)) in top_level_cases.iter().enumerate() {
+    for (index, (relative_path, needle, expected_blocks)) in top_level_cases.iter().enumerate() {
         let path = root.join(relative_path);
         let source = std::fs::read_to_string(&path).unwrap();
         open_document(&mut lsp, &path, &source);
+        let expected_hover = comment_hover_markdown(expected_blocks);
         let hover = assert_hover(
             &mut lsp,
             35 + i64::try_from(index).unwrap(),
             &path,
             position_of(&source, needle),
-            expected_hover,
+            &expected_hover,
             position_of(&source, needle).0,
             0,
         );
         assert_eq!(
             extract_ftl_blocks(&hover),
-            vec![expected_comment_block(expected_hover)]
+            expected_blocks
+                .iter()
+                .map(|block| (*block).to_string())
+                .collect::<Vec<_>>()
         );
     }
 
-    for (index, (relative_path, needle, expected_hover)) in nested_cases.iter().enumerate() {
+    for (index, (relative_path, needle, expected_blocks)) in nested_cases.iter().enumerate() {
         let path = root.join(relative_path);
         let source = std::fs::read_to_string(&path).unwrap();
         open_document(&mut lsp, &path, &source);
+        let expected_hover = comment_hover_markdown(expected_blocks);
         let hover = assert_hover(
             &mut lsp,
             45 + i64::try_from(index).unwrap(),
             &path,
             position_of(&source, needle),
-            expected_hover,
+            &expected_hover,
             position_of(&source, needle).0,
             0,
         );
         assert_eq!(
             extract_ftl_blocks(&hover),
-            vec![expected_comment_block(expected_hover)]
+            expected_blocks
+                .iter()
+                .map(|block| (*block).to_string())
+                .collect::<Vec<_>>()
         );
     }
 }
@@ -1125,8 +1242,8 @@ fn hover_body_preview_stays_semantic_across_translation_locales() {
             position_of(&source, body_needle),
         );
         let value = hover["result"]["contents"]["value"].as_str().unwrap();
-        assert_hover_block_matches(value, 0, &origin_text, "commented-preview", &[]);
-        assert_hover_block_matches(value, 1, &source, "commented-preview", &[]);
+        assert_hover_block_matches(value, 0, &source, "commented-preview", &[]);
+        assert_hover_block_matches(value, 1, &origin_text, "commented-preview", &[]);
     }
 }
 
@@ -2497,6 +2614,18 @@ fn request_completion_labels(
     source_path: &Path,
     position: (u32, u32),
 ) -> Vec<String> {
+    request_completion_items(lsp, request_id, source_path, position)
+        .into_iter()
+        .filter_map(|item| item["label"].as_str().map(ToString::to_string))
+        .collect()
+}
+
+fn request_completion_items(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    source_path: &Path,
+    position: (u32, u32),
+) -> Vec<Value> {
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": request_id,
@@ -2508,18 +2637,14 @@ fn request_completion_labels(
     }));
 
     let response = recv_response(lsp, request_id);
-    let items = if response["result"].is_array() {
+    if response["result"].is_array() {
         response["result"].as_array().cloned().unwrap_or_default()
     } else {
         response["result"]["items"]
             .as_array()
             .cloned()
             .unwrap_or_default()
-    };
-    items
-        .into_iter()
-        .filter_map(|item| item["label"].as_str().map(ToString::to_string))
-        .collect()
+    }
 }
 
 fn request_code_actions(
@@ -2693,6 +2818,52 @@ fn assert_fluent_parses(source: &str) {
     }
 }
 
+fn runtime_message_text(source: &str, locale: &str, key: &str) -> String {
+    let resource = FluentResource::try_new(source.to_string()).unwrap_or_else(|(_, errors)| {
+        panic!("failed to build FluentResource with {errors:?}\n{source}")
+    });
+    let locale: LanguageIdentifier = locale.parse().expect("valid language identifier");
+    let mut bundle = FluentBundle::new(vec![locale]);
+    bundle.set_use_isolating(false);
+    bundle
+        .add_resource(resource)
+        .unwrap_or_else(|errors| panic!("failed to add Fluent resource to bundle: {errors:?}"));
+
+    let (message_key, attribute_key) = split_runtime_key(key);
+    let message = bundle
+        .get_message(message_key)
+        .unwrap_or_else(|| panic!("missing message `{message_key}` in runtime bundle"));
+    let pattern = if let Some(attribute_key) = attribute_key {
+        message
+            .attributes()
+            .find(|attribute| attribute.id() == attribute_key)
+            .unwrap_or_else(|| panic!("missing attribute `{attribute_key}` on `{message_key}`"))
+            .value()
+    } else {
+        message
+            .value()
+            .unwrap_or_else(|| panic!("message `{message_key}` has no value"))
+    };
+    let mut errors = Vec::new();
+    let rendered = bundle
+        .format_pattern(pattern, None, &mut errors)
+        .into_owned();
+    assert!(
+        errors.is_empty(),
+        "runtime formatting errors for `{key}`: {errors:?}"
+    );
+    rendered
+}
+
+fn split_runtime_key(key: &str) -> (&str, Option<&str>) {
+    match key.rsplit_once('.') {
+        Some((message_key, attribute_key)) if !attribute_key.is_empty() => {
+            (message_key, Some(attribute_key))
+        }
+        _ => (key, None),
+    }
+}
+
 fn extract_ftl_blocks(markdown: &str) -> Vec<String> {
     let mut blocks = Vec::new();
     let mut rest = markdown;
@@ -2729,11 +2900,12 @@ fn assert_hover_block_matches(
     assert_eq!(actual, &expected);
 }
 
-fn expected_comment_block(markdown: &str) -> String {
-    extract_ftl_blocks(markdown)
+fn comment_hover_markdown(blocks: &[&str]) -> String {
+    blocks
         .into_iter()
-        .next()
-        .expect("expected comment markdown block")
+        .map(|block| format!("```ftl\n{block}\n```"))
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n")
 }
 
 fn initialize_lsp(lsp: &mut LspProcess, root: &Path, request_id: i64) {
@@ -2772,12 +2944,18 @@ fn completion_workspace() -> TempDir {
         temp.path().join("locales/en/app.ftl"),
         "hello-world = Hello\n\
 download-action = Download\n\
-download-count = Download count\n",
+download-count = Download count\n\
+\n\
+# Completion doc coverage\n\
+# Keep this note in completion hover\n\
+commented-preview = Preview text for completion docs.\n",
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/en/dialogs/menu.ftl"),
-        "menu-save =\n    .label = Save\n    .tooltip = Save this file\n",
+        "# Menu completion documentation\n\
+# Keep this entry visible in completion hover\n\
+menu-save =\n    .label = Save\n    .tooltip = Save this file\n",
     )
     .unwrap();
     std::fs::write(

@@ -130,3 +130,45 @@
 
 - Architectural decision:
   I kept the targeted copy actions inside standard `textDocument/codeAction` responses with ordinary `WorkspaceEdit.changes`. No new dependencies or client-specific hooks were needed.
+
+## Stage 5: Real Fluent runtime tests, cross-locale hover tightening, and completion documentation
+
+- Problem:
+  The follow-up test requirements explicitly needed real Fluent runtime coverage for copied messages and attributes rather than only reusing the server’s own preview renderer.
+- Solution:
+  I added test-time formatting through `fluent-bundle` and `unic-langid`, then switched the copy-action semantic assertions in both unit/integration and Neovim smoke coverage to runtime formatting for real message values and attributes.
+
+- Problem:
+  Using upstream `fluent-bundle` directly against this repo’s vendored `fluent-syntax` failed because the repo enables the `spans` feature globally, which changes several AST shapes.
+- Solution:
+  I vendored `fluent-bundle` into `third_party/fluent-bundle`, patched it to ignore span fields and tuple-span payloads, and wired it through `[patch.crates-io]`. That keeps the runtime tests on the real Fluent implementation without introducing an incompatible duplicate parser stack.
+
+- Architectural decision:
+  I vendored `fluent-bundle`, but not the rest of the Fluent ecosystem. This was the narrowest change that made a real runtime formatter compatible with the existing vendored `fluent-syntax` workspace member. Everything else stayed on normal crates.io dependencies.
+
+- Problem:
+  Translation hover behavior was still origin-first in several paths, and key-hover tests did not fully verify the “local comments first, English comments second” contract across locale files.
+- Solution:
+  I changed hover rendering so translation body hovers show current-language preview first and origin second, translation key hovers merge current-language and origin comments in that same order, and empty translated messages render as `<empty>` while still showing the origin-language counterpart when it exists. I then tightened unit, integration, and Neovim smoke expectations around:
+  - origin-language key hover showing only origin comments
+  - translation key hover showing local comments plus English comments
+  - translation body hover showing local preview plus origin preview
+  - empty translated messages rendering as `<empty>` before the origin fallback block
+
+- Problem:
+  Completion items needed “hover” coverage too, meaning completion documentation should expose origin comments and origin source text for both message keys and attributes.
+- Solution:
+  I added `CompletionItem.documentation` generation from the origin entry source, then added:
+  - unit coverage for completion documentation construction
+  - integration coverage for message-key and attribute completion docs
+  - Neovim smoke coverage using self-contained scenario files plus raw LSP completion assertions against those exact files
+
+- Problem:
+  Neovim’s headless completion request helper remained unreliable for these scenario-local partial Fluent files, especially for attribute-prefix cases.
+- Solution:
+  I kept a feature-specific Neovim smoke scenario, but moved the actual completion assertions back into the Rust smoke harness against exact scenario-local source files. The scenario still opens those files in Neovim and keeps the workspace self-contained, while the Rust side verifies labels and documentation deterministically.
+
+- Problem:
+  A parallel cargo run exhausted the workspace disk during this phase, which caused a linker crash and false-negative test failures.
+- Solution:
+  I cleaned the local `target/` directory to recover space and finished verification with a single serial `cargo test -- --test-threads=1` run to avoid repeating the cache-lock and disk-pressure issues.

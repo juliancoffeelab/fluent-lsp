@@ -50,21 +50,21 @@ function M.run()
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
   local mismatch_hover = request_hover(client_id)
-  assert(mismatch_hover:match("^`%$platform=%*`, `%$count=%*`\n\n```ftl\nSummary for mobile users with { %$count } packages ready%.\n```\n\n---\n\n`%$gender=female`, `%$count=%*`\n\n```ftl\nResumen para ella misma con { %$count } paquetes listo%.\n```$"), "missing mismatch selector hover")
+  assert(mismatch_hover:match("^`%$gender=female`, `%$count=%*`\n\n```ftl\nResumen para ella misma con { %$count } paquetes listo%.\n```\n\n---\n\n`%$platform=%*`, `%$count=%*`\n\n```ftl\nSummary for mobile users with { %$count } packages ready%.\n```$"), "missing mismatch selector hover")
 
   vim.api.nvim_win_set_cursor(0, { 1, 0 })
   found = vim.fn.searchpos("\\[0\\] ningun paquete", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
   local zero_hover = request_hover(client_id)
-  assert(zero_hover:match("^`%$platform=%*`, `%$count=0`\n\n```ftl\nSummary for mobile users with no packages ready%.\n```\n\n---\n\n`%$gender=other`, `%$count=0`\n\n```ftl\nResumen para elle misme con ningun paquete listo%.\n```$"), "missing zero-count selector hover")
+  assert(zero_hover:match("^`%$gender=other`, `%$count=0`\n\n```ftl\nResumen para elle misme con ningun paquete listo%.\n```\n\n---\n\n`%$platform=%*`, `%$count=0`\n\n```ftl\nSummary for mobile users with no packages ready%.\n```$"), "missing zero-count selector hover")
 
   vim.api.nvim_win_set_cursor(0, { 1, 0 })
   found = vim.fn.searchpos("\\[1\\] un paquete", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
   local one_hover = request_hover(client_id)
-  assert(one_hover:match("^`%$platform=%*`, `%$count=1`\n\n```ftl\nSummary for mobile users with one package ready%.\n```\n\n---\n\n`%$gender=other`, `%$count=1`\n\n```ftl\nResumen para elle misme con un paquete listo%.\n```$"), "missing one-count selector hover")
+  assert(one_hover:match("^`%$gender=other`, `%$count=1`\n\n```ftl\nResumen para elle misme con un paquete listo%.\n```\n\n---\n\n`%$platform=%*`, `%$count=1`\n\n```ftl\nSummary for mobile users with one package ready%.\n```$"), "missing one-count selector hover")
 
   write_result(result_path, {
     ok = true,

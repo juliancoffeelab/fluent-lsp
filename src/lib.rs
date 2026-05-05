@@ -21,13 +21,14 @@ use tower_lsp::ls_types::{
     Command, CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams,
     CompletionResponse, Diagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, Location,
-    MarkupContent, MarkupKind, MessageType, OneOf, OneOf3, OptionalVersionedTextDocumentIdentifier,
-    Position, Range, ReferenceParams, ServerCapabilities, ShowDocumentParams, SnippetTextEdit,
-    TextDocumentEdit, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, TextEdit, Uri, WorkspaceEdit,
+    DidSaveTextDocumentParams, DocumentChanges, Documentation, ExecuteCommandOptions,
+    ExecuteCommandParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
+    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
+    Location, MarkupContent, MarkupKind, MessageType, OneOf, OneOf3,
+    OptionalVersionedTextDocumentIdentifier, Position, Range, ReferenceParams, ServerCapabilities,
+    ShowDocumentParams, SnippetTextEdit, TextDocumentEdit, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Uri,
+    WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -661,16 +662,32 @@ impl Backend {
         };
         let hover_position = params.text_document_position_params.position;
         if range_contains_position(&hover_range, hover_position) {
-            if let Some(rendered) = render_fluent_source(&source, &key) {
-                if let Some(comments) = rendered.comments.filter(|comments| !comments.is_empty()) {
-                    return Ok(Some(Hover {
-                        contents: HoverContents::Markup(MarkupContent {
-                            kind: MarkupKind::Markdown,
-                            value: render_ftl_block(&comments),
-                        }),
-                        range: Some(hover_range),
-                    }));
-                }
+            let current_comments = render_fluent_source(&source, &key)
+                .and_then(|rendered| rendered.comments)
+                .filter(|comments| !comments.is_empty());
+            let origin_comments = if !workspace.is_origin_file(&path) {
+                workspace
+                    .origin_file_for(&path)
+                    .and_then(|origin_path| std::fs::read_to_string(origin_path).ok())
+                    .and_then(|origin_source| {
+                        render_fluent_source(&origin_source, &key)
+                            .and_then(|rendered| rendered.comments)
+                            .filter(|comments| !comments.is_empty())
+                    })
+            } else {
+                None
+            };
+            if let Some(value) = render_hover_comment_markdown(
+                current_comments.as_deref(),
+                origin_comments.as_deref(),
+            ) {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value,
+                    }),
+                    range: Some(hover_range),
+                }));
             }
         }
         let resource = parse_fluent_resource(&source);
@@ -702,7 +719,7 @@ impl Backend {
         } else {
             None
         };
-        let hover_value = render_hover_markdown(source_preview.as_ref(), &current_preview);
+        let hover_value = render_hover_markdown(&current_preview, source_preview.as_ref());
 
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -1522,22 +1539,45 @@ fn render_preview_markdown(preview: &MessagePreview) -> String {
     if !preview.selectors.is_empty() {
         sections.push(render_selector_assignments(&preview.selectors));
     }
-    sections.push(render_ftl_block(&preview.text));
+    let text = if preview.text.is_empty() {
+        "<empty>"
+    } else {
+        preview.text.as_str()
+    };
+    sections.push(render_ftl_block(text));
     sections.join("\n\n")
 }
 
 fn render_hover_markdown(
-    source_preview: Option<&MessagePreview>,
     current_preview: &MessagePreview,
+    origin_preview: Option<&MessagePreview>,
 ) -> String {
-    match source_preview {
-        Some(source_preview) => [
-            render_preview_markdown(source_preview),
-            "---".to_string(),
+    match origin_preview {
+        Some(origin_preview) => [
             render_preview_markdown(current_preview),
+            "---".to_string(),
+            render_preview_markdown(origin_preview),
         ]
         .join("\n\n"),
         None => render_preview_markdown(current_preview),
+    }
+}
+
+fn render_hover_comment_markdown(
+    current_comments: Option<&str>,
+    origin_comments: Option<&str>,
+) -> Option<String> {
+    let mut sections = Vec::new();
+    if let Some(current_comments) = current_comments {
+        sections.push(render_ftl_block(current_comments));
+    }
+    if let Some(origin_comments) = origin_comments {
+        sections.push(render_ftl_block(origin_comments));
+    }
+    if sections.is_empty() {
+        None
+    } else {
+        Some(sections.join("\n\n---\n\n"))
     }
 }
 
@@ -1688,7 +1728,7 @@ fn render_expression_preview(
     match expression {
         fluent_syntax::ast::Expression::Inline(inline, _) => MessagePreview {
             selectors: Vec::new(),
-            text: render_inline_expression_as_text(inline),
+            text: render_inline_expression_preview_text(inline),
         },
         fluent_syntax::ast::Expression::Select {
             selector, variants, ..
@@ -1980,7 +2020,9 @@ fn collect_lsp_copy_marker_diagnostics(source: &str) -> Vec<Diagnostic> {
         .enumerate()
         .filter_map(|(line_index, line)| {
             let marker_start = line.find(LSP_COPY_MARKER)?;
-            if line[..marker_start].trim().is_empty() && line[marker_start..].trim() == LSP_COPY_MARKER {
+            if line[..marker_start].trim().is_empty()
+                && line[marker_start..].trim() == LSP_COPY_MARKER
+            {
                 let start = u32::try_from(marker_start).ok()?;
                 let line = u32::try_from(line_index).ok()?;
                 Some(Diagnostic {
@@ -4057,7 +4099,15 @@ fn completion_items_for_site(origin_source: &str, site: &CompletionSite) -> Vec<
             .into_iter()
             .filter(|key| key.starts_with(prefix))
             .enumerate()
-            .map(|(index, key)| completion_item(key, "message", CompletionItemKind::TEXT, index))
+            .map(|(index, key)| {
+                completion_item(
+                    origin_source,
+                    key,
+                    "message",
+                    CompletionItemKind::TEXT,
+                    index,
+                )
+            })
             .collect(),
         CompletionSite::AttributeKey {
             message_key,
@@ -4067,25 +4117,56 @@ fn completion_items_for_site(origin_source: &str, site: &CompletionSite) -> Vec<
             .map(|attribute| format!(".{attribute}"))
             .filter(|attribute| attribute.starts_with(prefix))
             .enumerate()
-            .map(|(index, key)| completion_item(key, "attribute", CompletionItemKind::FIELD, index))
+            .map(|(index, key)| {
+                completion_item(
+                    origin_source,
+                    format!("{message_key}{key}"),
+                    "attribute",
+                    CompletionItemKind::FIELD,
+                    index,
+                )
+            })
             .collect(),
     }
 }
 
 fn completion_item(
-    label: String,
+    origin_source: &str,
+    key: String,
     detail: &str,
     kind: CompletionItemKind,
     index: usize,
 ) -> CompletionItem {
+    let label = key
+        .rsplit_once('.')
+        .map(|(_, attribute_key)| format!(".{attribute_key}"))
+        .unwrap_or_else(|| key.clone());
     CompletionItem {
         label: label.clone(),
         insert_text: Some(label),
         detail: Some(detail.to_string()),
+        documentation: completion_item_documentation(origin_source, &key),
         kind: Some(kind),
         sort_text: Some(format!("{index:04}")),
         ..CompletionItem::default()
     }
+}
+
+fn completion_item_documentation(origin_source: &str, key: &str) -> Option<Documentation> {
+    let rendered = render_fluent_source(origin_source, key)?;
+    let mut sections = Vec::new();
+    if let Some(comments) = rendered
+        .comments
+        .as_deref()
+        .filter(|comments| !comments.is_empty())
+    {
+        sections.push(render_ftl_block(comments));
+    }
+    sections.push(render_ftl_block(&rendered.source));
+    Some(Documentation::MarkupContent(MarkupContent {
+        kind: MarkupKind::Markdown,
+        value: sections.join("\n\n---\n\n"),
+    }))
 }
 
 fn origin_message_keys(source: &str) -> Vec<String> {
@@ -4438,7 +4519,8 @@ fn build_replace_message_workspace_edit(
 fn message_matches_empty_stub(source: &str, template: &OriginMessageTemplate) -> bool {
     render_fluent_entry(source, &template.key)
         .map(|entry| {
-            entry.trim_end() == render_missing_message(template, MissingEntryRenderMode::EmptyStub).trim_end()
+            entry.trim_end()
+                == render_missing_message(template, MissingEntryRenderMode::EmptyStub).trim_end()
         })
         .unwrap_or(false)
 }
@@ -4736,7 +4818,7 @@ fn expand_expression(
         fluent_syntax::ast::Expression::Inline(inline, _) => SelectorExpansion {
             items: vec![SelectorExpansionItem {
                 selectors: Vec::new(),
-                text: render_inline_expression_as_text(inline),
+                text: render_inline_expression_preview_text(inline),
             }],
             total_count: 1,
         },
@@ -4783,6 +4865,17 @@ fn render_inline_expression_as_text(
     expression: &fluent_syntax::ast::InlineExpression<&str>,
 ) -> String {
     format!("{{ {} }}", render_inline_expression(expression))
+}
+
+fn render_inline_expression_preview_text(
+    expression: &fluent_syntax::ast::InlineExpression<&str>,
+) -> String {
+    match expression {
+        fluent_syntax::ast::InlineExpression::StringLiteral { value, .. } if value.is_empty() => {
+            String::new()
+        }
+        _ => render_inline_expression_as_text(expression),
+    }
 }
 
 fn render_inline_expression(expression: &fluent_syntax::ast::InlineExpression<&str>) -> String {
@@ -4957,6 +5050,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fluent_bundle::{FluentBundle, FluentResource};
+    use unic_langid::LanguageIdentifier;
 
     #[test]
     fn extracts_key_inside_quotes() {
@@ -5166,6 +5261,31 @@ mod tests {
     }
 
     #[test]
+    fn completion_items_include_origin_documentation() {
+        let source = "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\ncommented-preview = Preview text for hover comments.\n";
+        let item = completion_items_for_site(
+            source,
+            &CompletionSite::MessageKey {
+                prefix: "commented".to_string(),
+            },
+        )
+        .into_iter()
+        .next()
+        .unwrap();
+
+        let Documentation::MarkupContent(markup) = item.documentation.unwrap() else {
+            panic!("expected markdown completion documentation");
+        };
+        assert_eq!(markup.kind, MarkupKind::Markdown);
+        assert!(markup.value.contains("# Comment-only hover coverage"));
+        assert!(
+            markup
+                .value
+                .contains("commented-preview = Preview text for hover comments.")
+        );
+    }
+
+    #[test]
     fn detects_missing_messages_and_attributes_from_origin() {
         let origin = "hello = Hello\n\
 download-action =\n\
@@ -5282,12 +5402,9 @@ download-action =\n\
         assert_eq!(diagnostics.len(), 2);
         assert_eq!(diagnostics[0].range.start, Position::new(0, 0));
         assert_eq!(diagnostics[1].range.start, Position::new(5, 4));
-        assert!(
-            diagnostics
-                .iter()
-                .all(|diagnostic| diagnostic.message
-                    == "Entry still contains an `# [LSP-COPY]` marker")
-        );
+        assert!(diagnostics.iter().all(
+            |diagnostic| diagnostic.message == "Entry still contains an `# [LSP-COPY]` marker"
+        ));
     }
 
     #[test]
@@ -5297,7 +5414,10 @@ download-action =\n\
         let translation = "hello = { \"\" }\n";
 
         assert!(message_matches_empty_stub(translation, &template));
-        assert!(!message_matches_empty_stub("hello = Hola Mundo\n", &template));
+        assert!(!message_matches_empty_stub(
+            "hello = Hola Mundo\n",
+            &template
+        ));
     }
 
     #[test]
@@ -5318,6 +5438,20 @@ sync-status = { \"\" }\n";
             "# [LSP-COPY]\nhello = Hello World\nsync-status = { \"\" }\n"
         );
         assert_fluent_source_parses(&updated);
+    }
+
+    #[test]
+    fn real_fluent_bundle_formats_copied_message_and_attribute_text() {
+        let source = "hello = Hello World\n\
+download-action =\n\
+    .label = Download\n\
+    .tooltip = Download this build\n";
+
+        assert_eq!(runtime_message_text(source, "en", "hello"), "Hello World");
+        assert_eq!(
+            runtime_message_text(source, "en", "download-action.tooltip"),
+            "Download this build"
+        );
     }
 
     #[test]
@@ -5405,7 +5539,6 @@ sync-status = { \"\" }\n";
     #[test]
     fn renders_hover_markdown_for_selector_preview() {
         let rendered = render_hover_markdown(
-            None,
             &MessagePreview {
                 selectors: vec![
                     ("$gender".to_string(), "female".to_string()),
@@ -5414,6 +5547,7 @@ sync-status = { \"\" }\n";
                 text: "Copy the download link for her account on { $count } devices now."
                     .to_string(),
             },
+            None,
         );
         assert_eq!(
             rendered,
@@ -5424,14 +5558,6 @@ sync-status = { \"\" }\n";
     #[test]
     fn renders_hover_markdown_with_separator_between_source_and_current() {
         let rendered = render_hover_markdown(
-            Some(&MessagePreview {
-                selectors: vec![
-                    ("$gender".to_string(), "female".to_string()),
-                    ("$count".to_string(), "*".to_string()),
-                ],
-                text: "Copy the download link for her account on { $count } devices now."
-                    .to_string(),
-            }),
             &MessagePreview {
                 selectors: vec![
                     ("$gender".to_string(), "female".to_string()),
@@ -5440,24 +5566,75 @@ sync-status = { \"\" }\n";
                 text: "Copia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora."
                     .to_string(),
             },
+            Some(&MessagePreview {
+                selectors: vec![
+                    ("$gender".to_string(), "female".to_string()),
+                    ("$count".to_string(), "*".to_string()),
+                ],
+                text: "Copy the download link for her account on { $count } devices now."
+                    .to_string(),
+            }),
         );
         assert_eq!(
             rendered,
-            "`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```"
+            "`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```"
         );
     }
 
     #[test]
     fn renders_hover_markdown_without_duplicate_origin_sections() {
         let rendered = render_hover_markdown(
-            None,
             &MessagePreview {
                 selectors: Vec::new(),
                 text: "Save".to_string(),
             },
+            None,
         );
         assert_eq!(rendered.matches("---").count(), 0);
         assert_eq!(rendered, "```ftl\nSave\n```");
+    }
+
+    #[test]
+    fn renders_hover_markdown_with_empty_placeholder_and_comment_sections() {
+        let rendered = render_hover_markdown(
+            &MessagePreview {
+                selectors: Vec::new(),
+                text: String::new(),
+            },
+            Some(&MessagePreview {
+                selectors: Vec::new(),
+                text: "Hello World".to_string(),
+            }),
+        );
+        assert_eq!(
+            rendered,
+            "```ftl\n<empty>\n```\n\n---\n\n```ftl\nHello World\n```"
+        );
+
+        let comments = render_hover_comment_markdown(
+            Some("# Local comment\n# Keep this visible\n"),
+            Some("# Origin comment\n# Keep this too\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            comments,
+            "```ftl\n# Local comment\n# Keep this visible\n```\n\n---\n\n```ftl\n# Origin comment\n# Keep this too\n```"
+        );
+    }
+
+    #[test]
+    fn render_message_preview_treats_empty_string_literal_as_empty_text() {
+        let source = "empty-preview = { \"\" }\n";
+        let resource = parse_fluent_resource(source);
+        let pattern = find_fluent_pattern(&resource, "empty-preview").unwrap();
+
+        assert_eq!(
+            render_message_preview(pattern, None),
+            MessagePreview {
+                selectors: Vec::new(),
+                text: String::new(),
+            }
+        );
     }
 
     fn assert_fluent_source_parses(source: &str) {
@@ -5492,6 +5669,52 @@ sync-status = { \"\" }\n";
         }
 
         updated
+    }
+
+    fn runtime_message_text(source: &str, locale: &str, key: &str) -> String {
+        let resource = FluentResource::try_new(source.to_string()).unwrap_or_else(|(_, errors)| {
+            panic!("failed to build FluentResource with {errors:?}\n{source}")
+        });
+        let locale: LanguageIdentifier = locale.parse().expect("valid language identifier");
+        let mut bundle = FluentBundle::new(vec![locale]);
+        bundle.set_use_isolating(false);
+        bundle
+            .add_resource(resource)
+            .unwrap_or_else(|errors| panic!("failed to add Fluent resource to bundle: {errors:?}"));
+
+        let (message_key, attribute_key) = split_runtime_key(key);
+        let message = bundle
+            .get_message(message_key)
+            .unwrap_or_else(|| panic!("missing message `{message_key}` in runtime bundle"));
+        let pattern = if let Some(attribute_key) = attribute_key {
+            message
+                .attributes()
+                .find(|attribute| attribute.id() == attribute_key)
+                .unwrap_or_else(|| panic!("missing attribute `{attribute_key}` on `{message_key}`"))
+                .value()
+        } else {
+            message
+                .value()
+                .unwrap_or_else(|| panic!("message `{message_key}` has no value"))
+        };
+        let mut errors = Vec::new();
+        let rendered = bundle
+            .format_pattern(pattern, None, &mut errors)
+            .into_owned();
+        assert!(
+            errors.is_empty(),
+            "runtime formatting errors for `{key}`: {errors:?}"
+        );
+        rendered
+    }
+
+    fn split_runtime_key(key: &str) -> (&str, Option<&str>) {
+        match key.rsplit_once('.') {
+            Some((message_key, attribute_key)) if !attribute_key.is_empty() => {
+                (message_key, Some(attribute_key))
+            }
+            _ => (key, None),
+        }
     }
 
     #[test]

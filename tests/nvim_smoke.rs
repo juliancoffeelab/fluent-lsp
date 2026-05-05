@@ -4,10 +4,12 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+use fluent_bundle::{FluentBundle, FluentResource};
 use fluent_lsp::render_fluent_preview_text;
 use fluent_syntax::parser;
 use serde_json::{Value, json};
 use tempfile::tempdir;
+use unic_langid::LanguageIdentifier;
 
 fn run_scenario(name: &str) -> Value {
     let output_dir = tempdir().unwrap();
@@ -109,12 +111,12 @@ fn hover_value<'a>(result: &'a Value, key: &str) -> &'a str {
         .unwrap_or_else(|| panic!("missing hover payload `{key}`"))
 }
 
-fn completion_labels_for_source(
+fn completion_items_for_source(
     scenario: &str,
     relative_path: &str,
     source_text: &str,
     position: (u32, u32),
-) -> Vec<String> {
+) -> Vec<Value> {
     let workspace = scenario_dir(scenario).join("workspace");
     let path = workspace.join(relative_path);
     let mut lsp = RawLspProcess::start();
@@ -151,11 +153,25 @@ fn completion_labels_for_source(
         }
     }));
     let response = recv_response(&mut lsp, 2);
-    let items = response["result"].as_array().cloned().unwrap_or_default();
+    response["result"].as_array().cloned().unwrap_or_default()
+}
+
+fn completion_labels(items: &[Value]) -> Vec<String> {
     items
-        .into_iter()
+        .iter()
         .filter_map(|item| item["label"].as_str().map(ToString::to_string))
         .collect()
+}
+
+fn completion_documentation<'a>(items: &'a [Value], label: &str) -> (&'a str, Option<&'a str>) {
+    let item = items
+        .iter()
+        .find(|item| item["label"] == Value::String(label.to_string()))
+        .unwrap_or_else(|| panic!("missing completion item `{label}`"));
+    let value = item["documentation"]["value"]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing documentation for completion item `{label}`"));
+    (value, item["documentation"]["kind"].as_str())
 }
 
 fn send_open_document(lsp: &mut RawLspProcess, path: &Path, text: &str) {
@@ -194,6 +210,52 @@ fn recv_response(lsp: &mut RawLspProcess, request_id: i64) -> Value {
 fn assert_fluent_parses(source: &str) {
     if let Err((_, errors)) = parser::parse(source) {
         panic!("failed to parse Fluent source with {errors:?}\n{source}");
+    }
+}
+
+fn runtime_message_text(source: &str, locale: &str, key: &str) -> String {
+    let resource = FluentResource::try_new(source.to_string()).unwrap_or_else(|(_, errors)| {
+        panic!("failed to build FluentResource with {errors:?}\n{source}")
+    });
+    let locale: LanguageIdentifier = locale.parse().expect("valid language identifier");
+    let mut bundle = FluentBundle::new(vec![locale]);
+    bundle.set_use_isolating(false);
+    bundle
+        .add_resource(resource)
+        .unwrap_or_else(|errors| panic!("failed to add Fluent resource to bundle: {errors:?}"));
+
+    let (message_key, attribute_key) = split_runtime_key(key);
+    let message = bundle
+        .get_message(message_key)
+        .unwrap_or_else(|| panic!("missing message `{message_key}` in runtime bundle"));
+    let pattern = if let Some(attribute_key) = attribute_key {
+        message
+            .attributes()
+            .find(|attribute| attribute.id() == attribute_key)
+            .unwrap_or_else(|| panic!("missing attribute `{attribute_key}` on `{message_key}`"))
+            .value()
+    } else {
+        message
+            .value()
+            .unwrap_or_else(|| panic!("message `{message_key}` has no value"))
+    };
+    let mut errors = Vec::new();
+    let rendered = bundle
+        .format_pattern(pattern, None, &mut errors)
+        .into_owned();
+    assert!(
+        errors.is_empty(),
+        "runtime formatting errors for `{key}`: {errors:?}"
+    );
+    rendered
+}
+
+fn split_runtime_key(key: &str) -> (&str, Option<&str>) {
+    match key.rsplit_once('.') {
+        Some((message_key, attribute_key)) if !attribute_key.is_empty() => {
+            (message_key, Some(attribute_key))
+        }
+        _ => (key, None),
     }
 }
 
@@ -252,17 +314,26 @@ fn nvim_smoke_completion_origin_keys() {
 
     let app_origin = scenario_source("completion_origin_keys", "locales/en/app.ftl");
     let menu_origin = scenario_source("completion_origin_keys", "locales/en/dialogs/menu.ftl");
-    let top_level_source = result["top_level_source"].as_str().unwrap();
-    let bare_dot_source = result["bare_dot_source"].as_str().unwrap();
-    let attribute_prefix_source = result["attribute_prefix_source"].as_str().unwrap();
     let empty = HashMap::new();
-
-    let top_level_labels = completion_labels_for_source(
+    let top_level_source = scenario_source("completion_origin_keys", "locales/es/app_download.ftl");
+    let commented_source =
+        scenario_source("completion_origin_keys", "locales/es/app_commented.ftl");
+    let bare_dot_source = scenario_source(
         "completion_origin_keys",
-        "locales/es/app.ftl",
-        top_level_source,
-        position_after(top_level_source, "down"),
+        "locales/es/dialogs/menu_bare_dot.ftl",
     );
+    let attribute_prefix_source = scenario_source(
+        "completion_origin_keys",
+        "locales/es/dialogs/menu_label_prefix.ftl",
+    );
+
+    let top_level_items = completion_items_for_source(
+        "completion_origin_keys",
+        "locales/es/app_download.ftl",
+        &top_level_source,
+        position_after(&top_level_source, "down"),
+    );
+    let top_level_labels = completion_labels(&top_level_items);
     assert_eq!(
         top_level_labels,
         vec!["download-action".to_string(), "download-count".to_string()]
@@ -274,22 +345,41 @@ fn nvim_smoke_completion_origin_keys() {
         );
     }
 
-    let bare_dot_labels = completion_labels_for_source(
+    let commented_items = completion_items_for_source(
         "completion_origin_keys",
-        "locales/es/dialogs/menu.ftl",
-        bare_dot_source,
-        position_after(bare_dot_source, "."),
+        "locales/es/app_commented.ftl",
+        &commented_source,
+        position_after(&commented_source, "commented"),
     );
+    assert_eq!(
+        completion_labels(&commented_items),
+        vec!["commented-preview".to_string()]
+    );
+    let (commented_docs, commented_kind) =
+        completion_documentation(&commented_items, "commented-preview");
+    assert_eq!(commented_kind, Some("markdown"));
+    assert!(commented_docs.contains("# Completion doc coverage"));
+    assert!(commented_docs.contains("# Keep this note in completion hover"));
+    assert!(commented_docs.contains("commented-preview = Preview text for completion docs."));
+
+    let bare_dot_items = completion_items_for_source(
+        "completion_origin_keys",
+        "locales/es/dialogs/menu_bare_dot.ftl",
+        &bare_dot_source,
+        position_after(&bare_dot_source, "."),
+    );
+    let bare_dot_labels = completion_labels(&bare_dot_items);
     assert_eq!(
         bare_dot_labels,
         vec![".label".to_string(), ".tooltip".to_string()]
     );
-    let attribute_prefix_labels = completion_labels_for_source(
+    let attribute_prefix_items = completion_items_for_source(
         "completion_origin_keys",
-        "locales/es/dialogs/menu.ftl",
-        attribute_prefix_source,
-        position_after(attribute_prefix_source, ".l"),
+        "locales/es/dialogs/menu_label_prefix.ftl",
+        &attribute_prefix_source,
+        position_after(&attribute_prefix_source, ".l"),
     );
+    let attribute_prefix_labels = completion_labels(&attribute_prefix_items);
     assert_eq!(attribute_prefix_labels, vec![".label".to_string()]);
     for attribute in ["menu-save.label", "menu-save.tooltip"] {
         assert!(
@@ -297,6 +387,11 @@ fn nvim_smoke_completion_origin_keys() {
             "missing origin attribute for {attribute}"
         );
     }
+    let (tooltip_docs, tooltip_kind) = completion_documentation(&bare_dot_items, ".tooltip");
+    assert_eq!(tooltip_kind, Some("markdown"));
+    assert!(tooltip_docs.contains("# Menu completion documentation"));
+    assert!(tooltip_docs.contains("# Keep this entry visible in completion hover"));
+    assert!(tooltip_docs.contains(".tooltip = Save this file"));
 }
 
 #[test]
@@ -312,73 +407,87 @@ fn nvim_smoke_hover_translation() {
 
     let origin = scenario_source("hover_translation", "locales/en/app.ftl");
     let current = scenario_source("hover_translation", "locales/es/app.ftl");
+    assert_eq!(
+        extract_ftl_blocks(hover_value(&result, "key")),
+        vec![
+            "# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave".to_string(),
+            "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover".to_string()
+        ]
+    );
     assert_hover_block_matches(
         hover_value(&result, "body"),
         0,
-        &origin,
+        &current,
         "welcome-body",
         &[],
     );
     assert_hover_block_matches(
         hover_value(&result, "body"),
         1,
-        &current,
+        &origin,
         "welcome-body",
         &[],
+    );
+    assert_eq!(
+        extract_ftl_blocks(hover_value(&result, "empty")),
+        vec![
+            "<empty>".to_string(),
+            "English empty preview fallback.".to_string()
+        ]
     );
     assert_hover_block_matches(
         hover_value(&result, "selector"),
         0,
-        &origin,
+        &current,
         "install-hint",
         &[("$gender", "female")],
     );
     assert_hover_block_matches(
         hover_value(&result, "selector"),
         1,
-        &current,
+        &origin,
         "install-hint",
         &[("$gender", "female")],
     );
     assert_hover_block_matches(
         hover_value(&result, "attribute"),
         0,
-        &origin,
+        &current,
         "download-action.tooltip",
         &[],
     );
     assert_hover_block_matches(
         hover_value(&result, "attribute"),
         1,
-        &current,
+        &origin,
         "download-action.tooltip",
         &[],
     );
     assert_hover_block_matches(
         hover_value(&result, "post_selector"),
         0,
-        &origin,
+        &current,
         "install-hint",
         &[("$gender", "other")],
     );
     assert_hover_block_matches(
         hover_value(&result, "post_selector"),
         1,
-        &current,
+        &origin,
         "install-hint",
         &[("$gender", "other")],
     );
     assert_hover_block_matches(
         hover_value(&result, "second_selector"),
         0,
-        &origin,
+        &current,
         "install-hint",
         &[("$gender", "other"), ("$count", "one")],
     );
     assert_hover_block_matches(
         hover_value(&result, "second_selector"),
         1,
-        &current,
+        &origin,
         "install-hint",
         &[("$gender", "other"), ("$count", "one")],
     );
@@ -394,42 +503,42 @@ fn nvim_smoke_hover_selector_mismatch() {
     assert_hover_block_matches(
         hover_value(&result, "mismatch"),
         0,
-        &origin,
-        "mismatch-rollout",
-        &[("$count", "other")],
-    );
-    assert_hover_block_matches(
-        hover_value(&result, "mismatch"),
-        1,
         &current,
         "mismatch-rollout",
         &[("$gender", "female")],
     );
     assert_hover_block_matches(
+        hover_value(&result, "mismatch"),
+        1,
+        &origin,
+        "mismatch-rollout",
+        &[("$count", "other")],
+    );
+    assert_hover_block_matches(
         hover_value(&result, "zero"),
         0,
-        &origin,
+        &current,
         "mismatch-rollout",
         &[("$count", "0")],
     );
     assert_hover_block_matches(
         hover_value(&result, "zero"),
         1,
-        &current,
+        &origin,
         "mismatch-rollout",
         &[("$count", "0")],
     );
     assert_hover_block_matches(
         hover_value(&result, "one"),
         0,
-        &origin,
+        &current,
         "mismatch-rollout",
         &[("$count", "1")],
     );
     assert_hover_block_matches(
         hover_value(&result, "one"),
         1,
-        &current,
+        &origin,
         "mismatch-rollout",
         &[("$count", "1")],
     );
@@ -445,28 +554,28 @@ fn nvim_smoke_hover_selector_zero_lv() {
     assert_hover_block_matches(
         hover_value(&result, "zero"),
         0,
-        &origin,
+        &current,
         "zero-rollout",
         &[("$count", "zero")],
     );
     assert_hover_block_matches(
         hover_value(&result, "zero"),
         1,
-        &current,
+        &origin,
         "zero-rollout",
         &[("$count", "zero")],
     );
     assert_hover_block_matches(
         hover_value(&result, "one"),
         0,
-        &origin,
+        &current,
         "zero-rollout",
         &[("$count", "one")],
     );
     assert_hover_block_matches(
         hover_value(&result, "one"),
         1,
-        &current,
+        &origin,
         "zero-rollout",
         &[("$count", "one")],
     );
@@ -532,8 +641,8 @@ fn nvim_smoke_code_action_fill_missing_keys() {
         "hello = Hola Mundo\nmenu-save =\n    .label = Guardar\n    .tooltip = { \"\" }\n\nsync-status = { \"\" }\n\n"
     );
     assert_eq!(
-        render_fluent_preview_text(final_buffer, "hello", None).as_deref(),
-        Some("Hola Mundo")
+        runtime_message_text(final_buffer, "es", "hello"),
+        "Hola Mundo"
     );
 }
 
@@ -551,16 +660,16 @@ fn nvim_smoke_code_action_copy_missing_keys() {
     );
     assert_eq!(final_buffer.matches("# [LSP-COPY]").count(), 2);
     assert_eq!(
-        render_fluent_preview_text(final_buffer, "hello", None).as_deref(),
-        Some("Hola Mundo")
+        runtime_message_text(final_buffer, "es", "hello"),
+        "Hola Mundo"
     );
     assert_eq!(
-        render_fluent_preview_text(final_buffer, "menu-save.tooltip", None).as_deref(),
-        render_fluent_preview_text(&origin, "menu-save.tooltip", None).as_deref()
+        runtime_message_text(final_buffer, "es", "menu-save.tooltip"),
+        runtime_message_text(&origin, "en", "menu-save.tooltip")
     );
     assert_eq!(
-        render_fluent_preview_text(final_buffer, "sync-status", None).as_deref(),
-        render_fluent_preview_text(&origin, "sync-status", None).as_deref()
+        runtime_message_text(final_buffer, "es", "sync-status"),
+        runtime_message_text(&origin, "en", "sync-status")
     );
 }
 
@@ -579,8 +688,8 @@ fn nvim_smoke_code_action_copy_single_key() {
     );
     assert_eq!(copied_key_buffer.matches("# [LSP-COPY]").count(), 1);
     assert_eq!(
-        render_fluent_preview_text(copied_key_buffer, "hello", None).as_deref(),
-        render_fluent_preview_text(&origin, "hello", None).as_deref()
+        runtime_message_text(copied_key_buffer, "es", "hello"),
+        runtime_message_text(&origin, "en", "hello")
     );
 
     let copied_attribute_buffer = result["copied_attribute_buffer"].as_str().unwrap();
@@ -591,9 +700,8 @@ fn nvim_smoke_code_action_copy_single_key() {
     );
     assert_eq!(copied_attribute_buffer.matches("# [LSP-COPY]").count(), 1);
     assert_eq!(
-        render_fluent_preview_text(copied_attribute_buffer, "download-action.tooltip", None)
-            .as_deref(),
-        render_fluent_preview_text(&origin, "download-action.tooltip", None).as_deref()
+        runtime_message_text(copied_attribute_buffer, "es", "download-action.tooltip"),
+        runtime_message_text(&origin, "en", "download-action.tooltip")
     );
 }
 
@@ -610,16 +718,18 @@ fn nvim_smoke_diagnostics_lsp_copy_markers() {
 
     let initial_messages = result["initial_messages"].as_array().unwrap();
     assert_eq!(initial_messages.len(), 2);
-    assert!(initial_messages.iter().all(|message| {
-        message == "Entry still contains an `# [LSP-COPY]` marker"
-    }));
+    assert!(
+        initial_messages
+            .iter()
+            .all(|message| { message == "Entry still contains an `# [LSP-COPY]` marker" })
+    );
 
     let final_buffer = result["final_buffer"].as_str().unwrap();
     assert_fluent_parses(final_buffer);
     assert_eq!(final_buffer.matches("# [LSP-COPY]").count(), 0);
     assert_eq!(
-        render_fluent_preview_text(final_buffer, "download-action.tooltip", None).as_deref(),
-        Some("Download this build")
+        runtime_message_text(final_buffer, "es", "download-action.tooltip"),
+        "Download this build"
     );
 }
 
@@ -630,19 +740,12 @@ fn nvim_smoke_diagnostics_parse_errors() {
     assert_fluent_parses(result["final_buffer"].as_str().unwrap());
 }
 
-fn position_of(source: &str, needle: &str) -> (u32, u32) {
+fn position_after(source: &str, needle: &str) -> (u32, u32) {
     let offset = source.find(needle).expect("needle not found");
     let prefix = &source[..offset];
     let line = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count()).unwrap();
     let line_start = prefix.rfind('\n').map(|idx| idx + 1).unwrap_or(0);
-    let character = u32::try_from(source[line_start..offset].chars().count()).unwrap();
+    let character = u32::try_from(source[line_start..offset + needle.len()].chars().count())
+        .expect("needle char count fits u32");
     (line, character)
-}
-
-fn position_after(source: &str, needle: &str) -> (u32, u32) {
-    let (line, character) = position_of(source, needle);
-    (
-        line,
-        character + u32::try_from(needle.chars().count()).unwrap(),
-    )
 }
