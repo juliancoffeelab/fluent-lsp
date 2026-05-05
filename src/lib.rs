@@ -938,6 +938,7 @@ impl IndexActor {
                     range: Some(hover_range),
                 }));
             }
+            return Ok(None);
         }
         let resource = parse_fluent_resource(&file.source);
         let Some(pattern) = find_fluent_pattern(&resource, &key) else {

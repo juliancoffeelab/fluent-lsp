@@ -24,8 +24,18 @@ end
 
 local function request_hover(client_id)
   local responses = vim.lsp.buf_request_sync(0, "textDocument/hover", position_params(), 3000)
-  local hover = assert(responses[client_id] and responses[client_id].result, "missing hover")
-  return hover.contents.value
+  assert(responses[client_id], "missing hover response")
+  return responses[client_id].result
+end
+
+local function wait_for_hover(client_id)
+  local hover
+  local ready = vim.wait(3000, function()
+    hover = request_hover(client_id)
+    return hover ~= nil and hover ~= vim.NIL
+  end, 50)
+  assert(ready, "hover result not ready")
+  return hover
 end
 
 function M.run()
@@ -49,25 +59,45 @@ function M.run()
   local found = vim.fn.searchpos("label = Save copy", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  local key_hover = request_hover(client_id)
+  local key_hover = wait_for_hover(client_id)
   assert(
-    key_hover == "```ftl\n# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover\n```",
-    "unexpected origin key hover comments: " .. key_hover
+    key_hover and key_hover.contents.value == "```ftl\n# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover\n```",
+    "unexpected origin key hover comments: " .. vim.inspect(key_hover)
   )
 
   found = vim.fn.searchpos("Save a copy before closing the dialog", "n")
   vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
 
-  local body_hover = request_hover(client_id)
-  assert(body_hover == "```ftl\nSave a copy before closing the dialog\n```", "unexpected origin body hover preview: " .. body_hover)
-  assert(not body_hover:match("\n\n---\n\n"), "origin hover should not duplicate source/current sections")
+  local body_hover = wait_for_hover(client_id)
+  assert(
+    body_hover and body_hover.contents.value == "```ftl\nSave a copy before closing the dialog\n```",
+    "unexpected origin body hover preview: " .. vim.inspect(body_hover)
+  )
+  assert(not body_hover.contents.value:match("\n\n---\n\n"), "origin hover should not duplicate source/current sections")
+
+  found = vim.fn.searchpos("plain-menu =", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+
+  local uncommented_key_hover = request_hover(client_id)
+  assert(uncommented_key_hover == vim.NIL or uncommented_key_hover == nil, "uncommented key hover should be null")
+
+  found = vim.fn.searchpos("Save the latest draft without opening the dialog", "n")
+  vim.api.nvim_win_set_cursor(0, { found[1], found[2] - 1 })
+
+  local uncommented_body_hover = wait_for_hover(client_id)
+  assert(
+    uncommented_body_hover and uncommented_body_hover.contents.value == "```ftl\nSave the latest draft without opening the dialog\n```",
+    "unexpected uncommented body hover preview: " .. vim.inspect(uncommented_body_hover)
+  )
 
   write_result(result_path, {
     ok = true,
     feature = "hover_origin_language",
     hovers = {
-      key = key_hover,
-      body = body_hover,
+      key = key_hover.contents.value,
+      body = body_hover.contents.value,
+      uncommented_key = uncommented_key_hover,
+      uncommented_body = uncommented_body_hover.contents.value,
     },
   })
   vim.cmd.qa()

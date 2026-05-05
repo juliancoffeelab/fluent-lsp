@@ -1654,6 +1654,38 @@ fn hover_body_preview_stays_semantic_across_translation_locales() {
 }
 
 #[test]
+fn hover_on_uncommented_key_does_not_fall_back_to_body_preview() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+    initialize_lsp(&mut lsp, &root, 62);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_hover = request_hover(
+        &mut lsp,
+        63,
+        &source_path,
+        position_of(&source_text, "zero-rollout"),
+    );
+    assert_eq!(
+        key_hover["result"],
+        Value::Null,
+        "key hover should not degrade into body preview: {key_hover:?}"
+    );
+
+    let body_hover = request_hover(
+        &mut lsp,
+        64,
+        &source_path,
+        position_of(&source_text, "Zero summary"),
+    );
+    let body_value = body_hover["result"]["contents"]["value"].as_str().unwrap();
+    assert_hover_block_matches(body_value, 0, &source_text, "zero-rollout", &[]);
+}
+
+#[test]
 fn code_lens_opens_full_selector_combinations_document() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");

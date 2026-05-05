@@ -14,3 +14,7 @@ menu-cancel =
 commented-menu =
     .label = Save copy
     .tooltip = Save a copy before closing the dialog
+
+plain-menu =
+    .label = Quick save
+    .tooltip = Save the latest draft without opening the dialog
