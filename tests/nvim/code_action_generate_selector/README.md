@@ -25,6 +25,7 @@ It verifies these client-visible behaviors:
 - selectors in the middle of a larger pattern can still rewrite their containing pattern when the cursor is on that selector
 - the `install-hint` `$count` selector can collapse into a local suffix form without disturbing the earlier `$gender` selector
 - the `install-hint` `$gender` selector can rewrite the whole containing pattern, preserving the nested `$count` selector inside each branch
+- whole rewrites that replace a message value immediately after `=` keep the assignment spacing as `= {`, not `={`
 - `fluent-lsp.toml` `selector_style` overrides client settings after the server is restarted
 
 How the scenario is exercised:
@@ -62,6 +63,8 @@ How the scenario is exercised:
 - asserts the server offers a local `suffix` rewrite on the containing pattern while preserving the earlier `$gender` selector
 - requests `textDocument/codeAction` on the `$gender` selector inside `install-hint`
 - asserts the server offers a local `whole` rewrite that nests the existing `$count` selector inside each generated branch
+- requests `textDocument/codeAction` on the `$count` selector inside `zero-rollout`
+- asserts the whole-form rewrite text starts with a leading space so applying it preserves `zero-rollout = { ... }`
 - requests `textDocument/codeAction` inside `nested-coins`
 - asserts the nested rewrite stays within the selected branch pattern
 - rewrites `workspace/fluent-lsp.toml` to `selector_style = "whole"`

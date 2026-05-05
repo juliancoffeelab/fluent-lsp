@@ -50,3 +50,9 @@ nested-whole-coins =
         }
        *[other] Elle tiene { $coins } monedas.
     }
+zero-rollout =
+    Resumen cero: { $count ->
+        [zero] ningun paquete listo.
+        [one] un paquete listo.
+       *[other] { $count } paquetes listos.
+    }
