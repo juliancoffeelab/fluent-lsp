@@ -10,7 +10,9 @@ This scenario covers the global workspace index as observed from Neovim:
 - indexed `textDocument/completion` after live edits
 - background disk discovery of newly added and removed translation files
 - local-only-file warning diagnostics
+- translation-only key and attribute warning diagnostics
 - background clearing of the local-only warning when the origin counterpart appears
+- background clearing of translation-only key and attribute warnings when the origin file adds those counterparts
 - dirty-buffer close reversion back to disk-backed index content
 
 ## How The Scenario Is Exercised
@@ -18,6 +20,8 @@ This scenario covers the global workspace index as observed from Neovim:
 The smoke script starts `fluent-lsp` through Neovim's standard LSP client, opens the scenario-local Spanish translation, edits the origin and translation buffers through Neovim buffer APIs, and issues standard LSP requests. It verifies that live edits update index-backed definition, references, hover, and completion without restarting the server. It then closes a dirty translation buffer and confirms references revert to the saved disk content.
 
 The scenario also writes and deletes a scenario-local French translation file on disk and waits for the background index worker to surface and then remove the new reference. The local-only warning is exercised by opening and saving `locales/es/local.ftl`, which initially has no `locales/en/local.ftl` counterpart, then writing `locales/en/local.ftl` and waiting for the warning to clear through standard `publishDiagnostics`.
+
+Translation-only entry warnings are exercised by opening and saving `locales/es/orphans.ftl`, which has an English counterpart file but contains one extra top-level message and one extra attribute not present in `locales/en/orphans.ftl`. The smoke then updates the English origin file on disk and waits for both translation-only warnings to clear through standard `publishDiagnostics`.
 
 ## Assumptions
 
@@ -29,5 +33,7 @@ All source-under-test files are local to this scenario:
 
 - `tests/nvim/index_invalidation_local_only/workspace/fluent-lsp.toml`
 - `tests/nvim/index_invalidation_local_only/workspace/locales/en/app.ftl`
+- `tests/nvim/index_invalidation_local_only/workspace/locales/en/orphans.ftl`
 - `tests/nvim/index_invalidation_local_only/workspace/locales/es/app.ftl`
 - `tests/nvim/index_invalidation_local_only/workspace/locales/es/local.ftl`
+- `tests/nvim/index_invalidation_local_only/workspace/locales/es/orphans.ftl`

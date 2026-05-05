@@ -632,6 +632,7 @@ impl WorkspaceIndex {
         files
     }
 
+    #[cfg(test)]
     fn local_only_files(&self, workspace: &WorkspaceConfig) -> Vec<&IndexedFile> {
         let mut files = self
             .files
@@ -694,8 +695,7 @@ struct DiskRefreshEvent {
 }
 
 #[derive(Debug)]
-struct LocalOnlyDiagnosticUpdate {
-    clears: Vec<Uri>,
+struct IndexedDiagnosticUpdate {
     batches: Vec<(Uri, Vec<Diagnostic>)>,
 }
 
@@ -739,11 +739,11 @@ enum IndexMessage {
         path: PathBuf,
         reply: oneshot::Sender<Option<String>>,
     },
-    LocalOnlyDiagnostic {
+    IndexedTranslationDiagnostics {
         path: PathBuf,
-        reply: oneshot::Sender<Option<Diagnostic>>,
+        reply: oneshot::Sender<Vec<Diagnostic>>,
     },
-    LocalOnlyDiagnosticBatches {
+    IndexedTranslationDiagnosticBatches {
         reply: oneshot::Sender<Vec<(Uri, Vec<Diagnostic>)>>,
     },
 }
@@ -753,7 +753,7 @@ struct IndexActor {
     index: WorkspaceIndex,
     overlays: HashMap<PathBuf, String>,
     client_config: ClientConfig,
-    notification_tx: mpsc::UnboundedSender<LocalOnlyDiagnosticUpdate>,
+    notification_tx: mpsc::UnboundedSender<IndexedDiagnosticUpdate>,
 }
 
 pub struct Backend {
@@ -767,7 +767,7 @@ impl IndexActor {
         index: WorkspaceIndex,
         overlays: HashMap<PathBuf, String>,
         client_config: ClientConfig,
-        notification_tx: mpsc::UnboundedSender<LocalOnlyDiagnosticUpdate>,
+        notification_tx: mpsc::UnboundedSender<IndexedDiagnosticUpdate>,
     ) -> Self {
         Self {
             workspace,
@@ -778,32 +778,55 @@ impl IndexActor {
         }
     }
 
-    fn local_only_diagnostic_batches(&self) -> Vec<(Uri, Vec<Diagnostic>)> {
-        let settings = self
-            .workspace
-            .effective_diagnostic_config(self.client_config);
+    fn indexed_translation_diagnostics_for(&self, path: &Path) -> Vec<Diagnostic> {
+        let Some(file) = self.index.file(path) else {
+            return Vec::new();
+        };
+        if file.file_match.language == self.workspace.origin_language {
+            return Vec::new();
+        }
+        match self.index.origin_for(&self.workspace, file) {
+            Some(origin) => collect_translation_counterpart_diagnostics(file, origin),
+            None => vec![local_only_file_diagnostic(file)],
+        }
+    }
+
+    fn indexed_translation_warning_paths(&self) -> HashSet<PathBuf> {
         self.index
-            .local_only_files(&self.workspace)
-            .into_iter()
-            .filter_map(|file| {
-                let uri = Uri::from_file_path(&file.path)?;
-                let mut diagnostics =
-                    collect_document_diagnostics(&file.source, &file.file_match.language, settings);
-                diagnostics.push(local_only_file_diagnostic(file));
-                Some((uri, diagnostics))
+            .files
+            .values()
+            .filter(|file| file.file_match.language != self.workspace.origin_language)
+            .filter(|file| {
+                !self
+                    .indexed_translation_diagnostics_for(&file.path)
+                    .is_empty()
             })
+            .map(|file| file.path.clone())
             .collect()
     }
 
-    fn local_only_diagnostic_for(&self, path: &Path) -> Option<Diagnostic> {
+    fn diagnostic_batch_for_path(&self, path: &Path) -> Option<(Uri, Vec<Diagnostic>)> {
         let file = self.index.file(path)?;
-        if file.file_match.language != self.workspace.origin_language
-            && self.index.origin_for(&self.workspace, file).is_none()
-        {
-            Some(local_only_file_diagnostic(file))
-        } else {
-            None
-        }
+        let uri = Uri::from_file_path(path)?;
+        let settings = self
+            .workspace
+            .effective_diagnostic_config(self.client_config);
+        let mut diagnostics =
+            collect_document_diagnostics(&file.source, &file.file_match.language, settings);
+        diagnostics.extend(self.indexed_translation_diagnostics_for(path));
+        Some((uri, diagnostics))
+    }
+
+    fn indexed_translation_diagnostic_batches(&self) -> Vec<(Uri, Vec<Diagnostic>)> {
+        let mut paths = self
+            .indexed_translation_warning_paths()
+            .into_iter()
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+            .into_iter()
+            .filter_map(|path| self.diagnostic_batch_for_path(&path))
+            .collect()
     }
 
     fn update_overlay(&mut self, path: PathBuf, text: String) {
@@ -819,32 +842,26 @@ impl IndexActor {
     }
 
     fn apply_disk_refresh(&mut self, event: DiskRefreshEvent) {
-        let previous_local_only = self
-            .index
-            .local_only_files(&self.workspace)
-            .into_iter()
-            .map(|file| file.path.clone())
-            .collect::<HashSet<_>>();
+        let previous_warning_paths = self.indexed_translation_warning_paths();
         self.index.apply_disk_changes(
             &self.workspace,
             &self.pathbuf_overlays_as_uri_map(),
             &event.changed_or_added,
             &event.removed,
         );
-        let current_local_only = self
-            .index
-            .local_only_files(&self.workspace)
-            .into_iter()
-            .map(|file| file.path.clone())
-            .collect::<HashSet<_>>();
-        let clears = previous_local_only
-            .difference(&current_local_only)
-            .filter_map(|path| Uri::from_file_path(path))
+        let current_warning_paths = self.indexed_translation_warning_paths();
+        let mut affected_paths = previous_warning_paths
+            .union(&current_warning_paths)
+            .cloned()
             .collect::<Vec<_>>();
-        let batches = self.local_only_diagnostic_batches();
+        affected_paths.sort();
+        let batches = affected_paths
+            .into_iter()
+            .filter_map(|path| self.diagnostic_batch_for_path(&path))
+            .collect::<Vec<_>>();
         let _ = self
             .notification_tx
-            .send(LocalOnlyDiagnosticUpdate { clears, batches });
+            .send(IndexedDiagnosticUpdate { batches });
     }
 
     fn pathbuf_overlays_as_uri_map(&self) -> HashMap<Uri, String> {
@@ -1045,11 +1062,11 @@ impl IndexActor {
                 IndexMessage::OriginSource { path, reply } => {
                     let _ = reply.send(self.origin_source(&path));
                 }
-                IndexMessage::LocalOnlyDiagnostic { path, reply } => {
-                    let _ = reply.send(self.local_only_diagnostic_for(&path));
+                IndexMessage::IndexedTranslationDiagnostics { path, reply } => {
+                    let _ = reply.send(self.indexed_translation_diagnostics_for(&path));
                 }
-                IndexMessage::LocalOnlyDiagnosticBatches { reply } => {
-                    let _ = reply.send(self.local_only_diagnostic_batches());
+                IndexMessage::IndexedTranslationDiagnosticBatches { reply } => {
+                    let _ = reply.send(self.indexed_translation_diagnostic_batches());
                 }
             }
         }
@@ -1142,9 +1159,6 @@ impl Backend {
         let client = self.client.clone();
         tokio::spawn(async move {
             while let Some(update) = notification_rx.recv().await {
-                for uri in update.clears {
-                    client.publish_diagnostics(uri, Vec::new(), None).await;
-                }
                 for (uri, diagnostics) in update.batches {
                     client.publish_diagnostics(uri, diagnostics, None).await;
                 }
@@ -1307,9 +1321,9 @@ impl Backend {
             .await;
     }
 
-    async fn publish_local_only_diagnostics(&self) {
+    async fn publish_indexed_translation_diagnostics(&self) {
         let Some(batches) = self
-            .request_index(|reply| IndexMessage::LocalOnlyDiagnosticBatches { reply })
+            .request_index(|reply| IndexMessage::IndexedTranslationDiagnosticBatches { reply })
             .await
         else {
             return;
@@ -1357,16 +1371,14 @@ impl Backend {
 
         let settings = workspace.effective_diagnostic_config(client_config);
         let mut diagnostics = collect_document_diagnostics(&source, &language, settings);
-        let local_only = match uri.to_file_path().map(|path| path.into_owned()) {
+        let indexed_translation = match uri.to_file_path().map(|path| path.into_owned()) {
             Some(path) => self
-                .request_index(|reply| IndexMessage::LocalOnlyDiagnostic { path, reply })
+                .request_index(|reply| IndexMessage::IndexedTranslationDiagnostics { path, reply })
                 .await
-                .flatten(),
-            None => None,
+                .unwrap_or_default(),
+            None => Vec::new(),
         };
-        if let Some(local_only) = local_only {
-            diagnostics.push(local_only);
-        }
+        diagnostics.extend(indexed_translation);
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, None)
             .await;
@@ -2009,7 +2021,7 @@ impl LanguageServer for Backend {
                     )
                     .await;
                 self.rebuild_index_with_progress().await;
-                self.publish_local_only_diagnostics().await;
+                self.publish_indexed_translation_diagnostics().await;
             }
             None => {
                 let root = root
@@ -2087,7 +2099,7 @@ impl LanguageServer for Backend {
         self.rebuild_index_with_progress().await;
         self.send_index_message(IndexMessage::SetClientConfig { client_config })
             .await;
-        self.publish_local_only_diagnostics().await;
+        self.publish_indexed_translation_diagnostics().await;
     }
 
     async fn goto_definition(
@@ -2814,6 +2826,97 @@ fn local_only_file_diagnostic(file: &IndexedFile) -> Diagnostic {
         ),
         ..Diagnostic::default()
     }
+}
+
+fn translation_counterpart_diagnostic(range: Range, message: String) -> Diagnostic {
+    Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::WARNING),
+        source: Some("fluent-lsp".to_string()),
+        message,
+        ..Diagnostic::default()
+    }
+}
+
+fn collect_translation_counterpart_diagnostics(
+    translation: &IndexedFile,
+    origin: &IndexedFile,
+) -> Vec<Diagnostic> {
+    let resource = parse_fluent_resource(&translation.source);
+    let mut diagnostics = Vec::new();
+
+    for entry in resource.body {
+        match entry {
+            Entry::Message(message) => {
+                let message_key = message.id.name.to_string();
+                if !origin.keys.contains(&message_key) {
+                    if let Some(range) = translation.definitions.get(&message_key).copied() {
+                        diagnostics.push(translation_counterpart_diagnostic(
+                            range,
+                            format!(
+                                "Translation entry `{message_key}` has no origin-language counterpart"
+                            ),
+                        ));
+                    }
+                    continue;
+                }
+
+                for attribute in message.attributes {
+                    let key = format!("{}.{}", message_key, attribute.id.name);
+                    if origin.keys.contains(&key) {
+                        continue;
+                    }
+                    if let Some(range) = translation.definitions.get(&key).copied() {
+                        diagnostics.push(translation_counterpart_diagnostic(
+                            range,
+                            format!(
+                                "Translation attribute `{key}` has no origin-language counterpart"
+                            ),
+                        ));
+                    }
+                }
+            }
+            Entry::Term(term) => {
+                let term_key = format!("-{}", term.id.name);
+                if !origin.keys.contains(&term_key) {
+                    if let Some(range) = translation.definitions.get(&term_key).copied() {
+                        diagnostics.push(translation_counterpart_diagnostic(
+                            range,
+                            format!(
+                                "Translation entry `{term_key}` has no origin-language counterpart"
+                            ),
+                        ));
+                    }
+                    continue;
+                }
+
+                for attribute in term.attributes {
+                    let key = format!("{term_key}.{}", attribute.id.name);
+                    if origin.keys.contains(&key) {
+                        continue;
+                    }
+                    if let Some(range) = translation.definitions.get(&key).copied() {
+                        diagnostics.push(translation_counterpart_diagnostic(
+                            range,
+                            format!(
+                                "Translation attribute `{key}` has no origin-language counterpart"
+                            ),
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    diagnostics.sort_by_key(|diagnostic| {
+        (
+            diagnostic.range.start.line,
+            diagnostic.range.start.character,
+            diagnostic.message.clone(),
+        )
+    });
+    diagnostics
 }
 
 fn collect_parse_error_diagnostics(

@@ -717,6 +717,98 @@ fn local_only_file_warning_updates_when_origin_counterpart_appears() {
 }
 
 #[test]
+fn translation_only_keys_warn_and_clear_when_origin_adds_counterparts() {
+    let workspace = tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/en")).unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/es")).unwrap();
+    std::fs::write(
+        workspace.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+    )
+    .unwrap();
+
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let translation_path = workspace.path().join("locales/es/app.ftl");
+    let origin_text = "shared = Hello\nmenu =\n    .label = Save\n";
+    let translation_text = "shared = Hola\nextra = Solo local\nmenu =\n    .label = Guardar\n    .tooltip = Solo aqui\n";
+    std::fs::write(&origin_path, origin_text).unwrap();
+    std::fs::write(&translation_path, translation_text).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 153);
+    send_open_document(&mut lsp, &translation_path, translation_text);
+    send_save_document(&mut lsp, &translation_path, Some(translation_text));
+
+    let warning = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let diagnostics = warning["params"]["diagnostics"].as_array().unwrap();
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["message"]
+            == Value::String(
+                "Translation entry `extra` has no origin-language counterpart".to_string(),
+            )
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["message"]
+            == Value::String(
+                "Translation attribute `menu.tooltip` has no origin-language counterpart"
+                    .to_string(),
+            )
+    }));
+    let extra = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                == Value::String(
+                    "Translation entry `extra` has no origin-language counterpart".to_string(),
+                )
+        })
+        .unwrap();
+    assert_eq!(
+        extra["range"]["start"]["line"],
+        Value::from(position_of(translation_text, "extra").0)
+    );
+    let tooltip = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                == Value::String(
+                    "Translation attribute `menu.tooltip` has no origin-language counterpart"
+                        .to_string(),
+                )
+        })
+        .unwrap();
+    assert_eq!(
+        tooltip["range"]["start"]["line"],
+        Value::from(position_of(translation_text, "tooltip").0)
+    );
+
+    std::fs::write(
+        &origin_path,
+        "shared = Hello\nextra = Origin now exists\nmenu =\n    .label = Save\n    .tooltip = Origin tooltip\n",
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let extra_text =
+        Value::String("Translation entry `extra` has no origin-language counterpart".to_string());
+    let tooltip_text = Value::String(
+        "Translation attribute `menu.tooltip` has no origin-language counterpart".to_string(),
+    );
+    loop {
+        let cleared = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+        if cleared["params"]["uri"]
+            != Value::String(format!("file://{}", translation_path.display()))
+        {
+            continue;
+        }
+        let diagnostics = cleared["params"]["diagnostics"].as_array().unwrap();
+        if diagnostics.iter().all(|diagnostic| {
+            diagnostic["message"] != extra_text && diagnostic["message"] != tooltip_text
+        }) {
+            break;
+        }
+    }
+}
+
+#[test]
 fn completion_from_translation_uses_origin_language_keys_and_attributes() {
     let workspace = completion_workspace();
     let app_path = workspace.path().join("locales/es/app.ftl");

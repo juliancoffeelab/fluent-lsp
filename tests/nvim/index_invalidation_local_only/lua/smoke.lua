@@ -68,6 +68,23 @@ function M.run()
   local fr_app = workspace .. "/locales/fr/app.ftl"
   local es_local = workspace .. "/locales/es/local.ftl"
   local en_local = workspace .. "/locales/en/local.ftl"
+  local es_orphans = workspace .. "/locales/es/orphans.ftl"
+  local en_orphans = workspace .. "/locales/en/orphans.ftl"
+
+  vim.fn.writefile({ "hello = Hello", "", "# Edited docs", "fresh-key = Fresh value", "", "download-action = Download" }, en_app)
+  vim.fn.writefile({ "hello = Hola" }, es_app)
+  vim.fn.writefile({ "local-only = Solo local" }, es_local)
+  vim.fn.writefile({ "shared = Hello", "menu =", "    .label = Save" }, en_orphans)
+  vim.fn.writefile({
+    "shared = Hola",
+    "extra = Solo local",
+    "menu =",
+    "    .label = Guardar",
+    "    .tooltip = Solo aqui",
+  }, es_orphans)
+  vim.fn.delete(en_local)
+  vim.fn.delete(fr_app)
+
   vim.cmd.edit(es_app)
   local client_id = start_client(server, workspace)
   wait_client()
@@ -164,6 +181,47 @@ function M.run()
     return true
   end, 100)
   assert(cleared, "background refresh did not clear local-only warning")
+
+  vim.cmd.edit(es_orphans)
+  attach_current(client_id)
+  wait_client()
+  vim.cmd.write()
+  local warned_entries = vim.wait(3000, function()
+    local saw_entry = false
+    local saw_attribute = false
+    for _, diagnostic in ipairs(vim.diagnostic.get(0)) do
+      if diagnostic.message == "Translation entry `extra` has no origin-language counterpart" then
+        saw_entry = true
+      elseif diagnostic.message == "Translation attribute `menu.tooltip` has no origin-language counterpart" then
+        saw_attribute = true
+      end
+    end
+    return saw_entry and saw_attribute
+  end, 50)
+  assert(warned_entries, "missing translation-only entry warnings")
+
+  vim.fn.writefile({
+    "shared = Hello",
+    "extra = Origin now exists",
+    "menu =",
+    "    .label = Save",
+    "    .tooltip = Origin tooltip",
+  }, en_orphans)
+  local cleared_entries = vim.wait(3000, function()
+    for _, diagnostic in ipairs(vim.diagnostic.get(0)) do
+      if diagnostic.message == "Translation entry `extra` has no origin-language counterpart" then
+        return false
+      end
+      if diagnostic.message == "Translation attribute `menu.tooltip` has no origin-language counterpart" then
+        return false
+      end
+    end
+    return true
+  end, 100)
+  assert(cleared_entries, "background refresh did not clear translation-only entry warnings")
+
+  vim.fn.delete(en_local)
+  vim.fn.delete(fr_app)
 
   write_result(result_path, {
     ok = true,
