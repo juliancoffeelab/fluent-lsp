@@ -1,1 +1,7 @@
 /target
+.nvimlog
+benchmarks/flamegraphs/*.stdout
+benchmarks/flamegraphs/*.trace/
+benchmarks/flamegraphs/*.xctrace.xml
+benchmarks/flamegraphs/*.inferno.folded
+benchmarks/flamegraphs/*.sample.txt
