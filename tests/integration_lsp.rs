@@ -509,6 +509,11 @@ fn set_trace_enables_request_timings_after_initialize() {
             "value": "verbose"
         }
     }));
+    let trace_ack = recv_log_trace_matching(&mut lsp, "trace updated value=verbose");
+    assert!(
+        trace_ack["params"]["verbose"].is_null(),
+        "unexpected verbose payload for trace ack: {trace_ack:?}"
+    );
     send_open_document(&mut lsp, &source_path, &source_text);
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -522,7 +527,7 @@ fn set_trace_enables_request_timings_after_initialize() {
             }
         }
     }));
-    let request_trace = recv_notification(&mut lsp, "$/logTrace");
+    let request_trace = recv_log_trace_matching(&mut lsp, "operation=textDocument/definition");
     let _ = recv_response(&mut lsp, 158);
     assert!(
         request_trace["params"]["message"]
@@ -694,13 +699,21 @@ fn local_only_file_warning_updates_when_origin_counterpart_appears() {
     )
     .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    send_save_document(&mut lsp, &local_path, Some(local_text));
-    let cleared = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
-    let diagnostics = cleared["params"]["diagnostics"].as_array().unwrap();
-    assert!(diagnostics.iter().all(|diagnostic| diagnostic["message"]
-        != Value::String(
-            "Translation file has no origin-language counterpart for `only`".to_string()
-        )));
+    let warning_text =
+        Value::String("Translation file has no origin-language counterpart for `only`".to_string());
+    loop {
+        let cleared = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+        if cleared["params"]["uri"] != Value::String(format!("file://{}", local_path.display())) {
+            continue;
+        }
+        let diagnostics = cleared["params"]["diagnostics"].as_array().unwrap();
+        if diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic["message"] != warning_text)
+        {
+            break;
+        }
+    }
 }
 
 #[test]
@@ -2977,6 +2990,18 @@ fn recv_notification(lsp: &mut LspProcess, method: &str) -> Value {
     loop {
         let message = lsp.recv();
         if message["method"] == Value::String(method.to_string()) {
+            return message;
+        }
+    }
+}
+
+fn recv_log_trace_matching(lsp: &mut LspProcess, needle: &str) -> Value {
+    loop {
+        let message = recv_notification(lsp, "$/logTrace");
+        if message["params"]["message"]
+            .as_str()
+            .is_some_and(|value| value.contains(needle))
+        {
             return message;
         }
     }

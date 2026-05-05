@@ -14,7 +14,9 @@ No custom editor integration was added. Index build progress uses standard `$/pr
 
 ## 3. Invalidation And Diagnostics
 
-Live editor invalidation is immediate through standard LSP document notifications. Disk-only file additions/deletions are detected by a periodic one-second index file-set refresh during requests; this avoids putting a full workspace scan on every warm request while still allowing newly created/deleted files to appear without restarting the server.
+Live editor invalidation is immediate through standard LSP document notifications, but those notifications now flow into the index through a dedicated background actor rather than mutating shared state directly. `didOpen`, `didChange`, `didSave`, and `didClose` send overlay updates over channels, and requests query the same actor over channels with `oneshot` replies.
+
+Disk-only file additions, deletions, and mtime changes are detected by a periodic background refresh worker. That worker derives discovery roots from `file_masks`, scans only those roots, compares the latest snapshot with the previous one, and sends disk deltas to the index actor. Warm requests no longer trigger recrawls themselves.
 
 Local-only translation files now publish a standard diagnostic on save: `Translation file has no origin-language counterpart for ...`. The warning clears after the matching origin file exists and the index refresh sees it.
 
@@ -123,7 +125,22 @@ Warm request p50, indexed release:
 
 Observation: this reduced-size comparison exposes a regression in the indexed request path. The indexed handlers currently clone the workspace index out of shared state for request processing; at this shape that clone cost dominates most warm requests. References improve slightly versus the on-demand scan, but definition, hover, completion, and code actions regress. The next optimization should remove whole-index cloning from request handlers and use scoped read locks or cheaper `Arc`-backed file entries.
 
-## 9. Standard Trace Timing Logs
+## 9. Veloren Performance Regression And Fix
+
+Running the indexed server against the Veloren repository exposed a much larger regression than the synthetic benchmark suggested. Veloren contains hundreds of thousands of files overall, but the configured Fluent masks cover only the localized `.ftl` tree. The indexed implementation still crawled the entire workspace root before filtering to matching files, so startup paid a repo-wide filesystem walk even though only a small subset of files could ever enter the index. That root crawl also happened before work-done progress started, which made startup appear to stall for several seconds before the progress bar moved at all.
+
+Warm requests were also doing the wrong work. The request path cloned the full `WorkspaceIndex` out of shared state, and a one-second request-time refresh path could trigger another full crawl if enough time had elapsed since the last scan. In a repository the size of Veloren, those two behaviors dominated hover, definition, completion, and reference latency.
+
+The fix was structural:
+
+- discovery now derives concrete root directories from `file_masks` and scans only those directories
+- the shared `RwLock<WorkspaceIndex>` request path was replaced with an actor-owned index queried over channels
+- request handlers no longer clone the full index; they send a query and receive only the specific result
+- disk refresh moved off the request path into a background worker that performs mask-scoped snapshot diffs and sends deltas to the actor
+
+This keeps standard LSP behavior intact while removing the repo-wide crawl and index-copy costs that made large workspaces feel catastrophically slow.
+
+## 10. Standard Trace Timing Logs
 
 Added standard LSP `$/logTrace` timing notifications. The server honors the initial `initialize.trace` value and runtime standard `$/setTrace` updates. No custom editor integration is required.
 

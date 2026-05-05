@@ -50,6 +50,14 @@ local function set_lines(text)
   vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.split(text, "\n", { plain = true }))
 end
 
+local function references_for_download()
+  return request("textDocument/references", {
+    textDocument = { uri = vim.uri_from_bufnr(0) },
+    position = position_of("download-action"),
+    context = { includeDeclaration = false },
+  })
+end
+
 function M.run()
   local workspace = assert(vim.env.FLUENT_LSP_WORKSPACE ~= "" and vim.env.FLUENT_LSP_WORKSPACE)
   local server = assert(vim.env.FLUENT_LSP_BIN ~= "" and vim.env.FLUENT_LSP_BIN)
@@ -57,6 +65,9 @@ function M.run()
 
   local es_app = workspace .. "/locales/es/app.ftl"
   local en_app = workspace .. "/locales/en/app.ftl"
+  local fr_app = workspace .. "/locales/fr/app.ftl"
+  local es_local = workspace .. "/locales/es/local.ftl"
+  local en_local = workspace .. "/locales/en/local.ftl"
   vim.cmd.edit(es_app)
   local client_id = start_client(server, workspace)
   wait_client()
@@ -101,11 +112,7 @@ function M.run()
   vim.cmd.edit(en_app)
   attach_current(client_id)
   wait_client()
-  local refs = request("textDocument/references", {
-    textDocument = { uri = vim.uri_from_bufnr(0) },
-    position = position_of("download-action"),
-    context = { includeDeclaration = false },
-  })
+  local refs = references_for_download()
   assert(#refs == 1 and refs[1].uri:match("locales/es/app%.ftl$"), "references missed dirty translation")
 
   vim.cmd.edit(es_app)
@@ -115,14 +122,24 @@ function M.run()
   vim.cmd.edit(en_app)
   attach_current(client_id)
   wait_client()
-  refs = request("textDocument/references", {
-    textDocument = { uri = vim.uri_from_bufnr(0) },
-    position = position_of("download-action"),
-    context = { includeDeclaration = false },
-  })
+  refs = references_for_download()
   assert(#refs == 0, "dirty close did not revert translation index")
 
-  vim.cmd.edit(workspace .. "/locales/es/local.ftl")
+  vim.fn.mkdir(workspace .. "/locales/fr", "p")
+  vim.fn.writefile({ "download-action = Telecharger" }, fr_app)
+  local added = vim.wait(3000, function()
+    refs = references_for_download()
+    return #refs == 1 and refs[1].uri:match("locales/fr/app%.ftl$")
+  end, 100)
+  assert(added, "background refresh missed added translation file")
+  vim.uv.fs_unlink(fr_app)
+  local removed = vim.wait(3000, function()
+    refs = references_for_download()
+    return #refs == 0
+  end, 100)
+  assert(removed, "background refresh kept deleted translation file")
+
+  vim.cmd.edit(es_local)
   attach_current(client_id)
   wait_client()
   vim.cmd.write()
@@ -135,6 +152,18 @@ function M.run()
     return false
   end, 50)
   assert(warned, "missing local-only warning diagnostic")
+
+  vim.fn.mkdir(workspace .. "/locales/en", "p")
+  vim.fn.writefile({ "local-only = Origin now exists" }, en_local)
+  local cleared = vim.wait(3000, function()
+    for _, diagnostic in ipairs(vim.diagnostic.get(0)) do
+      if diagnostic.message:find("no origin%-language counterpart") then
+        return false
+      end
+    end
+    return true
+  end, 100)
+  assert(cleared, "background refresh did not clear local-only warning")
 
   write_result(result_path, {
     ok = true,

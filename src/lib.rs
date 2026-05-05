@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range as ByteRange;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
 use fluent_syntax::ast::{Entry, Resource};
@@ -14,7 +14,7 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 use tempfile::Builder as TempFileBuilder;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc, oneshot};
 use tower_lsp::jsonrpc::{Error as LspError, Result as LspResult};
 use tower_lsp::ls_types::{
     CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
@@ -38,7 +38,7 @@ const SHOW_MESSAGE_SELECTOR_COMBINATIONS_LIMIT: usize = 10;
 const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str = "fluent-lsp.showSelectorCombinations";
 const LSP_COPY_MARKER: &str = "# [LSP-COPY]";
 const LSP_COPY_MARKER_PREFIX: &str = "# [LSP-COPY .";
-const DISK_INDEX_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const BACKGROUND_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -225,6 +225,7 @@ impl WorkspaceConfig {
             .unwrap_or(false)
     }
 
+    #[cfg(test)]
     fn origin_file_for(&self, path: &Path) -> Option<PathBuf> {
         let file_match = self.file_match(path)?;
         Some(self.render_path(
@@ -246,12 +247,24 @@ impl WorkspaceConfig {
         }
     }
 
+    #[cfg(test)]
     fn render_path(&self, mask_index: usize, language: &str, filepath: &str) -> PathBuf {
         let relative = self.file_masks[mask_index]
             .raw
             .replace("{lang}", language)
             .replace("{filepath}", filepath);
         self.root_dir.join(relative)
+    }
+
+    fn discovery_roots(&self) -> Vec<PathBuf> {
+        let mut roots = self
+            .file_masks
+            .iter()
+            .map(|mask| self.root_dir.join(mask.discovery_root()))
+            .collect::<Vec<_>>();
+        roots.sort();
+        roots.dedup();
+        roots
     }
 
     fn relative_path(&self, path: &Path) -> Option<String> {
@@ -282,6 +295,25 @@ impl WorkspaceConfig {
                     .or(client.selector_style)
                     .unwrap_or_default(),
             ),
+        }
+    }
+}
+
+impl FileMask {
+    fn discovery_root(&self) -> PathBuf {
+        let first_placeholder = self
+            .raw
+            .find('{')
+            .expect("compiled file mask should contain placeholders");
+        let prefix = &self.raw[..first_placeholder];
+        let directory = prefix
+            .rsplit_once('/')
+            .map(|(directory, _)| directory)
+            .unwrap_or("");
+        if directory.is_empty() {
+            PathBuf::new()
+        } else {
+            PathBuf::from(directory)
         }
     }
 }
@@ -355,10 +387,30 @@ fn collect_files_under(root: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
+fn collect_matching_files(workspace: &WorkspaceConfig) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for root in workspace.discovery_roots() {
+        collect_files_under(&root, &mut files);
+    }
+    files.retain(|path| workspace.file_match(path).is_some());
+    files.sort();
+    files.dedup();
+    files
+}
+
+fn disk_snapshot(workspace: &WorkspaceConfig) -> HashMap<PathBuf, SystemTime> {
+    collect_matching_files(workspace)
+        .into_iter()
+        .filter_map(|path| {
+            let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
+            Some((path, modified))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 fn collect_translation_files(workspace: &WorkspaceConfig) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    collect_files_under(&workspace.root_dir, &mut files);
+    let mut files = collect_matching_files(workspace);
     files.retain(|path| workspace.matches_translation_file(path));
     files.sort();
     files
@@ -465,10 +517,9 @@ struct WorkspaceIndex {
 }
 
 impl WorkspaceIndex {
+    #[cfg(test)]
     fn build(workspace: &WorkspaceConfig, overlays: &HashMap<Uri, String>) -> Self {
-        let mut paths = Vec::new();
-        collect_files_under(&workspace.root_dir, &mut paths);
-        paths.retain(|path| workspace.file_match(path).is_some());
+        let mut paths = collect_matching_files(workspace);
         for uri in overlays.keys() {
             let Some(path) = uri.to_file_path().map(|path| path.into_owned()) else {
                 continue;
@@ -487,31 +538,24 @@ impl WorkspaceIndex {
         index
     }
 
-    fn refresh_disk_file_set(
+    fn apply_disk_changes(
         &mut self,
         workspace: &WorkspaceConfig,
         overlays: &HashMap<Uri, String>,
+        changed_or_added: &[PathBuf],
+        removed: &[PathBuf],
     ) {
-        let mut disk_paths = Vec::new();
-        collect_files_under(&workspace.root_dir, &mut disk_paths);
-        disk_paths.retain(|path| workspace.file_match(path).is_some());
-        disk_paths.sort();
-        disk_paths.dedup();
-
-        let disk_set = disk_paths.iter().cloned().collect::<HashSet<_>>();
-        let existing_paths = self.files.keys().cloned().collect::<Vec<_>>();
-        for path in existing_paths {
+        for path in removed {
             let Some(uri) = Uri::from_file_path(&path) else {
                 continue;
             };
-            if !disk_set.contains(&path) && !overlays.contains_key(&uri) {
-                self.remove_file(&path);
+            if overlays.contains_key(&uri) {
+                continue;
             }
+            self.remove_file(path);
         }
-        for path in disk_paths {
-            if !self.files.contains_key(&path) {
-                self.replace_file(workspace, &path, overlays);
-            }
+        for path in changed_or_added {
+            self.replace_file(workspace, path, overlays);
         }
     }
 
@@ -634,19 +678,381 @@ struct MissingAttributePatch {
 struct ServerState {
     root_dir: Option<PathBuf>,
     workspace: Option<WorkspaceConfig>,
-    index: Option<WorkspaceIndex>,
+    index_tx: Option<mpsc::UnboundedSender<IndexMessage>>,
     open_documents: HashMap<Uri, String>,
     supports_show_document: bool,
     supports_snippet_text_edits: bool,
     supports_work_done_progress: bool,
-    last_disk_index_refresh: Option<Instant>,
     trace: TraceValue,
     client_config: ClientConfig,
+}
+
+#[derive(Debug)]
+struct DiskRefreshEvent {
+    changed_or_added: Vec<PathBuf>,
+    removed: Vec<PathBuf>,
+}
+
+#[derive(Debug)]
+struct LocalOnlyDiagnosticUpdate {
+    clears: Vec<Uri>,
+    batches: Vec<(Uri, Vec<Diagnostic>)>,
+}
+
+enum IndexMessage {
+    SetClientConfig {
+        client_config: ClientConfig,
+    },
+    ReplaceOverlay {
+        path: PathBuf,
+        text: String,
+    },
+    DropOverlay {
+        path: PathBuf,
+    },
+    ApplyDiskRefresh {
+        event: DiskRefreshEvent,
+    },
+    Definition {
+        path: PathBuf,
+        position: Position,
+        reply: oneshot::Sender<Option<Location>>,
+    },
+    References {
+        path: PathBuf,
+        uri: Uri,
+        position: Position,
+        include_declaration: bool,
+        reply: oneshot::Sender<Option<Vec<Location>>>,
+    },
+    Hover {
+        path: PathBuf,
+        position: Position,
+        reply: oneshot::Sender<LspResult<Option<Hover>>>,
+    },
+    Completion {
+        path: PathBuf,
+        position: Position,
+        reply: oneshot::Sender<LspResult<Option<CompletionResponse>>>,
+    },
+    OriginSource {
+        path: PathBuf,
+        reply: oneshot::Sender<Option<String>>,
+    },
+    LocalOnlyDiagnostic {
+        path: PathBuf,
+        reply: oneshot::Sender<Option<Diagnostic>>,
+    },
+    LocalOnlyDiagnosticBatches {
+        reply: oneshot::Sender<Vec<(Uri, Vec<Diagnostic>)>>,
+    },
+}
+
+struct IndexActor {
+    workspace: WorkspaceConfig,
+    index: WorkspaceIndex,
+    overlays: HashMap<PathBuf, String>,
+    client_config: ClientConfig,
+    notification_tx: mpsc::UnboundedSender<LocalOnlyDiagnosticUpdate>,
 }
 
 pub struct Backend {
     client: Client,
     state: Arc<RwLock<ServerState>>,
+}
+
+impl IndexActor {
+    fn new(
+        workspace: WorkspaceConfig,
+        index: WorkspaceIndex,
+        overlays: HashMap<PathBuf, String>,
+        client_config: ClientConfig,
+        notification_tx: mpsc::UnboundedSender<LocalOnlyDiagnosticUpdate>,
+    ) -> Self {
+        Self {
+            workspace,
+            index,
+            overlays,
+            client_config,
+            notification_tx,
+        }
+    }
+
+    fn local_only_diagnostic_batches(&self) -> Vec<(Uri, Vec<Diagnostic>)> {
+        let settings = self
+            .workspace
+            .effective_diagnostic_config(self.client_config);
+        self.index
+            .local_only_files(&self.workspace)
+            .into_iter()
+            .filter_map(|file| {
+                let uri = Uri::from_file_path(&file.path)?;
+                let mut diagnostics =
+                    collect_document_diagnostics(&file.source, &file.file_match.language, settings);
+                diagnostics.push(local_only_file_diagnostic(file));
+                Some((uri, diagnostics))
+            })
+            .collect()
+    }
+
+    fn local_only_diagnostic_for(&self, path: &Path) -> Option<Diagnostic> {
+        let file = self.index.file(path)?;
+        if file.file_match.language != self.workspace.origin_language
+            && self.index.origin_for(&self.workspace, file).is_none()
+        {
+            Some(local_only_file_diagnostic(file))
+        } else {
+            None
+        }
+    }
+
+    fn update_overlay(&mut self, path: PathBuf, text: String) {
+        self.overlays.insert(path.clone(), text);
+        self.index
+            .replace_file(&self.workspace, &path, &self.pathbuf_overlays_as_uri_map());
+    }
+
+    fn drop_overlay(&mut self, path: PathBuf) {
+        self.overlays.remove(&path);
+        self.index
+            .replace_file(&self.workspace, &path, &self.pathbuf_overlays_as_uri_map());
+    }
+
+    fn apply_disk_refresh(&mut self, event: DiskRefreshEvent) {
+        let previous_local_only = self
+            .index
+            .local_only_files(&self.workspace)
+            .into_iter()
+            .map(|file| file.path.clone())
+            .collect::<HashSet<_>>();
+        self.index.apply_disk_changes(
+            &self.workspace,
+            &self.pathbuf_overlays_as_uri_map(),
+            &event.changed_or_added,
+            &event.removed,
+        );
+        let current_local_only = self
+            .index
+            .local_only_files(&self.workspace)
+            .into_iter()
+            .map(|file| file.path.clone())
+            .collect::<HashSet<_>>();
+        let clears = previous_local_only
+            .difference(&current_local_only)
+            .filter_map(|path| Uri::from_file_path(path))
+            .collect::<Vec<_>>();
+        let batches = self.local_only_diagnostic_batches();
+        let _ = self
+            .notification_tx
+            .send(LocalOnlyDiagnosticUpdate { clears, batches });
+    }
+
+    fn pathbuf_overlays_as_uri_map(&self) -> HashMap<Uri, String> {
+        self.overlays
+            .iter()
+            .filter_map(|(path, text)| Some((Uri::from_file_path(path)?, text.clone())))
+            .collect()
+    }
+
+    fn definition(&self, path: &Path, position: Position) -> Option<Location> {
+        if !self.workspace.matches_translation_file(path) {
+            return None;
+        }
+        let file = self.index.file(path)?;
+        let key = extract_definition_key(&file.source, path, position)?;
+        let origin_file = self.index.origin_for(&self.workspace, file)?;
+        if !origin_file.keys.contains(&key) {
+            return None;
+        }
+        Some(Location {
+            uri: Uri::from_file_path(&origin_file.path)?,
+            range: *origin_file.definitions.get(&key)?,
+        })
+    }
+
+    fn references(
+        &self,
+        path: &Path,
+        uri: &Uri,
+        position: Position,
+        include_declaration: bool,
+    ) -> Option<Vec<Location>> {
+        if !self.workspace.is_origin_file(path) {
+            return None;
+        }
+        let origin_file = self.index.file(path)?;
+        let key = extract_definition_key(&origin_file.source, path, position)?;
+        let mut references = Vec::new();
+        if include_declaration {
+            references.push(Location {
+                uri: uri.clone(),
+                range: *origin_file.definitions.get(&key)?,
+            });
+        }
+        for translation_file in self.index.translations_for(&self.workspace, origin_file) {
+            let Some(range) = translation_file.definitions.get(&key).copied() else {
+                continue;
+            };
+            let Some(uri) = Uri::from_file_path(&translation_file.path) else {
+                continue;
+            };
+            references.push(Location { uri, range });
+        }
+        Some(references)
+    }
+
+    fn hover(&self, path: &Path, position: Position) -> LspResult<Option<Hover>> {
+        let Some(file) = self.index.file(path) else {
+            return Ok(None);
+        };
+        let Some(key) = extract_definition_key(&file.source, path, position) else {
+            return Ok(None);
+        };
+        let Some(hover_range) = file.definitions.get(&key).copied() else {
+            return Ok(None);
+        };
+        if range_contains_position(&hover_range, position) {
+            let current_comments = render_fluent_source(&file.source, &key)
+                .and_then(|rendered| rendered.comments)
+                .filter(|comments| !comments.is_empty());
+            let origin_comments = if !self.workspace.is_origin_file(path) {
+                self.index
+                    .origin_for(&self.workspace, file)
+                    .and_then(|origin_file| {
+                        render_fluent_source(&origin_file.source, &key)
+                            .and_then(|rendered| rendered.comments)
+                            .filter(|comments| !comments.is_empty())
+                    })
+            } else {
+                None
+            };
+            if let Some(value) = render_hover_comment_markdown(
+                origin_comments.as_deref(),
+                current_comments.as_deref(),
+            ) {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value,
+                    }),
+                    range: Some(hover_range),
+                }));
+            }
+        }
+        let resource = parse_fluent_resource(&file.source);
+        let Some(pattern) = find_fluent_pattern(&resource, &key) else {
+            return Ok(None);
+        };
+        let selector_overrides = selector_overrides_for_position(&file.source, &key, position);
+        let current_preview = render_message_preview(pattern, Some(&selector_overrides));
+        let source_preview = if !self.workspace.is_origin_file(path)
+            && !range_contains_position(&hover_range, position)
+        {
+            let origin_file = self
+                .index
+                .origin_for(&self.workspace, file)
+                .ok_or_else(|| {
+                    internal_error_with_message(format!(
+                        "failed to resolve origin counterpart for {}",
+                        path.display()
+                    ))
+                })?;
+            let origin_resource = parse_fluent_resource(&origin_file.source);
+            find_fluent_pattern(&origin_resource, &key).map(|origin_pattern| {
+                render_message_preview(origin_pattern, Some(&selector_overrides))
+            })
+        } else {
+            None
+        };
+        Ok(Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: render_hover_markdown(source_preview.as_ref(), &current_preview),
+            }),
+            range: Some(hover_range),
+        }))
+    }
+
+    fn completion(&self, path: &Path, position: Position) -> LspResult<Option<CompletionResponse>> {
+        let Some(file) = self.index.file(path) else {
+            return Ok(None);
+        };
+        if file.file_match.language == self.workspace.origin_language {
+            return Ok(Some(CompletionResponse::Array(Vec::new())));
+        }
+        let Some(site) = completion_site_for_position(&file.source, position) else {
+            return Ok(None);
+        };
+        let Some(origin_file) = self.index.origin_for(&self.workspace, file) else {
+            return Ok(Some(CompletionResponse::Array(Vec::new())));
+        };
+        Ok(Some(CompletionResponse::Array(completion_items_for_site(
+            &origin_file.source,
+            &site,
+        ))))
+    }
+
+    fn origin_source(&self, path: &Path) -> Option<String> {
+        if self.workspace.is_origin_file(path) {
+            return self.index.file(path).map(|file| file.source.clone());
+        }
+        let file = self.index.file(path)?;
+        self.index
+            .origin_for(&self.workspace, file)
+            .map(|origin_file| origin_file.source.clone())
+    }
+
+    async fn run(mut self, mut rx: mpsc::UnboundedReceiver<IndexMessage>) {
+        while let Some(message) = rx.recv().await {
+            match message {
+                IndexMessage::SetClientConfig { client_config } => {
+                    self.client_config = client_config;
+                }
+                IndexMessage::ReplaceOverlay { path, text } => self.update_overlay(path, text),
+                IndexMessage::DropOverlay { path } => self.drop_overlay(path),
+                IndexMessage::ApplyDiskRefresh { event } => self.apply_disk_refresh(event),
+                IndexMessage::Definition {
+                    path,
+                    position,
+                    reply,
+                } => {
+                    let _ = reply.send(self.definition(&path, position));
+                }
+                IndexMessage::References {
+                    path,
+                    uri,
+                    position,
+                    include_declaration,
+                    reply,
+                } => {
+                    let _ = reply.send(self.references(&path, &uri, position, include_declaration));
+                }
+                IndexMessage::Hover {
+                    path,
+                    position,
+                    reply,
+                } => {
+                    let _ = reply.send(self.hover(&path, position));
+                }
+                IndexMessage::Completion {
+                    path,
+                    position,
+                    reply,
+                } => {
+                    let _ = reply.send(self.completion(&path, position));
+                }
+                IndexMessage::OriginSource { path, reply } => {
+                    let _ = reply.send(self.origin_source(&path));
+                }
+                IndexMessage::LocalOnlyDiagnostic { path, reply } => {
+                    let _ = reply.send(self.local_only_diagnostic_for(&path));
+                }
+                IndexMessage::LocalOnlyDiagnosticBatches { reply } => {
+                    let _ = reply.send(self.local_only_diagnostic_batches());
+                }
+            }
+        }
+    }
 }
 
 impl Backend {
@@ -658,21 +1064,20 @@ impl Backend {
     }
 
     pub async fn set_trace(&self, params: SetTraceParams) {
+        let trace_label = match params.value {
+            TraceValue::Off => "off",
+            TraceValue::Messages => "messages",
+            TraceValue::Verbose => "verbose",
+        };
         self.state.write().await.trace = params.value;
-    }
-
-    async fn read_document_text_required(&self, uri: &Uri) -> LspResult<String> {
-        if let Some(text) = self.state.read().await.open_documents.get(uri).cloned() {
-            return Ok(text);
-        }
-
-        let path = uri
-            .to_file_path()
-            .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
-            .into_owned();
-        tokio::fs::read_to_string(&path).await.map_err(|error| {
-            internal_error_with_message(format!("failed to read {}: {error}", path.display()))
-        })
+        self.client
+            .send_notification::<tower_lsp::ls_types::notification::LogTrace>(
+                tower_lsp::ls_types::LogTraceParams {
+                    message: format!("fluent-lsp trace updated value={trace_label}"),
+                    verbose: None,
+                },
+            )
+            .await;
     }
 
     async fn log_trace_timing(&self, operation: &str, elapsed: Duration, verbose: Option<String>) {
@@ -697,9 +1102,119 @@ impl Backend {
             .await;
     }
 
+    async fn index_sender(&self) -> Option<mpsc::UnboundedSender<IndexMessage>> {
+        self.state.read().await.index_tx.clone()
+    }
+
+    async fn send_index_message(&self, message: IndexMessage) {
+        let Some(tx) = self.index_sender().await else {
+            return;
+        };
+        let _ = tx.send(message);
+    }
+
+    async fn spawn_index_actor(
+        &self,
+        workspace: WorkspaceConfig,
+        index: WorkspaceIndex,
+        snapshot: HashMap<PathBuf, SystemTime>,
+        overlays: HashMap<Uri, String>,
+        client_config: ClientConfig,
+    ) {
+        let overlay_paths = overlays
+            .iter()
+            .filter_map(|(uri, text)| Some((uri.to_file_path()?.into_owned(), text.clone())))
+            .collect::<HashMap<_, _>>();
+        let (index_tx, index_rx) = mpsc::unbounded_channel();
+        let (notification_tx, mut notification_rx) = mpsc::unbounded_channel();
+        tokio::spawn(
+            IndexActor::new(
+                workspace.clone(),
+                index,
+                overlay_paths,
+                client_config,
+                notification_tx,
+            )
+            .run(index_rx),
+        );
+
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            while let Some(update) = notification_rx.recv().await {
+                for uri in update.clears {
+                    client.publish_diagnostics(uri, Vec::new(), None).await;
+                }
+                for (uri, diagnostics) in update.batches {
+                    client.publish_diagnostics(uri, diagnostics, None).await;
+                }
+            }
+        });
+
+        self.spawn_background_refresh_task(workspace, snapshot, index_tx.clone());
+        let mut state = self.state.write().await;
+        state.index_tx = Some(index_tx);
+    }
+
+    fn spawn_background_refresh_task(
+        &self,
+        workspace: WorkspaceConfig,
+        mut previous_snapshot: HashMap<PathBuf, SystemTime>,
+        index_tx: mpsc::UnboundedSender<IndexMessage>,
+    ) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(BACKGROUND_REFRESH_INTERVAL);
+            loop {
+                interval.tick().await;
+                let next_snapshot = disk_snapshot(&workspace);
+                if next_snapshot == previous_snapshot {
+                    continue;
+                }
+                let changed_or_added = next_snapshot
+                    .iter()
+                    .filter_map(|(path, modified)| {
+                        if previous_snapshot.get(path) == Some(modified) {
+                            None
+                        } else {
+                            Some(path.clone())
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let removed = previous_snapshot
+                    .keys()
+                    .filter(|path| !next_snapshot.contains_key(*path))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                previous_snapshot = next_snapshot.clone();
+                if index_tx
+                    .send(IndexMessage::ApplyDiskRefresh {
+                        event: DiskRefreshEvent {
+                            changed_or_added,
+                            removed,
+                        },
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+    }
+
+    async fn request_index<T>(
+        &self,
+        make: impl FnOnce(oneshot::Sender<T>) -> IndexMessage,
+    ) -> Option<T> {
+        let Some(tx) = self.index_sender().await else {
+            return None;
+        };
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let _ = tx.send(make(reply_tx));
+        reply_rx.await.ok()
+    }
+
     async fn rebuild_index_with_progress(&self) {
         let started = Instant::now();
-        let (workspace, overlays, supports_progress) = {
+        let (workspace, overlays, supports_progress, client_config) = {
             let state = self.state.read().await;
             let Some(workspace) = state.workspace.clone() else {
                 return;
@@ -708,15 +1223,19 @@ impl Backend {
                 workspace,
                 state.open_documents.clone(),
                 state.supports_work_done_progress,
+                state.client_config,
             )
         };
 
-        let mut paths = Vec::new();
-        collect_files_under(&workspace.root_dir, &mut paths);
-        paths.retain(|path| workspace.file_match(path).is_some());
-        paths.sort();
-        paths.dedup();
+        let paths = collect_matching_files(&workspace);
         let total = paths.len();
+        let snapshot = paths
+            .iter()
+            .filter_map(|path| {
+                let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+                Some((path.clone(), modified))
+            })
+            .collect::<HashMap<_, _>>();
 
         let progress = if supports_progress {
             Some(
@@ -755,11 +1274,8 @@ impl Backend {
             index.replace_file(&workspace, path, &overlays);
         }
 
-        {
-            let mut state = self.state.write().await;
-            state.index = Some(index);
-            state.last_disk_index_refresh = Some(Instant::now());
-        }
+        self.spawn_index_actor(workspace, index, snapshot, overlays, client_config)
+            .await;
 
         if let Some(progress) = progress {
             progress
@@ -774,63 +1290,30 @@ impl Backend {
         .await;
     }
 
-    async fn refresh_index_file_set(&self) {
-        let mut state = self.state.write().await;
-        if state
-            .last_disk_index_refresh
-            .is_some_and(|last| last.elapsed() < DISK_INDEX_REFRESH_INTERVAL)
-        {
-            return;
-        }
-        let Some(workspace) = state.workspace.clone() else {
-            return;
-        };
-        let overlays = state.open_documents.clone();
-        if state.index.is_none() {
-            state.index = Some(WorkspaceIndex::build(&workspace, &overlays));
-        }
-        if let Some(index) = &mut state.index {
-            index.refresh_disk_file_set(&workspace, &overlays);
-        }
-        state.last_disk_index_refresh = Some(Instant::now());
-    }
-
-    async fn replace_indexed_file(&self, uri: &Uri) {
-        let mut state = self.state.write().await;
-        let Some(workspace) = state.workspace.clone() else {
-            return;
-        };
+    async fn replace_indexed_file(&self, uri: &Uri, text: String) {
         let Some(path) = uri.to_file_path().map(|path| path.into_owned()) else {
             return;
         };
-        let overlays = state.open_documents.clone();
-        if state.index.is_none() {
-            state.index = Some(WorkspaceIndex::build(&workspace, &overlays));
-        }
-        if let Some(index) = &mut state.index {
-            index.replace_file(&workspace, &path, &overlays);
-        }
+        self.send_index_message(IndexMessage::ReplaceOverlay { path, text })
+            .await;
+    }
+
+    async fn drop_indexed_overlay(&self, uri: &Uri) {
+        let Some(path) = uri.to_file_path().map(|path| path.into_owned()) else {
+            return;
+        };
+        self.send_index_message(IndexMessage::DropOverlay { path })
+            .await;
     }
 
     async fn publish_local_only_diagnostics(&self) {
-        let (workspace, index, client_config) = {
-            let state = self.state.read().await;
-            let Some(workspace) = state.workspace.clone() else {
-                return;
-            };
-            let Some(index) = state.index.clone() else {
-                return;
-            };
-            (workspace, index, state.client_config)
+        let Some(batches) = self
+            .request_index(|reply| IndexMessage::LocalOnlyDiagnosticBatches { reply })
+            .await
+        else {
+            return;
         };
-        let settings = workspace.effective_diagnostic_config(client_config);
-        for file in index.local_only_files(&workspace) {
-            let Some(uri) = Uri::from_file_path(&file.path) else {
-                continue;
-            };
-            let mut diagnostics =
-                collect_document_diagnostics(&file.source, &file.file_match.language, settings);
-            diagnostics.push(local_only_file_diagnostic(file));
+        for (uri, diagnostics) in batches {
             self.client
                 .publish_diagnostics(uri, diagnostics, None)
                 .await;
@@ -851,7 +1334,6 @@ impl Backend {
     }
 
     async fn publish_document_diagnostics(&self, uri: &Uri) {
-        self.refresh_index_file_set().await;
         let (workspace, client_config, source, language) = {
             let state = self.state.read().await;
             let Some(workspace) = state.workspace.clone() else {
@@ -874,24 +1356,12 @@ impl Backend {
 
         let settings = workspace.effective_diagnostic_config(client_config);
         let mut diagnostics = collect_document_diagnostics(&source, &language, settings);
-        let local_only = {
-            let state = self.state.read().await;
-            if let (Some(index), Some(path)) = (
-                state.index.as_ref(),
-                uri.to_file_path().map(|path| path.into_owned()),
-            ) {
-                index.file(&path).and_then(|file| {
-                    if file.file_match.language != workspace.origin_language
-                        && index.origin_for(&workspace, file).is_none()
-                    {
-                        Some(local_only_file_diagnostic(file))
-                    } else {
-                        None
-                    }
-                })
-            } else {
-                None
-            }
+        let local_only = match uri.to_file_path().map(|path| path.into_owned()) {
+            Some(path) => self
+                .request_index(|reply| IndexMessage::LocalOnlyDiagnostic { path, reply })
+                .await
+                .flatten(),
+            None => None,
         };
         if let Some(local_only) = local_only {
             diagnostics.push(local_only);
@@ -902,217 +1372,75 @@ impl Backend {
     }
 
     async fn definition_for(&self, params: GotoDefinitionParams) -> Option<Location> {
-        self.refresh_index_file_set().await;
-        let state = self.state.read().await;
-        let workspace = state.workspace.clone()?;
-        let index = state.index.clone()?;
         let uri = params.text_document_position_params.text_document.uri;
         let path = uri.to_file_path()?.into_owned();
-        if !workspace.matches_translation_file(&path) {
-            return None;
-        }
-        let file = index.file(&path)?;
-        let key = extract_definition_key(
-            &file.source,
-            &path,
-            params.text_document_position_params.position,
-        )?;
-        let origin_file = index.origin_for(&workspace, file)?;
-        if !origin_file.keys.contains(&key) {
-            return None;
-        }
-        let definition = origin_file.definitions.get(&key)?;
-        let origin_path = origin_file.path.clone();
-        let origin_uri = Uri::from_file_path(&origin_path)?;
-        Some(Location {
-            uri: origin_uri,
-            range: *definition,
+        self.request_index(|reply| IndexMessage::Definition {
+            path,
+            position: params.text_document_position_params.position,
+            reply,
         })
+        .await
+        .flatten()
     }
 
     async fn references_for(&self, params: ReferenceParams) -> Option<Vec<Location>> {
-        self.refresh_index_file_set().await;
-        let state = self.state.read().await;
-        let workspace = state.workspace.clone()?;
-        let index = state.index.clone()?;
         let uri = params.text_document_position.text_document.uri;
         let path = uri.to_file_path()?.into_owned();
-        if !workspace.is_origin_file(&path) {
-            return None;
-        }
-        let origin_file = index.file(&path)?;
-        let key = extract_definition_key(
-            &origin_file.source,
-            &path,
-            params.text_document_position.position,
-        )?;
-        let mut references = Vec::new();
-
-        if params.context.include_declaration {
-            let range = *origin_file.definitions.get(&key)?;
-            references.push(Location {
-                uri: uri.clone(),
-                range,
-            });
-        }
-
-        for translation_file in index.translations_for(&workspace, origin_file) {
-            let translation_uri = match Uri::from_file_path(&translation_file.path) {
-                Some(uri) => uri,
-                None => continue,
-            };
-            let Some(range) = translation_file.definitions.get(&key).copied() else {
-                continue;
-            };
-            references.push(Location {
-                uri: translation_uri,
-                range,
-            });
-        }
-
-        Some(references)
+        self.request_index(|reply| IndexMessage::References {
+            path,
+            uri,
+            position: params.text_document_position.position,
+            include_declaration: params.context.include_declaration,
+            reply,
+        })
+        .await
+        .flatten()
     }
 
     async fn hover_for(&self, params: HoverParams) -> LspResult<Option<Hover>> {
-        self.refresh_index_file_set().await;
-        let state = self.state.read().await;
-        let Some(workspace) = state.workspace.clone() else {
-            return Ok(None);
-        };
-        let Some(index) = state.index.clone() else {
-            return Ok(None);
-        };
-        let uri = params.text_document_position_params.text_document.uri;
-        let path = uri
+        let path = params
+            .text_document_position_params
+            .text_document
+            .uri
             .to_file_path()
             .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
             .into_owned();
-        let Some(file) = index.file(&path).cloned() else {
-            return Ok(None);
-        };
-        drop(state);
-
-        let Some(key) = extract_definition_key(
-            &file.source,
-            &path,
-            params.text_document_position_params.position,
-        ) else {
-            return Ok(None);
-        };
-        let Some(hover_range) = file.definitions.get(&key).copied() else {
-            return Ok(None);
-        };
-        let hover_position = params.text_document_position_params.position;
-        if range_contains_position(&hover_range, hover_position) {
-            let current_comments = render_fluent_source(&file.source, &key)
-                .and_then(|rendered| rendered.comments)
-                .filter(|comments| !comments.is_empty());
-            let origin_comments = if !workspace.is_origin_file(&path) {
-                index.origin_for(&workspace, &file).and_then(|origin_file| {
-                    render_fluent_source(&origin_file.source, &key)
-                        .and_then(|rendered| rendered.comments)
-                        .filter(|comments| !comments.is_empty())
-                })
-            } else {
-                None
-            };
-            if let Some(value) = render_hover_comment_markdown(
-                origin_comments.as_deref(),
-                current_comments.as_deref(),
-            ) {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value,
-                    }),
-                    range: Some(hover_range),
-                }));
-            }
-        }
-        let resource = parse_fluent_resource(&file.source);
-        let Some(pattern) = find_fluent_pattern(&resource, &key) else {
-            return Ok(None);
-        };
-        let selector_overrides =
-            selector_overrides_for_position(&file.source, &key, hover_position);
-        let current_preview = render_message_preview(pattern, Some(&selector_overrides));
-        let source_preview = if !workspace.is_origin_file(&path)
-            && !range_contains_position(&hover_range, hover_position)
-        {
-            let origin_file = index.origin_for(&workspace, &file).ok_or_else(|| {
-                internal_error_with_message(format!(
-                    "failed to resolve origin counterpart for {}",
-                    path.display()
-                ))
-            })?;
-            let origin_resource = parse_fluent_resource(&origin_file.source);
-            find_fluent_pattern(&origin_resource, &key).map(|origin_pattern| {
-                render_message_preview(origin_pattern, Some(&selector_overrides))
-            })
-        } else {
-            None
-        };
-        let hover_value = render_hover_markdown(source_preview.as_ref(), &current_preview);
-
-        Ok(Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: hover_value,
-            }),
-            range: Some(hover_range),
-        }))
+        self.request_index(|reply| IndexMessage::Hover {
+            path,
+            position: params.text_document_position_params.position,
+            reply,
+        })
+        .await
+        .unwrap_or(Ok(None))
     }
 
     async fn completions_for(
         &self,
         params: CompletionParams,
     ) -> LspResult<Option<CompletionResponse>> {
-        self.refresh_index_file_set().await;
-        let state = self.state.read().await;
-        let Some(workspace) = state.workspace.clone() else {
-            return Ok(None);
-        };
-        let Some(index) = state.index.clone() else {
-            return Ok(None);
-        };
         let uri = params.text_document_position.text_document.uri;
         let path = uri
             .to_file_path()
             .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
             .into_owned();
-        let Some(file) = index.file(&path).cloned() else {
-            return Ok(None);
-        };
-        if file.file_match.language == workspace.origin_language {
-            return Ok(Some(CompletionResponse::Array(Vec::new())));
-        }
-        drop(state);
-
-        let Some(site) =
-            completion_site_for_position(&file.source, params.text_document_position.position)
-        else {
-            return Ok(None);
-        };
-        let Some(origin_file) = index.origin_for(&workspace, &file) else {
-            return Ok(Some(CompletionResponse::Array(Vec::new())));
-        };
-
-        Ok(Some(CompletionResponse::Array(completion_items_for_site(
-            &origin_file.source,
-            &site,
-        ))))
+        self.request_index(|reply| IndexMessage::Completion {
+            path,
+            position: params.text_document_position.position,
+            reply,
+        })
+        .await
+        .unwrap_or(Ok(None))
     }
 
     async fn code_actions_for(
         &self,
         params: CodeActionParams,
     ) -> LspResult<Option<CodeActionResponse>> {
-        self.refresh_index_file_set().await;
         let state = self.state.read().await;
         let Some(workspace) = state.workspace.clone() else {
             return Ok(None);
         };
-        let index = state.index.clone();
+        let has_index = state.index_tx.is_some();
         let uri = params.text_document.uri;
         let path = uri
             .to_file_path()
@@ -1135,19 +1463,17 @@ impl Backend {
             .or(state.client_config.selector_style)
             .unwrap_or_default();
         let supports_snippet_text_edits = state.supports_snippet_text_edits;
-        let origin_source = if workspace.matches_translation_file(&path) {
-            index
-                .as_ref()
-                .and_then(|index| {
-                    index
-                        .file(&path)
-                        .and_then(|file| index.origin_for(&workspace, file))
-                })
-                .map(|origin_file| origin_file.source.clone())
+        drop(state);
+        let origin_source = if workspace.matches_translation_file(&path) && has_index {
+            self.request_index(|reply| IndexMessage::OriginSource {
+                path: path.clone(),
+                reply,
+            })
+            .await
+            .flatten()
         } else {
             None
         };
-        drop(state);
 
         let mut actions = Vec::new();
         if let Some(origin_source) = origin_source.as_deref() {
@@ -1499,19 +1825,18 @@ impl Backend {
             let origin_source = if workspace.is_origin_file(&path) {
                 source.clone()
             } else {
-                let origin_path = workspace.origin_file_for(&path).ok_or_else(|| {
+                self.request_index(|reply| IndexMessage::OriginSource {
+                    path: path.clone(),
+                    reply,
+                })
+                .await
+                .flatten()
+                .ok_or_else(|| {
                     internal_error_with_message(format!(
                         "failed to resolve origin counterpart for {}",
                         path.display()
                     ))
-                })?;
-                let origin_uri = Uri::from_file_path(&origin_path).ok_or_else(|| {
-                    internal_error_with_message(format!(
-                        "failed to convert origin path to URI: {}",
-                        origin_path.display()
-                    ))
-                })?;
-                self.read_document_text_required(&origin_uri).await?
+                })?
             };
             let current_render = render_fluent_source(&source, &key);
             let origin_render = render_fluent_source(&origin_source, &key);
@@ -1706,30 +2031,32 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri;
+        let text = params.text_document.text;
         self.state
             .write()
             .await
             .open_documents
-            .insert(uri.clone(), params.text_document.text);
-        self.replace_indexed_file(&uri).await;
+            .insert(uri.clone(), text.clone());
+        self.replace_indexed_file(&uri, text).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.into_iter().last() {
             let uri = params.text_document.uri;
+            let text = change.text;
             self.state
                 .write()
                 .await
                 .open_documents
-                .insert(uri.clone(), change.text);
-            self.replace_indexed_file(&uri).await;
+                .insert(uri.clone(), text.clone());
+            self.replace_indexed_file(&uri, text).await;
         }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
         self.state.write().await.open_documents.remove(&uri);
-        self.replace_indexed_file(&uri).await;
+        self.drop_indexed_overlay(&uri).await;
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 
@@ -1740,23 +2067,25 @@ impl LanguageServer for Backend {
                 .write()
                 .await
                 .open_documents
-                .insert(uri.clone(), text);
+                .insert(uri.clone(), text.clone());
+            self.replace_indexed_file(&uri, text).await;
         }
-        self.replace_indexed_file(&uri).await;
         self.publish_document_diagnostics(&uri).await;
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        let client_config = parse_client_config(&params.settings);
         {
             let mut state = self.state.write().await;
-            state.client_config = parse_client_config(&params.settings);
+            state.client_config = client_config;
             if let Some(root_dir) = state.root_dir.clone() {
                 state.workspace = WorkspaceConfig::load(root_dir).ok();
-                state.index = None;
-                state.last_disk_index_refresh = None;
+                state.index_tx = None;
             }
         }
         self.rebuild_index_with_progress().await;
+        self.send_index_message(IndexMessage::SetClientConfig { client_config })
+            .await;
         self.publish_local_only_diagnostics().await;
     }
 
@@ -5700,9 +6029,39 @@ mod tests {
         assert!(index.file(&local).unwrap().keys.contains("valid"));
 
         std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
-        std::fs::write(temp.path().join("locales/en/only.ftl"), "valid = Origin\n").unwrap();
-        index.refresh_disk_file_set(&workspace, &HashMap::new());
+        let origin = temp.path().join("locales/en/only.ftl");
+        std::fs::write(&origin, "valid = Origin\n").unwrap();
+        index.apply_disk_changes(&workspace, &HashMap::new(), &[origin], &[]);
         assert!(index.local_only_files(&workspace).is_empty());
+    }
+
+    #[test]
+    fn workspace_discovery_roots_follow_file_mask_prefixes() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = WorkspaceConfig {
+            root_dir: temp.path().to_path_buf(),
+            origin_language: "en".to_string(),
+            file_masks: compile_file_masks(&[
+                "assets/voxygen/i18n/{lang}/{filepath}.ftl".to_string(),
+                "locales/{lang}/{filepath}.ftl".to_string(),
+                "{lang}/{filepath}.ftl".to_string(),
+            ])
+            .unwrap(),
+            selector_style: None,
+            error_on_unsupported_plural_categories: None,
+            warn_on_missing_plural_categories: None,
+            warn_on_selector_style_mismatch: None,
+        };
+
+        let roots = workspace.discovery_roots();
+        assert_eq!(
+            roots,
+            vec![
+                temp.path().to_path_buf(),
+                temp.path().join("assets/voxygen/i18n"),
+                temp.path().join("locales"),
+            ]
+        );
     }
 
     #[test]
