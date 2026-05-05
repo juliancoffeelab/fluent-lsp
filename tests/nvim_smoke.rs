@@ -747,6 +747,12 @@ fn nvim_smoke_diagnostics_parse_errors() {
     assert_fluent_parses(result["final_buffer"].as_str().unwrap());
 }
 
+#[test]
+fn nvim_smoke_index_invalidation_local_only() {
+    let result = run_scenario("index_invalidation_local_only");
+    assert_eq!(result["ok"], Value::Bool(true));
+}
+
 fn position_after(source: &str, needle: &str) -> (u32, u32) {
     let offset = source.find(needle).expect("needle not found");
     let prefix = &source[..offset];

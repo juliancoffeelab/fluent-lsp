@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range as ByteRange;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use fluent_syntax::ast::{Entry, Resource};
@@ -25,10 +26,10 @@ use tower_lsp::ls_types::{
     ExecuteCommandParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
     HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
     Location, MarkupContent, MarkupKind, MessageType, OneOf, OneOf3,
-    OptionalVersionedTextDocumentIdentifier, Position, Range, ReferenceParams, ServerCapabilities,
-    ShowDocumentParams, SnippetTextEdit, TextDocumentEdit, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Uri,
-    WorkspaceEdit,
+    OptionalVersionedTextDocumentIdentifier, Position, ProgressToken, Range, ReferenceParams,
+    ServerCapabilities, ShowDocumentParams, SnippetTextEdit, TextDocumentEdit,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TextEdit, Uri, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -37,6 +38,7 @@ const SHOW_MESSAGE_SELECTOR_COMBINATIONS_LIMIT: usize = 10;
 const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str = "fluent-lsp.showSelectorCombinations";
 const LSP_COPY_MARKER: &str = "# [LSP-COPY]";
 const LSP_COPY_MARKER_PREFIX: &str = "# [LSP-COPY .";
+const DISK_INDEX_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -232,16 +234,6 @@ impl WorkspaceConfig {
         ))
     }
 
-    fn matches_origin_counterpart(&self, path: &Path, origin_match: &FileMatch) -> bool {
-        self.file_match(path)
-            .map(|candidate| {
-                candidate.mask_index == origin_match.mask_index
-                    && candidate.filepath == origin_match.filepath
-                    && candidate.language != self.origin_language
-            })
-            .unwrap_or(false)
-    }
-
     fn describe_masks(&self) -> String {
         if self.file_masks.is_empty() {
             "<none>".to_string()
@@ -347,14 +339,6 @@ fn compile_file_masks(masks: &[String]) -> Result<Vec<FileMask>> {
     Ok(compiled)
 }
 
-fn collect_translation_files(workspace: &WorkspaceConfig) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    collect_files_under(&workspace.root_dir, &mut files);
-    files.retain(|path| workspace.matches_translation_file(path));
-    files.sort();
-    files
-}
-
 fn collect_files_under(root: &Path, files: &mut Vec<PathBuf>) {
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
@@ -369,6 +353,15 @@ fn collect_files_under(root: &Path, files: &mut Vec<PathBuf>) {
             files.push(path);
         }
     }
+}
+
+#[cfg(test)]
+fn collect_translation_files(workspace: &WorkspaceConfig) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_files_under(&workspace.root_dir, &mut files);
+    files.retain(|path| workspace.matches_translation_file(path));
+    files.sort();
+    files
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -456,6 +449,181 @@ struct MissingTranslationEntries {
     missing_attributes: Vec<MissingAttributePatch>,
 }
 
+#[derive(Debug, Clone)]
+struct IndexedFile {
+    path: PathBuf,
+    file_match: FileMatch,
+    source: String,
+    definitions: HashMap<String, Range>,
+    keys: HashSet<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkspaceIndex {
+    files: HashMap<PathBuf, IndexedFile>,
+    by_identity: HashMap<(usize, String, String), PathBuf>,
+}
+
+impl WorkspaceIndex {
+    fn build(workspace: &WorkspaceConfig, overlays: &HashMap<Uri, String>) -> Self {
+        let mut paths = Vec::new();
+        collect_files_under(&workspace.root_dir, &mut paths);
+        paths.retain(|path| workspace.file_match(path).is_some());
+        for uri in overlays.keys() {
+            let Some(path) = uri.to_file_path().map(|path| path.into_owned()) else {
+                continue;
+            };
+            if workspace.file_match(&path).is_some() && !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+        paths.sort();
+        paths.dedup();
+
+        let mut index = Self::default();
+        for path in paths {
+            index.replace_file(workspace, &path, overlays);
+        }
+        index
+    }
+
+    fn refresh_disk_file_set(
+        &mut self,
+        workspace: &WorkspaceConfig,
+        overlays: &HashMap<Uri, String>,
+    ) {
+        let mut disk_paths = Vec::new();
+        collect_files_under(&workspace.root_dir, &mut disk_paths);
+        disk_paths.retain(|path| workspace.file_match(path).is_some());
+        disk_paths.sort();
+        disk_paths.dedup();
+
+        let disk_set = disk_paths.iter().cloned().collect::<HashSet<_>>();
+        let existing_paths = self.files.keys().cloned().collect::<Vec<_>>();
+        for path in existing_paths {
+            let Some(uri) = Uri::from_file_path(&path) else {
+                continue;
+            };
+            if !disk_set.contains(&path) && !overlays.contains_key(&uri) {
+                self.remove_file(&path);
+            }
+        }
+        for path in disk_paths {
+            if !self.files.contains_key(&path) {
+                self.replace_file(workspace, &path, overlays);
+            }
+        }
+    }
+
+    fn replace_file(
+        &mut self,
+        workspace: &WorkspaceConfig,
+        path: &Path,
+        overlays: &HashMap<Uri, String>,
+    ) {
+        self.remove_file(path);
+        let Some(file_match) = workspace.file_match(path) else {
+            return;
+        };
+        let source = Uri::from_file_path(path)
+            .and_then(|uri| overlays.get(&uri).cloned())
+            .or_else(|| std::fs::read_to_string(path).ok());
+        let Some(source) = source else {
+            return;
+        };
+        let entry = index_fluent_file(path.to_path_buf(), file_match, source);
+        self.by_identity.insert(
+            (
+                entry.file_match.mask_index,
+                entry.file_match.language.clone(),
+                entry.file_match.filepath.clone(),
+            ),
+            entry.path.clone(),
+        );
+        self.files.insert(entry.path.clone(), entry);
+    }
+
+    fn remove_file(&mut self, path: &Path) {
+        if let Some(existing) = self.files.remove(path) {
+            self.by_identity.remove(&(
+                existing.file_match.mask_index,
+                existing.file_match.language,
+                existing.file_match.filepath,
+            ));
+        }
+    }
+
+    fn file(&self, path: &Path) -> Option<&IndexedFile> {
+        self.files.get(path)
+    }
+
+    fn origin_for<'a>(
+        &'a self,
+        workspace: &WorkspaceConfig,
+        file: &IndexedFile,
+    ) -> Option<&'a IndexedFile> {
+        let path = self.by_identity.get(&(
+            file.file_match.mask_index,
+            workspace.origin_language.clone(),
+            file.file_match.filepath.clone(),
+        ))?;
+        self.files.get(path)
+    }
+
+    fn translations_for<'a>(
+        &'a self,
+        workspace: &WorkspaceConfig,
+        origin: &IndexedFile,
+    ) -> Vec<&'a IndexedFile> {
+        let mut files = self
+            .files
+            .values()
+            .filter(|file| {
+                file.file_match.mask_index == origin.file_match.mask_index
+                    && file.file_match.filepath == origin.file_match.filepath
+                    && file.file_match.language != workspace.origin_language
+            })
+            .collect::<Vec<_>>();
+        files.sort_by(|left, right| left.path.cmp(&right.path));
+        files
+    }
+
+    fn local_only_files(&self, workspace: &WorkspaceConfig) -> Vec<&IndexedFile> {
+        let mut files = self
+            .files
+            .values()
+            .filter(|file| {
+                file.file_match.language != workspace.origin_language
+                    && self.origin_for(workspace, file).is_none()
+            })
+            .collect::<Vec<_>>();
+        files.sort_by(|left, right| left.path.cmp(&right.path));
+        files
+    }
+}
+
+fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> IndexedFile {
+    let (resource, _parse_errors) = parse_fluent_resource_with_errors(&source);
+    let keys = collect_fluent_keys_from_resource(&resource)
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let definitions = keys
+        .iter()
+        .filter_map(|key| {
+            find_fluent_definition_span(&resource, key)
+                .and_then(|span| byte_range_to_lsp_range(&source, span))
+                .map(|range| (key.clone(), range))
+        })
+        .collect::<HashMap<_, _>>();
+    IndexedFile {
+        path,
+        file_match,
+        source,
+        definitions,
+        keys,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MissingAttributePatch {
     message_key: String,
@@ -466,9 +634,12 @@ struct MissingAttributePatch {
 struct ServerState {
     root_dir: Option<PathBuf>,
     workspace: Option<WorkspaceConfig>,
+    index: Option<WorkspaceIndex>,
     open_documents: HashMap<Uri, String>,
     supports_show_document: bool,
     supports_snippet_text_edits: bool,
+    supports_work_done_progress: bool,
+    last_disk_index_refresh: Option<Instant>,
     client_config: ClientConfig,
 }
 
@@ -485,15 +656,6 @@ impl Backend {
         }
     }
 
-    async fn read_document_text(&self, uri: &Uri) -> Option<String> {
-        if let Some(text) = self.state.read().await.open_documents.get(uri).cloned() {
-            return Some(text);
-        }
-
-        let path = uri.to_file_path()?.into_owned();
-        tokio::fs::read_to_string(path).await.ok()
-    }
-
     async fn read_document_text_required(&self, uri: &Uri) -> LspResult<String> {
         if let Some(text) = self.state.read().await.open_documents.get(uri).cloned() {
             return Ok(text);
@@ -506,6 +668,139 @@ impl Backend {
         tokio::fs::read_to_string(&path).await.map_err(|error| {
             internal_error_with_message(format!("failed to read {}: {error}", path.display()))
         })
+    }
+
+    async fn rebuild_index_with_progress(&self) {
+        let (workspace, overlays, supports_progress) = {
+            let state = self.state.read().await;
+            let Some(workspace) = state.workspace.clone() else {
+                return;
+            };
+            (
+                workspace,
+                state.open_documents.clone(),
+                state.supports_work_done_progress,
+            )
+        };
+
+        let mut paths = Vec::new();
+        collect_files_under(&workspace.root_dir, &mut paths);
+        paths.retain(|path| workspace.file_match(path).is_some());
+        paths.sort();
+        paths.dedup();
+        let total = paths.len();
+
+        let progress = if supports_progress {
+            Some(
+                self.client
+                    .progress(
+                        ProgressToken::String("fluent-lsp-index".to_string()),
+                        "Index Fluent workspace",
+                    )
+                    .with_percentage(0)
+                    .with_message(format!("0/{total} files"))
+                    .begin()
+                    .await,
+            )
+        } else {
+            None
+        };
+
+        let mut index = WorkspaceIndex::default();
+        for (offset, path) in paths.iter().enumerate() {
+            if let Some(progress) = &progress {
+                let percent = if total == 0 {
+                    100
+                } else {
+                    (((offset + 1) * 100) / total) as u32
+                };
+                let display = workspace
+                    .relative_path(path)
+                    .unwrap_or_else(|| path.display().to_string());
+                progress
+                    .report_with_message(
+                        format!("{}/{} files: {display}", offset + 1, total),
+                        percent,
+                    )
+                    .await;
+            }
+            index.replace_file(&workspace, path, &overlays);
+        }
+
+        {
+            let mut state = self.state.write().await;
+            state.index = Some(index);
+            state.last_disk_index_refresh = Some(Instant::now());
+        }
+
+        if let Some(progress) = progress {
+            progress
+                .finish_with_message(format!("Indexed {total} Fluent files"))
+                .await;
+        }
+    }
+
+    async fn refresh_index_file_set(&self) {
+        let mut state = self.state.write().await;
+        if state
+            .last_disk_index_refresh
+            .is_some_and(|last| last.elapsed() < DISK_INDEX_REFRESH_INTERVAL)
+        {
+            return;
+        }
+        let Some(workspace) = state.workspace.clone() else {
+            return;
+        };
+        let overlays = state.open_documents.clone();
+        if state.index.is_none() {
+            state.index = Some(WorkspaceIndex::build(&workspace, &overlays));
+        }
+        if let Some(index) = &mut state.index {
+            index.refresh_disk_file_set(&workspace, &overlays);
+        }
+        state.last_disk_index_refresh = Some(Instant::now());
+    }
+
+    async fn replace_indexed_file(&self, uri: &Uri) {
+        let mut state = self.state.write().await;
+        let Some(workspace) = state.workspace.clone() else {
+            return;
+        };
+        let Some(path) = uri.to_file_path().map(|path| path.into_owned()) else {
+            return;
+        };
+        let overlays = state.open_documents.clone();
+        if state.index.is_none() {
+            state.index = Some(WorkspaceIndex::build(&workspace, &overlays));
+        }
+        if let Some(index) = &mut state.index {
+            index.replace_file(&workspace, &path, &overlays);
+        }
+    }
+
+    async fn publish_local_only_diagnostics(&self) {
+        let (workspace, index, client_config) = {
+            let state = self.state.read().await;
+            let Some(workspace) = state.workspace.clone() else {
+                return;
+            };
+            let Some(index) = state.index.clone() else {
+                return;
+            };
+            (workspace, index, state.client_config)
+        };
+        let settings = workspace.effective_diagnostic_config(client_config);
+        for file in index.local_only_files(&workspace) {
+            let Some(uri) = Uri::from_file_path(&file.path) else {
+                continue;
+            };
+            let mut diagnostics =
+                collect_document_diagnostics(&file.source, &file.file_match.language, settings);
+            diagnostics.push(local_only_file_diagnostic(file));
+            self.client
+                .publish_diagnostics(uri, diagnostics, None)
+                .await;
+        }
     }
 
     async fn respond_to_clicked_command_with_error<M>(
@@ -522,6 +817,7 @@ impl Backend {
     }
 
     async fn publish_document_diagnostics(&self, uri: &Uri) {
+        self.refresh_index_file_set().await;
         let (workspace, client_config, source, language) = {
             let state = self.state.read().await;
             let Some(workspace) = state.workspace.clone() else {
@@ -543,85 +839,95 @@ impl Backend {
         };
 
         let settings = workspace.effective_diagnostic_config(client_config);
-        let diagnostics = collect_document_diagnostics(&source, &language, settings);
+        let mut diagnostics = collect_document_diagnostics(&source, &language, settings);
+        let local_only = {
+            let state = self.state.read().await;
+            if let (Some(index), Some(path)) = (
+                state.index.as_ref(),
+                uri.to_file_path().map(|path| path.into_owned()),
+            ) {
+                index.file(&path).and_then(|file| {
+                    if file.file_match.language != workspace.origin_language
+                        && index.origin_for(&workspace, file).is_none()
+                    {
+                        Some(local_only_file_diagnostic(file))
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            }
+        };
+        if let Some(local_only) = local_only {
+            diagnostics.push(local_only);
+        }
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, None)
             .await;
     }
 
     async fn definition_for(&self, params: GotoDefinitionParams) -> Option<Location> {
+        self.refresh_index_file_set().await;
         let state = self.state.read().await;
         let workspace = state.workspace.clone()?;
+        let index = state.index.clone()?;
         let uri = params.text_document_position_params.text_document.uri;
         let path = uri.to_file_path()?.into_owned();
         if !workspace.matches_translation_file(&path) {
             return None;
         }
-
-        let source = state
-            .open_documents
-            .get(&uri)
-            .cloned()
-            .or_else(|| std::fs::read_to_string(&path).ok())?;
-        drop(state);
-
+        let file = index.file(&path)?;
         let key = extract_definition_key(
-            &source,
+            &file.source,
             &path,
             params.text_document_position_params.position,
         )?;
-        let origin_path = workspace.origin_file_for(&path)?;
+        let origin_file = index.origin_for(&workspace, file)?;
+        if !origin_file.keys.contains(&key) {
+            return None;
+        }
+        let definition = origin_file.definitions.get(&key)?;
+        let origin_path = origin_file.path.clone();
         let origin_uri = Uri::from_file_path(&origin_path)?;
-        let origin_source = self.read_document_text(&origin_uri).await?;
-
-        let definition = find_fluent_definition(&origin_source, &key)?;
         Some(Location {
             uri: origin_uri,
-            range: definition,
+            range: *definition,
         })
     }
 
     async fn references_for(&self, params: ReferenceParams) -> Option<Vec<Location>> {
+        self.refresh_index_file_set().await;
         let state = self.state.read().await;
         let workspace = state.workspace.clone()?;
+        let index = state.index.clone()?;
         let uri = params.text_document_position.text_document.uri;
         let path = uri.to_file_path()?.into_owned();
         if !workspace.is_origin_file(&path) {
             return None;
         }
-        let origin_match = workspace.file_match(&path)?;
-
-        let source = state
-            .open_documents
-            .get(&uri)
-            .cloned()
-            .or_else(|| std::fs::read_to_string(&path).ok())?;
-        drop(state);
-
-        let key = extract_definition_key(&source, &path, params.text_document_position.position)?;
+        let origin_file = index.file(&path)?;
+        let key = extract_definition_key(
+            &origin_file.source,
+            &path,
+            params.text_document_position.position,
+        )?;
         let mut references = Vec::new();
 
         if params.context.include_declaration {
-            let range = find_fluent_definition(&source, &key)?;
+            let range = *origin_file.definitions.get(&key)?;
             references.push(Location {
                 uri: uri.clone(),
                 range,
             });
         }
 
-        for translation_path in collect_translation_files(&workspace) {
-            if !workspace.matches_origin_counterpart(&translation_path, &origin_match) {
-                continue;
-            }
-            let translation_uri = match Uri::from_file_path(&translation_path) {
+        for translation_file in index.translations_for(&workspace, origin_file) {
+            let translation_uri = match Uri::from_file_path(&translation_file.path) {
                 Some(uri) => uri,
                 None => continue,
             };
-            let translation_source = match self.read_document_text(&translation_uri).await {
-                Some(source) => source,
-                None => continue,
-            };
-            let Some(range) = find_fluent_definition(&translation_source, &key) else {
+            let Some(range) = translation_file.definitions.get(&key).copied() else {
                 continue;
             };
             references.push(Location {
@@ -634,8 +940,12 @@ impl Backend {
     }
 
     async fn hover_for(&self, params: HoverParams) -> LspResult<Option<Hover>> {
+        self.refresh_index_file_set().await;
         let state = self.state.read().await;
         let Some(workspace) = state.workspace.clone() else {
+            return Ok(None);
+        };
+        let Some(index) = state.index.clone() else {
             return Ok(None);
         };
         let uri = params.text_document_position_params.text_document.uri;
@@ -643,44 +953,32 @@ impl Backend {
             .to_file_path()
             .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
             .into_owned();
-        if workspace.file_match(&path).is_none() {
+        let Some(file) = index.file(&path).cloned() else {
             return Ok(None);
-        }
-
-        let source = state
-            .open_documents
-            .get(&uri)
-            .cloned()
-            .or_else(|| std::fs::read_to_string(&path).ok())
-            .ok_or_else(|| {
-                internal_error_with_message(format!("failed to read {}", path.display()))
-            })?;
+        };
         drop(state);
 
         let Some(key) = extract_definition_key(
-            &source,
+            &file.source,
             &path,
             params.text_document_position_params.position,
         ) else {
             return Ok(None);
         };
-        let Some(hover_range) = find_fluent_definition(&source, &key) else {
+        let Some(hover_range) = file.definitions.get(&key).copied() else {
             return Ok(None);
         };
         let hover_position = params.text_document_position_params.position;
         if range_contains_position(&hover_range, hover_position) {
-            let current_comments = render_fluent_source(&source, &key)
+            let current_comments = render_fluent_source(&file.source, &key)
                 .and_then(|rendered| rendered.comments)
                 .filter(|comments| !comments.is_empty());
             let origin_comments = if !workspace.is_origin_file(&path) {
-                workspace
-                    .origin_file_for(&path)
-                    .and_then(|origin_path| std::fs::read_to_string(origin_path).ok())
-                    .and_then(|origin_source| {
-                        render_fluent_source(&origin_source, &key)
-                            .and_then(|rendered| rendered.comments)
-                            .filter(|comments| !comments.is_empty())
-                    })
+                index.origin_for(&workspace, &file).and_then(|origin_file| {
+                    render_fluent_source(&origin_file.source, &key)
+                        .and_then(|rendered| rendered.comments)
+                        .filter(|comments| !comments.is_empty())
+                })
             } else {
                 None
             };
@@ -697,29 +995,23 @@ impl Backend {
                 }));
             }
         }
-        let resource = parse_fluent_resource(&source);
+        let resource = parse_fluent_resource(&file.source);
         let Some(pattern) = find_fluent_pattern(&resource, &key) else {
             return Ok(None);
         };
-        let selector_overrides = selector_overrides_for_position(&source, &key, hover_position);
+        let selector_overrides =
+            selector_overrides_for_position(&file.source, &key, hover_position);
         let current_preview = render_message_preview(pattern, Some(&selector_overrides));
         let source_preview = if !workspace.is_origin_file(&path)
             && !range_contains_position(&hover_range, hover_position)
         {
-            let origin_path = workspace.origin_file_for(&path).ok_or_else(|| {
+            let origin_file = index.origin_for(&workspace, &file).ok_or_else(|| {
                 internal_error_with_message(format!(
                     "failed to resolve origin counterpart for {}",
                     path.display()
                 ))
             })?;
-            let origin_uri = Uri::from_file_path(&origin_path).ok_or_else(|| {
-                internal_error_with_message(format!(
-                    "failed to convert origin path to URI: {}",
-                    origin_path.display()
-                ))
-            })?;
-            let origin_source = self.read_document_text_required(&origin_uri).await?;
-            let origin_resource = parse_fluent_resource(&origin_source);
+            let origin_resource = parse_fluent_resource(&origin_file.source);
             find_fluent_pattern(&origin_resource, &key).map(|origin_pattern| {
                 render_message_preview(origin_pattern, Some(&selector_overrides))
             })
@@ -741,8 +1033,12 @@ impl Backend {
         &self,
         params: CompletionParams,
     ) -> LspResult<Option<CompletionResponse>> {
+        self.refresh_index_file_set().await;
         let state = self.state.read().await;
         let Some(workspace) = state.workspace.clone() else {
+            return Ok(None);
+        };
+        let Some(index) = state.index.clone() else {
             return Ok(None);
         };
         let uri = params.text_document_position.text_document.uri;
@@ -750,39 +1046,25 @@ impl Backend {
             .to_file_path()
             .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
             .into_owned();
-        if !workspace.matches_translation_file(&path) {
+        let Some(file) = index.file(&path).cloned() else {
             return Ok(None);
+        };
+        if file.file_match.language == workspace.origin_language {
+            return Ok(Some(CompletionResponse::Array(Vec::new())));
         }
-
-        let source = state
-            .open_documents
-            .get(&uri)
-            .cloned()
-            .or_else(|| std::fs::read_to_string(&path).ok())
-            .ok_or_else(|| {
-                internal_error_with_message(format!("failed to read {}", path.display()))
-            })?;
         drop(state);
 
         let Some(site) =
-            completion_site_for_position(&source, params.text_document_position.position)
+            completion_site_for_position(&file.source, params.text_document_position.position)
         else {
             return Ok(None);
         };
-        let Some(origin_path) = workspace.origin_file_for(&path) else {
+        let Some(origin_file) = index.origin_for(&workspace, &file) else {
             return Ok(Some(CompletionResponse::Array(Vec::new())));
         };
-        let origin_source = tokio::fs::read_to_string(&origin_path)
-            .await
-            .map_err(|error| {
-                internal_error_with_message(format!(
-                    "failed to read {}: {error}",
-                    origin_path.display()
-                ))
-            })?;
 
         Ok(Some(CompletionResponse::Array(completion_items_for_site(
-            &origin_source,
+            &origin_file.source,
             &site,
         ))))
     }
@@ -791,18 +1073,20 @@ impl Backend {
         &self,
         params: CodeActionParams,
     ) -> LspResult<Option<CodeActionResponse>> {
+        self.refresh_index_file_set().await;
         let state = self.state.read().await;
         let Some(workspace) = state.workspace.clone() else {
             return Ok(None);
         };
+        let index = state.index.clone();
         let uri = params.text_document.uri;
         let path = uri
             .to_file_path()
             .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
             .into_owned();
-        if workspace.file_match(&path).is_none() {
+        let Some(file_match) = workspace.file_match(&path) else {
             return Ok(None);
-        }
+        };
 
         let source = state
             .open_documents
@@ -817,14 +1101,19 @@ impl Backend {
             .or(state.client_config.selector_style)
             .unwrap_or_default();
         let supports_snippet_text_edits = state.supports_snippet_text_edits;
-        drop(state);
         let origin_source = if workspace.matches_translation_file(&path) {
-            workspace
-                .origin_file_for(&path)
-                .and_then(|origin_path| std::fs::read_to_string(origin_path).ok())
+            index
+                .as_ref()
+                .and_then(|index| {
+                    index
+                        .file(&path)
+                        .and_then(|file| index.origin_for(&workspace, file))
+                })
+                .map(|origin_file| origin_file.source.clone())
         } else {
             None
         };
+        drop(state);
 
         let mut actions = Vec::new();
         if let Some(origin_source) = origin_source.as_deref() {
@@ -869,9 +1158,6 @@ impl Backend {
         }
 
         if let Some(target) = find_generate_selector_target(&source, &path, params.range.start) {
-            let Some(file_match) = workspace.file_match(&path) else {
-                return Ok(None);
-            };
             let Some(edit_range) = byte_range_to_lsp_range(&source, target.pattern_span.clone())
             else {
                 return Ok(None);
@@ -1284,6 +1570,7 @@ impl LanguageServer for Backend {
             state.supports_show_document = params
                 .capabilities
                 .window
+                .clone()
                 .and_then(|window| window.show_document)
                 .map(|capability| capability.support)
                 .unwrap_or(false);
@@ -1295,6 +1582,12 @@ impl LanguageServer for Backend {
                     capability.document_changes.unwrap_or(false)
                         && capability.snippet_edit_support.unwrap_or(false)
                 });
+            state.supports_work_done_progress = params
+                .capabilities
+                .window
+                .clone()
+                .and_then(|window| window.work_done_progress)
+                .unwrap_or(false);
         }
 
         Ok(InitializeResult {
@@ -1338,8 +1631,11 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        let state = self.state.read().await;
-        match &state.workspace {
+        let (workspace, root) = {
+            let state = self.state.read().await;
+            (state.workspace.clone(), state.root_dir.clone())
+        };
+        match &workspace {
             Some(workspace) => {
                 self.client
                     .log_message(
@@ -1351,10 +1647,11 @@ impl LanguageServer for Backend {
                         ),
                     )
                     .await;
+                self.rebuild_index_with_progress().await;
+                self.publish_local_only_diagnostics().await;
             }
             None => {
-                let root = state
-                    .root_dir
+                let root = root
                     .as_ref()
                     .map(|path| path.display().to_string())
                     .unwrap_or_else(|| "<unknown root>".to_string());
@@ -1379,6 +1676,7 @@ impl LanguageServer for Backend {
             .await
             .open_documents
             .insert(uri.clone(), params.text_document.text);
+        self.replace_indexed_file(&uri).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -1389,12 +1687,14 @@ impl LanguageServer for Backend {
                 .await
                 .open_documents
                 .insert(uri.clone(), change.text);
+            self.replace_indexed_file(&uri).await;
         }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
         self.state.write().await.open_documents.remove(&uri);
+        self.replace_indexed_file(&uri).await;
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 
@@ -1407,13 +1707,22 @@ impl LanguageServer for Backend {
                 .open_documents
                 .insert(uri.clone(), text);
         }
+        self.replace_indexed_file(&uri).await;
         self.publish_document_diagnostics(&uri).await;
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        let mut state = self.state.write().await;
-        state.client_config = parse_client_config(&params.settings);
-        drop(state);
+        {
+            let mut state = self.state.write().await;
+            state.client_config = parse_client_config(&params.settings);
+            if let Some(root_dir) = state.root_dir.clone() {
+                state.workspace = WorkspaceConfig::load(root_dir).ok();
+                state.index = None;
+                state.last_disk_index_refresh = None;
+            }
+        }
+        self.rebuild_index_with_progress().await;
+        self.publish_local_only_diagnostics().await;
     }
 
     async fn goto_definition(
@@ -2031,6 +2340,19 @@ fn collect_document_diagnostics(
         )
     });
     diagnostics
+}
+
+fn local_only_file_diagnostic(file: &IndexedFile) -> Diagnostic {
+    Diagnostic {
+        range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+        severity: Some(DiagnosticSeverity::WARNING),
+        source: Some("fluent-lsp".to_string()),
+        message: format!(
+            "Translation file has no origin-language counterpart for `{}`",
+            file.file_match.filepath
+        ),
+        ..Diagnostic::default()
+    }
 }
 
 fn collect_parse_error_diagnostics(
@@ -3997,6 +4319,10 @@ fn parse_variant_line(trimmed: &str) -> Option<String> {
 
 fn collect_fluent_keys(source: &str) -> Vec<String> {
     let resource = parse_fluent_resource(source);
+    collect_fluent_keys_from_resource(&resource)
+}
+
+fn collect_fluent_keys_from_resource(resource: &Resource<&str>) -> Vec<String> {
     let mut keys = Vec::new();
 
     for entry in &resource.body {
@@ -5141,6 +5467,112 @@ mod tests {
     use super::*;
     use fluent_bundle::{FluentBundle, FluentResource};
     use unic_langid::LanguageIdentifier;
+
+    fn indexed_test_workspace(root: &Path) -> WorkspaceConfig {
+        std::fs::write(
+            root.join("fluent-lsp.toml"),
+            "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+        )
+        .unwrap();
+        WorkspaceConfig::load(root.to_path_buf()).unwrap()
+    }
+
+    #[test]
+    fn index_extracts_per_file_keys_definitions_and_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
+        let workspace = indexed_test_workspace(temp.path());
+        let path = temp.path().join("locales/en/app.ftl");
+        let file_match = workspace.file_match(&path).unwrap();
+        let indexed = index_fluent_file(
+            path,
+            file_match,
+            "# Docs\nhello = Hello\nmenu =\n    .label = Menu\n".to_string(),
+        );
+
+        assert!(indexed.keys.contains("hello"));
+        assert!(indexed.keys.contains("menu.label"));
+        assert_eq!(indexed.definitions["hello"].start.line, 1);
+        assert_eq!(indexed.definitions["menu.label"].start.line, 3);
+        assert_eq!(indexed.file_match.language, "en");
+        assert_eq!(indexed.file_match.filepath, "app");
+    }
+
+    #[test]
+    fn index_replaces_and_removes_one_file_without_losing_reverse_maps() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
+        std::fs::create_dir_all(temp.path().join("locales/es")).unwrap();
+        let workspace = indexed_test_workspace(temp.path());
+        let origin = temp.path().join("locales/en/app.ftl");
+        let local = temp.path().join("locales/es/app.ftl");
+        std::fs::write(&origin, "hello = Hello\n").unwrap();
+        std::fs::write(&local, "hello = Hola\n").unwrap();
+
+        let mut index = WorkspaceIndex::build(&workspace, &HashMap::new());
+        let local_file = index.file(&local).unwrap().clone();
+        assert_eq!(
+            index.origin_for(&workspace, &local_file).unwrap().path,
+            origin
+        );
+        assert_eq!(
+            index
+                .translations_for(&workspace, index.file(&origin).unwrap())
+                .len(),
+            1
+        );
+
+        std::fs::write(&local, "renamed = Hola\n").unwrap();
+        index.replace_file(&workspace, &local, &HashMap::new());
+        assert!(!index.file(&local).unwrap().keys.contains("hello"));
+        assert!(index.file(&local).unwrap().keys.contains("renamed"));
+
+        index.remove_file(&local);
+        assert!(index.file(&local).is_none());
+        assert!(
+            index
+                .translations_for(&workspace, index.file(&origin).unwrap())
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn index_overlay_text_takes_precedence_and_close_reverts_to_disk() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
+        let workspace = indexed_test_workspace(temp.path());
+        let path = temp.path().join("locales/en/app.ftl");
+        std::fs::write(&path, "disk-key = Disk\n").unwrap();
+        let uri = Uri::from_file_path(&path).unwrap();
+        let mut overlays = HashMap::new();
+        overlays.insert(uri, "overlay-key = Overlay\n".to_string());
+
+        let mut index = WorkspaceIndex::build(&workspace, &overlays);
+        assert!(index.file(&path).unwrap().keys.contains("overlay-key"));
+        assert!(!index.file(&path).unwrap().keys.contains("disk-key"));
+
+        index.replace_file(&workspace, &path, &HashMap::new());
+        assert!(index.file(&path).unwrap().keys.contains("disk-key"));
+        assert!(!index.file(&path).unwrap().keys.contains("overlay-key"));
+    }
+
+    #[test]
+    fn index_identifies_local_only_files_and_recovers_from_parse_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("locales/es")).unwrap();
+        let workspace = indexed_test_workspace(temp.path());
+        let local = temp.path().join("locales/es/only.ftl");
+        std::fs::write(&local, "broken\nvalid = Value\n").unwrap();
+
+        let mut index = WorkspaceIndex::build(&workspace, &HashMap::new());
+        assert_eq!(index.local_only_files(&workspace).len(), 1);
+        assert!(index.file(&local).unwrap().keys.contains("valid"));
+
+        std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
+        std::fs::write(temp.path().join("locales/en/only.ftl"), "valid = Origin\n").unwrap();
+        index.refresh_disk_file_set(&workspace, &HashMap::new());
+        assert!(index.local_only_files(&workspace).is_empty());
+    }
 
     #[test]
     fn extracts_key_inside_quotes() {

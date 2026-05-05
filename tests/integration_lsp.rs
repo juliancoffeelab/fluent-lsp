@@ -313,6 +313,223 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
 }
 
 #[test]
+fn initialized_builds_index_and_reports_progress_when_supported() {
+    let root = fixture_root();
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 140,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {
+                "window": {
+                    "workDoneProgress": true
+                }
+            }
+        }
+    }));
+    assert_eq!(lsp.recv()["id"], 140);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    assert_eq!(
+        recv_notification(&mut lsp, "window/logMessage")["method"],
+        "window/logMessage"
+    );
+    let begin = recv_notification(&mut lsp, "$/progress");
+    assert_eq!(
+        begin["params"]["token"],
+        Value::String("fluent-lsp-index".to_string())
+    );
+    assert_eq!(
+        begin["params"]["value"]["kind"],
+        Value::String("begin".to_string())
+    );
+    let mut saw_report = false;
+    loop {
+        let progress = recv_notification(&mut lsp, "$/progress");
+        match progress["params"]["value"]["kind"].as_str() {
+            Some("report") => saw_report = true,
+            Some("end") => break,
+            other => panic!("unexpected progress kind: {other:?}"),
+        }
+    }
+    assert!(saw_report, "index build should report per-file progress");
+}
+
+#[test]
+fn indexed_requests_reflect_live_origin_changes_without_restart() {
+    let workspace = completion_workspace();
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let translation_path = workspace.path().join("locales/es/app.ftl");
+    let translation_text = "hello = Hola\n\nfresh-key = Fresco\n";
+    let updated_origin = concat!(
+        "hello = Hello\n",
+        "\n",
+        "# Fresh origin docs\n",
+        "fresh-key = Fresh origin value\n",
+    );
+
+    let mut lsp = initialized_lsp(workspace.path(), 141);
+    send_open_document(&mut lsp, &origin_path, updated_origin);
+    send_open_document(&mut lsp, &translation_path, translation_text);
+
+    assert_definition(
+        &mut lsp,
+        142,
+        &translation_path,
+        position_of(translation_text, "fresh-key"),
+        &origin_path,
+        3,
+        0,
+    );
+    let hover = request_hover(
+        &mut lsp,
+        144,
+        &translation_path,
+        position_of(translation_text, "fresh-key"),
+    );
+    let value = hover["result"]["contents"]["value"].as_str().unwrap();
+    assert!(value.contains("# Fresh origin docs"));
+
+    let completion_text = "fresh";
+    send_change_document(&mut lsp, &translation_path, 2, completion_text);
+    let labels = request_completion_labels(
+        &mut lsp,
+        143,
+        &translation_path,
+        position_after(completion_text, "fresh"),
+    );
+    assert_eq!(labels, vec!["fresh-key".to_string()]);
+}
+
+#[test]
+fn indexed_requests_reflect_live_translation_changes_and_dirty_close_reverts() {
+    let workspace = completion_workspace();
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let translation_path = workspace.path().join("locales/es/app.ftl");
+    let disk_translation = "hello-world = Hola\n";
+    std::fs::write(&translation_path, disk_translation).unwrap();
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 145);
+    open_document(&mut lsp, &origin_path, &origin_text);
+
+    assert_references(
+        &mut lsp,
+        146,
+        &origin_path,
+        position_of(&origin_text, "download-action"),
+        &[],
+    );
+
+    send_open_document(&mut lsp, &translation_path, disk_translation);
+    let dirty_translation = "hello = Hola\n\ndownload-action = Descargar\n";
+    send_change_document(&mut lsp, &translation_path, 2, dirty_translation);
+
+    assert_references(
+        &mut lsp,
+        147,
+        &origin_path,
+        position_of(&origin_text, "download-action"),
+        &[ReferenceExpectation::new("locales/es/app.ftl", 2, 0)],
+    );
+
+    send_close_document(&mut lsp, &translation_path);
+    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_references(
+        &mut lsp,
+        148,
+        &origin_path,
+        position_of(&origin_text, "download-action"),
+        &[],
+    );
+}
+
+#[test]
+fn indexed_references_pick_up_disk_file_adds_and_deletes() {
+    let workspace = completion_workspace();
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let new_translation = workspace.path().join("locales/fr/app.ftl");
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 149);
+    open_document(&mut lsp, &origin_path, &origin_text);
+    assert_references(
+        &mut lsp,
+        150,
+        &origin_path,
+        position_of(&origin_text, "hello-world"),
+        &[],
+    );
+
+    std::fs::create_dir_all(new_translation.parent().unwrap()).unwrap();
+    std::fs::write(&new_translation, "hello-world = Bonjour\n").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert_references(
+        &mut lsp,
+        151,
+        &origin_path,
+        position_of(&origin_text, "hello-world"),
+        &[ReferenceExpectation::new("locales/fr/app.ftl", 0, 0)],
+    );
+
+    std::fs::remove_file(&new_translation).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert_references(
+        &mut lsp,
+        152,
+        &origin_path,
+        position_of(&origin_text, "hello-world"),
+        &[],
+    );
+}
+
+#[test]
+fn local_only_file_warning_updates_when_origin_counterpart_appears() {
+    let workspace = tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/es")).unwrap();
+    std::fs::write(
+        workspace.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+    )
+    .unwrap();
+    let mut lsp = initialized_lsp(workspace.path(), 152);
+    let local_path = workspace.path().join("locales/es/only.ftl");
+    let local_text = "local-only = Solo local\n";
+    std::fs::write(&local_path, local_text).unwrap();
+    send_open_document(&mut lsp, &local_path, local_text);
+    send_save_document(&mut lsp, &local_path, Some(local_text));
+    let warning = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let diagnostics = warning["params"]["diagnostics"].as_array().unwrap();
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic["message"]
+        == Value::String(
+            "Translation file has no origin-language counterpart for `only`".to_string()
+        )));
+
+    std::fs::create_dir_all(workspace.path().join("locales/en")).unwrap();
+    std::fs::write(
+        workspace.path().join("locales/en/only.ftl"),
+        "local-only = Origin now exists\n",
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    send_save_document(&mut lsp, &local_path, Some(local_text));
+    let cleared = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let diagnostics = cleared["params"]["diagnostics"].as_array().unwrap();
+    assert!(diagnostics.iter().all(|diagnostic| diagnostic["message"]
+        != Value::String(
+            "Translation file has no origin-language counterpart for `only`".to_string()
+        )));
+}
+
+#[test]
 fn completion_from_translation_uses_origin_language_keys_and_attributes() {
     let workspace = completion_workspace();
     let app_path = workspace.path().join("locales/es/app.ftl");
