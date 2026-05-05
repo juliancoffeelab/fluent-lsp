@@ -137,6 +137,7 @@ The fix was structural:
 - the shared `RwLock<WorkspaceIndex>` request path was replaced with an actor-owned index queried over channels
 - request handlers no longer clone the full index; they send a query and receive only the specific result
 - disk refresh moved off the request path into a background worker that performs mask-scoped snapshot diffs and sends deltas to the actor
+- background refresh workers are aborted when the index is replaced or the server shuts down, and the worker waits one refresh interval before its first scan
 
 This keeps standard LSP behavior intact while removing the repo-wide crawl and index-copy costs that made large workspaces feel catastrophically slow.
 
