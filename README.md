@@ -7,6 +7,7 @@ Current behavior:
 - Reads `fluent-lsp.toml` or `.fluent-lsp.toml` from the workspace root.
 - Tracks localized `.ftl` files through templated `file_masks` that include `{lang}` and `{filepath}`, so nested locale trees resolve back to the matching origin-language file.
 - Builds a global Fluent workspace index after initialization and reports standard LSP work-done progress when the client supports it.
+- Emits standard `$/logTrace` timing notifications when tracing is enabled through `initialize.trace` or `$/setTrace`.
 - Keeps unsaved editor buffers as index overlays and invalidates one file entry at a time for standard `didOpen`, `didChange`, `didSave`, and `didClose` notifications.
 - Resolves `textDocument/definition` by extracting the message, term, or attribute under the cursor from a translated Fluent file and jumping to the matching origin-language `.ftl` file.
 - Resolves `textDocument/hover` as a formatted Fluent preview for the hovered message or attribute. Translation value hover renders the source preview first, then `---`, then the current-language preview, while key and origin-language hover stay single-section.

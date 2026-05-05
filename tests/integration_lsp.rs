@@ -364,6 +364,180 @@ fn initialized_builds_index_and_reports_progress_when_supported() {
 }
 
 #[test]
+fn log_trace_reports_index_and_request_timings_when_enabled() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 153,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "trace": "messages",
+            "capabilities": {}
+        }
+    }));
+    assert_eq!(lsp.recv()["id"], 153);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let _ = recv_notification(&mut lsp, "window/logMessage");
+    let index_trace = recv_notification(&mut lsp, "$/logTrace");
+    assert!(
+        index_trace["params"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("operation=workspace/index"),
+        "unexpected index trace: {index_trace:?}"
+    );
+    assert!(index_trace["params"].get("verbose").is_none());
+
+    send_open_document(&mut lsp, &source_path, &source_text);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 154,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": {
+                "line": position_of(&source_text, "welcome-title").0,
+                "character": position_of(&source_text, "welcome-title").1
+            }
+        }
+    }));
+    let request_trace = recv_notification(&mut lsp, "$/logTrace");
+    let _ = recv_response(&mut lsp, 154);
+    assert!(
+        request_trace["params"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("operation=textDocument/definition"),
+        "unexpected request trace: {request_trace:?}"
+    );
+    assert!(request_trace["params"].get("verbose").is_none());
+}
+
+#[test]
+fn verbose_log_trace_includes_request_details() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 155,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "trace": "verbose",
+            "capabilities": {}
+        }
+    }));
+    assert_eq!(lsp.recv()["id"], 155);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let _ = recv_notification(&mut lsp, "window/logMessage");
+    let index_trace = recv_notification(&mut lsp, "$/logTrace");
+    assert!(
+        index_trace["params"]["verbose"]
+            .as_str()
+            .is_some_and(|verbose| verbose.starts_with("files=")),
+        "unexpected index trace: {index_trace:?}"
+    );
+
+    send_open_document(&mut lsp, &source_path, &source_text);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 156,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": {
+                "line": position_of(&source_text, "welcome-title").0,
+                "character": position_of(&source_text, "welcome-title").1
+            }
+        }
+    }));
+    let request_trace = recv_notification(&mut lsp, "$/logTrace");
+    let _ = recv_response(&mut lsp, 156);
+    assert_eq!(
+        request_trace["params"]["verbose"],
+        Value::String("hit=true".to_string())
+    );
+}
+
+#[test]
+fn set_trace_enables_request_timings_after_initialize() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let mut lsp = LspProcess::start();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 157,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {}
+        }
+    }));
+    assert_eq!(lsp.recv()["id"], 157);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let _ = recv_notification(&mut lsp, "window/logMessage");
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "$/setTrace",
+        "params": {
+            "value": "verbose"
+        }
+    }));
+    send_open_document(&mut lsp, &source_path, &source_text);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 158,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": {
+                "line": position_of(&source_text, "welcome-title").0,
+                "character": position_of(&source_text, "welcome-title").1
+            }
+        }
+    }));
+    let request_trace = recv_notification(&mut lsp, "$/logTrace");
+    let _ = recv_response(&mut lsp, 158);
+    assert!(
+        request_trace["params"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("operation=textDocument/definition"),
+        "unexpected request trace: {request_trace:?}"
+    );
+    assert_eq!(
+        request_trace["params"]["verbose"],
+        Value::String("hit=true".to_string())
+    );
+}
+
+#[test]
 fn indexed_requests_reflect_live_origin_changes_without_restart() {
     let workspace = completion_workspace();
     let origin_path = workspace.path().join("locales/en/app.ftl");

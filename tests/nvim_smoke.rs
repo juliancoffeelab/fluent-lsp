@@ -308,6 +308,19 @@ fn nvim_smoke_definition_translation() {
 }
 
 #[test]
+fn nvim_smoke_log_trace_timings() {
+    let result = run_scenario("log_trace_timings");
+    assert_eq!(result["ok"], Value::Bool(true));
+    assert!(
+        result["message"]
+            .as_str()
+            .unwrap()
+            .contains("operation=textDocument/definition")
+    );
+    assert_eq!(result["verbose"], Value::String("hit=true".to_string()));
+}
+
+#[test]
 fn nvim_smoke_completion_origin_keys() {
     let result = run_scenario("completion_origin_keys");
     assert_eq!(result["ok"], Value::Bool(true));

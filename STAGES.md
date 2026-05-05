@@ -122,3 +122,26 @@ Warm request p50, indexed release:
 - missing-entry code action: `25.18 ms`
 
 Observation: this reduced-size comparison exposes a regression in the indexed request path. The indexed handlers currently clone the workspace index out of shared state for request processing; at this shape that clone cost dominates most warm requests. References improve slightly versus the on-demand scan, but definition, hover, completion, and code actions regress. The next optimization should remove whole-index cloning from request handlers and use scoped read locks or cheaper `Arc`-backed file entries.
+
+## 9. Standard Trace Timing Logs
+
+Added standard LSP `$/logTrace` timing notifications. The server honors the initial `initialize.trace` value and runtime standard `$/setTrace` updates. No custom editor integration is required.
+
+Trace messages use this stable shape:
+
+```text
+fluent-lsp timing operation=<lsp-or-internal-operation> elapsed_ms=<milliseconds>
+```
+
+When trace is `messages`, only `message` is sent. When trace is `verbose`, `verbose` includes the request-specific summary:
+
+- `workspace/index`: `files=<count>`
+- `textDocument/definition`: `hit=true|false`
+- `textDocument/references`: `count=<count>`
+- `textDocument/hover`: `hit=true|false`
+- `textDocument/completion`: `count=<count>`
+- `textDocument/codeAction`: `count=<count>`
+- `textDocument/codeLens`: `count=<count>`
+- `workspace/executeCommand`: `command=<command> ok=true|false`
+
+Added JSON-RPC integration coverage for `initialize.trace`, verbose payloads, and runtime `$/setTrace`. Added Neovim smoke scenario `tests/nvim/log_trace_timings/` with local fixtures and README coverage.

@@ -27,9 +27,9 @@ use tower_lsp::ls_types::{
     HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
     Location, MarkupContent, MarkupKind, MessageType, OneOf, OneOf3,
     OptionalVersionedTextDocumentIdentifier, Position, ProgressToken, Range, ReferenceParams,
-    ServerCapabilities, ShowDocumentParams, SnippetTextEdit, TextDocumentEdit,
+    ServerCapabilities, SetTraceParams, ShowDocumentParams, SnippetTextEdit, TextDocumentEdit,
     TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, TextEdit, Uri, WorkspaceEdit,
+    TextDocumentSyncSaveOptions, TextEdit, TraceValue, Uri, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -640,6 +640,7 @@ struct ServerState {
     supports_snippet_text_edits: bool,
     supports_work_done_progress: bool,
     last_disk_index_refresh: Option<Instant>,
+    trace: TraceValue,
     client_config: ClientConfig,
 }
 
@@ -656,6 +657,10 @@ impl Backend {
         }
     }
 
+    pub async fn set_trace(&self, params: SetTraceParams) {
+        self.state.write().await.trace = params.value;
+    }
+
     async fn read_document_text_required(&self, uri: &Uri) -> LspResult<String> {
         if let Some(text) = self.state.read().await.open_documents.get(uri).cloned() {
             return Ok(text);
@@ -670,7 +675,30 @@ impl Backend {
         })
     }
 
+    async fn log_trace_timing(&self, operation: &str, elapsed: Duration, verbose: Option<String>) {
+        let trace = self.state.read().await.trace;
+        if trace == TraceValue::Off {
+            return;
+        }
+
+        let message = format!(
+            "fluent-lsp timing operation={operation} elapsed_ms={:.3}",
+            elapsed.as_secs_f64() * 1000.0
+        );
+        let verbose = if trace == TraceValue::Verbose {
+            verbose
+        } else {
+            None
+        };
+        self.client
+            .send_notification::<tower_lsp::ls_types::notification::LogTrace>(
+                tower_lsp::ls_types::LogTraceParams { message, verbose },
+            )
+            .await;
+    }
+
     async fn rebuild_index_with_progress(&self) {
+        let started = Instant::now();
         let (workspace, overlays, supports_progress) = {
             let state = self.state.read().await;
             let Some(workspace) = state.workspace.clone() else {
@@ -738,6 +766,12 @@ impl Backend {
                 .finish_with_message(format!("Indexed {total} Fluent files"))
                 .await;
         }
+        self.log_trace_timing(
+            "workspace/index",
+            started.elapsed(),
+            Some(format!("files={total}")),
+        )
+        .await;
     }
 
     async fn refresh_index_file_set(&self) {
@@ -1588,6 +1622,7 @@ impl LanguageServer for Backend {
                 .clone()
                 .and_then(|window| window.work_done_progress)
                 .unwrap_or(false);
+            state.trace = params.trace.unwrap_or_default();
         }
 
         Ok(InitializeResult {
@@ -1729,34 +1764,130 @@ impl LanguageServer for Backend {
         &self,
         params: GotoDefinitionParams,
     ) -> LspResult<Option<GotoDefinitionResponse>> {
-        Ok(self
+        let started = Instant::now();
+        let result = self
             .definition_for(params)
             .await
-            .map(GotoDefinitionResponse::Scalar))
+            .map(GotoDefinitionResponse::Scalar);
+        self.log_trace_timing(
+            "textDocument/definition",
+            started.elapsed(),
+            Some(format!("hit={}", result.is_some())),
+        )
+        .await;
+        Ok(result)
     }
 
     async fn references(&self, params: ReferenceParams) -> LspResult<Option<Vec<Location>>> {
-        Ok(self.references_for(params).await)
+        let started = Instant::now();
+        let result = self.references_for(params).await;
+        self.log_trace_timing(
+            "textDocument/references",
+            started.elapsed(),
+            Some(format!(
+                "count={}",
+                result.as_ref().map(|items| items.len()).unwrap_or(0)
+            )),
+        )
+        .await;
+        Ok(result)
     }
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
-        self.hover_for(params).await
+        let started = Instant::now();
+        let result = self.hover_for(params).await;
+        self.log_trace_timing(
+            "textDocument/hover",
+            started.elapsed(),
+            Some(format!(
+                "hit={}",
+                result
+                    .as_ref()
+                    .ok()
+                    .and_then(|hover| hover.as_ref())
+                    .is_some()
+            )),
+        )
+        .await;
+        result
     }
 
     async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
-        self.completions_for(params).await
+        let started = Instant::now();
+        let result = self.completions_for(params).await;
+        let count = result
+            .as_ref()
+            .ok()
+            .and_then(|response| response.as_ref())
+            .map(completion_response_len)
+            .unwrap_or(0);
+        self.log_trace_timing(
+            "textDocument/completion",
+            started.elapsed(),
+            Some(format!("count={count}")),
+        )
+        .await;
+        result
     }
 
     async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
-        self.code_actions_for(params).await
+        let started = Instant::now();
+        let result = self.code_actions_for(params).await;
+        self.log_trace_timing(
+            "textDocument/codeAction",
+            started.elapsed(),
+            Some(format!(
+                "count={}",
+                result
+                    .as_ref()
+                    .ok()
+                    .and_then(|actions| actions.as_ref())
+                    .map(|actions| actions.len())
+                    .unwrap_or(0)
+            )),
+        )
+        .await;
+        result
     }
 
     async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
-        self.code_lenses_for(params).await
+        let started = Instant::now();
+        let result = self.code_lenses_for(params).await;
+        self.log_trace_timing(
+            "textDocument/codeLens",
+            started.elapsed(),
+            Some(format!(
+                "count={}",
+                result
+                    .as_ref()
+                    .ok()
+                    .and_then(|lenses| lenses.as_ref())
+                    .map(|lenses| lenses.len())
+                    .unwrap_or(0)
+            )),
+        )
+        .await;
+        result
     }
 
     async fn execute_command(&self, params: ExecuteCommandParams) -> LspResult<Option<Value>> {
-        self.execute_selector_combinations_command(params).await
+        let started = Instant::now();
+        let command = params.command.clone();
+        let result = self.execute_selector_combinations_command(params).await;
+        self.log_trace_timing(
+            "workspace/executeCommand",
+            started.elapsed(),
+            Some(format!("command={command} ok={}", result.is_ok())),
+        )
+        .await;
+        result
+    }
+}
+
+fn completion_response_len(response: &CompletionResponse) -> usize {
+    match response {
+        CompletionResponse::Array(items) => items.len(),
+        CompletionResponse::List(list) => list.items.len(),
     }
 }
 
