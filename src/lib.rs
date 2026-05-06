@@ -509,6 +509,30 @@ struct IndexedFile {
     source: String,
     definitions: HashMap<String, Range>,
     keys: HashSet<String>,
+    block_line_ranges: HashMap<String, (usize, usize)>,
+    source_renders: HashMap<String, SourceRender>,
+    ordered_message_keys: Vec<String>,
+    message_attributes: HashMap<String, Vec<String>>,
+    origin_message_templates: Vec<OriginMessageTemplate>,
+}
+
+impl IndexedFile {
+    fn key_at_position(&self, position: Position) -> Option<&str> {
+        let line_index = usize::try_from(position.line).ok()?;
+        self.block_line_ranges
+            .iter()
+            .filter_map(|(key, (start_line, end_line))| {
+                if *start_line <= line_index && line_index <= *end_line {
+                    Some((key.as_str(), *start_line, *end_line))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(_, start_line, end_line)| {
+                (*start_line, usize::MAX - (end_line - start_line))
+            })
+            .map(|(key, _, _)| key)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -650,23 +674,149 @@ impl WorkspaceIndex {
 
 fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> IndexedFile {
     let (resource, _parse_errors) = parse_fluent_resource_with_errors(&source);
-    let keys = collect_fluent_keys_from_resource(&resource)
-        .into_iter()
-        .collect::<HashSet<_>>();
-    let definitions = keys
-        .iter()
-        .filter_map(|key| {
-            find_fluent_definition_span(&resource, key)
-                .and_then(|span| byte_range_to_lsp_range(&source, span))
-                .map(|range| (key.clone(), range))
-        })
-        .collect::<HashMap<_, _>>();
+    let mut keys = HashSet::new();
+    let mut definitions = HashMap::new();
+    let mut block_line_ranges = HashMap::new();
+    let mut source_renders = HashMap::new();
+    let mut ordered_message_keys = Vec::new();
+    let mut message_attributes = HashMap::new();
+    let mut origin_message_templates = Vec::new();
+
+    for (entry_index, entry) in resource.body.iter().enumerate() {
+        match entry {
+            Entry::Message(message) => {
+                let message_key = message.id.name.to_string();
+                keys.insert(message_key.clone());
+                ordered_message_keys.push(message_key.clone());
+                index_key_metadata(
+                    &source,
+                    &message_key,
+                    message.id.span.0.clone(),
+                    false,
+                    &mut definitions,
+                    &mut block_line_ranges,
+                );
+                if let Some(render) =
+                    render_fluent_source_from_resource(&resource, entry_index, &message_key)
+                {
+                    source_renders.insert(message_key.clone(), render);
+                }
+
+                let attributes = message
+                    .attributes
+                    .iter()
+                    .map(|attribute| attribute.id.name.to_string())
+                    .collect::<Vec<_>>();
+                if !attributes.is_empty() {
+                    message_attributes.insert(message_key.clone(), attributes.clone());
+                }
+
+                for attribute in &message.attributes {
+                    let key = format!("{}.{}", message_key, attribute.id.name);
+                    keys.insert(key.clone());
+                    index_key_metadata(
+                        &source,
+                        &key,
+                        attribute.id.span.0.clone(),
+                        true,
+                        &mut definitions,
+                        &mut block_line_ranges,
+                    );
+                    if let Some(render) =
+                        render_fluent_source_from_resource(&resource, entry_index, &key)
+                    {
+                        source_renders.insert(key, render);
+                    }
+                }
+
+                let Some(message_render) = source_renders.get(&message_key) else {
+                    continue;
+                };
+                let attributes = attributes
+                    .into_iter()
+                    .filter_map(|attribute_key| {
+                        let key = format!("{}.{}", message_key, attribute_key);
+                        Some(OriginAttributeTemplate {
+                            key: attribute_key,
+                            source: source_renders.get(&key)?.source.clone(),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                origin_message_templates.push(OriginMessageTemplate {
+                    key: message_key,
+                    has_value: message.value.is_some(),
+                    attributes,
+                    source: message_render.source.clone(),
+                });
+            }
+            Entry::Term(term) => {
+                let term_key = format!("-{}", term.id.name);
+                keys.insert(term_key.clone());
+                index_key_metadata(
+                    &source,
+                    &term_key,
+                    term.id.span.0.clone(),
+                    false,
+                    &mut definitions,
+                    &mut block_line_ranges,
+                );
+                if let Some(render) =
+                    render_fluent_source_from_resource(&resource, entry_index, &term_key)
+                {
+                    source_renders.insert(term_key.clone(), render);
+                }
+
+                for attribute in &term.attributes {
+                    let key = format!("{}.{}", term_key, attribute.id.name);
+                    keys.insert(key.clone());
+                    index_key_metadata(
+                        &source,
+                        &key,
+                        attribute.id.span.0.clone(),
+                        true,
+                        &mut definitions,
+                        &mut block_line_ranges,
+                    );
+                    if let Some(render) =
+                        render_fluent_source_from_resource(&resource, entry_index, &key)
+                    {
+                        source_renders.insert(key, render);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     IndexedFile {
         path,
         file_match,
         source,
         definitions,
         keys,
+        block_line_ranges,
+        source_renders,
+        ordered_message_keys,
+        message_attributes,
+        origin_message_templates,
+    }
+}
+
+fn index_key_metadata(
+    source: &str,
+    key: &str,
+    span: ByteRange<usize>,
+    is_attribute: bool,
+    definitions: &mut HashMap<String, Range>,
+    block_line_ranges: &mut HashMap<String, (usize, usize)>,
+) {
+    let Some(range) = byte_range_to_lsp_range(source, span) else {
+        return;
+    };
+    let key = key.to_string();
+    definitions.insert(key.clone(), range);
+    if let Some(block_range) = block_line_range_from_definition(source, &range, is_attribute) {
+        block_line_ranges.insert(key, block_range);
     }
 }
 
@@ -741,12 +891,13 @@ enum IndexMessage {
         path: PathBuf,
         reply: oneshot::Sender<Option<String>>,
     },
+    OriginTemplates {
+        path: PathBuf,
+        reply: oneshot::Sender<Option<Vec<OriginMessageTemplate>>>,
+    },
     IndexedTranslationDiagnostics {
         path: PathBuf,
         reply: oneshot::Sender<Vec<Diagnostic>>,
-    },
-    IndexedTranslationDiagnosticBatches {
-        reply: oneshot::Sender<Vec<(Uri, Vec<Diagnostic>)>>,
     },
 }
 
@@ -819,18 +970,6 @@ impl IndexActor {
         Some((uri, diagnostics))
     }
 
-    fn indexed_translation_diagnostic_batches(&self) -> Vec<(Uri, Vec<Diagnostic>)> {
-        let mut paths = self
-            .indexed_translation_warning_paths()
-            .into_iter()
-            .collect::<Vec<_>>();
-        paths.sort();
-        paths
-            .into_iter()
-            .filter_map(|path| self.diagnostic_batch_for_path(&path))
-            .collect()
-    }
-
     fn update_overlay(&mut self, path: PathBuf, text: String) {
         self.overlays.insert(path.clone(), text);
         self.index
@@ -878,14 +1017,14 @@ impl IndexActor {
             return None;
         }
         let file = self.index.file(path)?;
-        let key = extract_definition_key(&file.source, path, position)?;
+        let key = file.key_at_position(position)?;
         let origin_file = self.index.origin_for(&self.workspace, file)?;
-        if !origin_file.keys.contains(&key) {
+        if !origin_file.keys.contains(key) {
             return None;
         }
         Some(Location {
             uri: Uri::from_file_path(&origin_file.path)?,
-            range: *origin_file.definitions.get(&key)?,
+            range: *origin_file.definitions.get(key)?,
         })
     }
 
@@ -900,16 +1039,16 @@ impl IndexActor {
             return None;
         }
         let origin_file = self.index.file(path)?;
-        let key = extract_definition_key(&origin_file.source, path, position)?;
+        let key = origin_file.key_at_position(position)?;
         let mut references = Vec::new();
         if include_declaration {
             references.push(Location {
                 uri: uri.clone(),
-                range: *origin_file.definitions.get(&key)?,
+                range: *origin_file.definitions.get(key)?,
             });
         }
         for translation_file in self.index.translations_for(&self.workspace, origin_file) {
-            let Some(range) = translation_file.definitions.get(&key).copied() else {
+            let Some(range) = translation_file.definitions.get(key).copied() else {
                 continue;
             };
             let Some(uri) = Uri::from_file_path(&translation_file.path) else {
@@ -924,24 +1063,24 @@ impl IndexActor {
         let Some(file) = self.index.file(path) else {
             return Ok(None);
         };
-        let Some(key) = extract_definition_key(&file.source, path, position) else {
+        let Some(key) = file.key_at_position(position) else {
             return Ok(None);
         };
-        let Some(hover_range) = file.definitions.get(&key).copied() else {
+        let Some(hover_range) = file.definitions.get(key).copied() else {
             return Ok(None);
         };
         if range_contains_position(&hover_range, position) {
-            let current_comments = render_fluent_source(&file.source, &key)
-                .and_then(|rendered| rendered.comments)
+            let current_comments = file
+                .source_renders
+                .get(key)
+                .and_then(|rendered| rendered.comments.clone())
                 .filter(|comments| !comments.is_empty());
             let origin_comments = if !self.workspace.is_origin_file(path) {
                 self.index
                     .origin_for(&self.workspace, file)
-                    .and_then(|origin_file| {
-                        render_fluent_source(&origin_file.source, &key)
-                            .and_then(|rendered| rendered.comments)
-                            .filter(|comments| !comments.is_empty())
-                    })
+                    .and_then(|origin_file| origin_file.source_renders.get(key))
+                    .and_then(|rendered| rendered.comments.clone())
+                    .filter(|comments| !comments.is_empty())
             } else {
                 None
             };
@@ -960,10 +1099,10 @@ impl IndexActor {
             return Ok(None);
         }
         let resource = parse_fluent_resource(&file.source);
-        let Some(pattern) = find_fluent_pattern(&resource, &key) else {
+        let Some(pattern) = find_fluent_pattern(&resource, key) else {
             return Ok(None);
         };
-        let selector_overrides = selector_overrides_for_position(&file.source, &key, position);
+        let selector_overrides = selector_overrides_for_position(&file.source, key, position);
         let current_preview = render_message_preview(pattern, Some(&selector_overrides));
         let source_preview = if !self.workspace.is_origin_file(path)
             && !range_contains_position(&hover_range, position)
@@ -978,7 +1117,7 @@ impl IndexActor {
                     ))
                 })?;
             let origin_resource = parse_fluent_resource(&origin_file.source);
-            find_fluent_pattern(&origin_resource, &key).map(|origin_pattern| {
+            find_fluent_pattern(&origin_resource, key).map(|origin_pattern| {
                 render_message_preview(origin_pattern, Some(&selector_overrides))
             })
         } else {
@@ -1006,10 +1145,16 @@ impl IndexActor {
         let Some(origin_file) = self.index.origin_for(&self.workspace, file) else {
             return Ok(Some(CompletionResponse::Array(Vec::new())));
         };
-        Ok(Some(CompletionResponse::Array(completion_items_for_site(
-            &origin_file.source,
-            &site,
-        ))))
+        Ok(Some(CompletionResponse::Array(
+            indexed_completion_items_for_site(origin_file, &site),
+        )))
+    }
+
+    fn origin_message_templates(&self, path: &Path) -> Option<Vec<OriginMessageTemplate>> {
+        let file = self.index.file(path)?;
+        self.index
+            .origin_for(&self.workspace, file)
+            .map(|origin_file| origin_file.origin_message_templates.clone())
     }
 
     fn origin_source(&self, path: &Path) -> Option<String> {
@@ -1064,11 +1209,11 @@ impl IndexActor {
                 IndexMessage::OriginSource { path, reply } => {
                     let _ = reply.send(self.origin_source(&path));
                 }
+                IndexMessage::OriginTemplates { path, reply } => {
+                    let _ = reply.send(self.origin_message_templates(&path));
+                }
                 IndexMessage::IndexedTranslationDiagnostics { path, reply } => {
                     let _ = reply.send(self.indexed_translation_diagnostics_for(&path));
-                }
-                IndexMessage::IndexedTranslationDiagnosticBatches { reply } => {
-                    let _ = reply.send(self.indexed_translation_diagnostic_batches());
                 }
             }
         }
@@ -1233,6 +1378,52 @@ impl Backend {
         reply_rx.await.ok()
     }
 
+    async fn request_index_result<T>(
+        &self,
+        operation: &str,
+        make: impl FnOnce(oneshot::Sender<T>) -> IndexMessage,
+    ) -> LspResult<T> {
+        if self.index_sender().await.is_none() {
+            let has_workspace = self.state.read().await.workspace.is_some();
+            if has_workspace {
+                self.rebuild_index_with_progress().await;
+            }
+        }
+        let tx = self.index_sender().await.ok_or_else(|| {
+            internal_error_with_message(format!("workspace index unavailable for {operation}"))
+        })?;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        tx.send(make(reply_tx)).map_err(|_| {
+            internal_error_with_message(format!(
+                "failed to dispatch {operation} to the workspace index"
+            ))
+        })?;
+        reply_rx.await.map_err(|_| {
+            internal_error_with_message(format!(
+                "workspace index dropped the reply for {operation}"
+            ))
+        })
+    }
+
+    async fn indexed_request_path(&self, uri: &Uri) -> LspResult<PathBuf> {
+        let path = uri
+            .to_file_path()
+            .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
+            .into_owned();
+        let state = self.state.read().await;
+        let workspace = state
+            .workspace
+            .as_ref()
+            .ok_or_else(|| internal_error_with_message("workspace is not initialized"))?;
+        if workspace.file_match(&path).is_none() {
+            return Err(LspError::invalid_params(format!(
+                "document is outside the configured Fluent workspace: {}",
+                path.display()
+            )));
+        }
+        Ok(path)
+    }
+
     async fn rebuild_index_with_progress(&self) {
         let started = Instant::now();
         let (workspace, overlays, supports_progress, client_config) = {
@@ -1327,20 +1518,6 @@ impl Backend {
             .await;
     }
 
-    async fn publish_indexed_translation_diagnostics(&self) {
-        let Some(batches) = self
-            .request_index(|reply| IndexMessage::IndexedTranslationDiagnosticBatches { reply })
-            .await
-        else {
-            return;
-        };
-        for (uri, diagnostics) in batches {
-            self.client
-                .publish_diagnostics(uri, diagnostics, None)
-                .await;
-        }
-    }
-
     async fn respond_to_clicked_command_with_error<M>(
         &self,
         error: LspError,
@@ -1390,47 +1567,43 @@ impl Backend {
             .await;
     }
 
-    async fn definition_for(&self, params: GotoDefinitionParams) -> Option<Location> {
+    async fn definition_for(&self, params: GotoDefinitionParams) -> LspResult<Option<Location>> {
         let uri = params.text_document_position_params.text_document.uri;
-        let path = uri.to_file_path()?.into_owned();
-        self.request_index(|reply| IndexMessage::Definition {
-            path,
-            position: params.text_document_position_params.position,
-            reply,
+        let path = self.indexed_request_path(&uri).await?;
+        self.request_index_result("textDocument/definition", |reply| {
+            IndexMessage::Definition {
+                path,
+                position: params.text_document_position_params.position,
+                reply,
+            }
         })
         .await
-        .flatten()
     }
 
-    async fn references_for(&self, params: ReferenceParams) -> Option<Vec<Location>> {
+    async fn references_for(&self, params: ReferenceParams) -> LspResult<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri;
-        let path = uri.to_file_path()?.into_owned();
-        self.request_index(|reply| IndexMessage::References {
-            path,
-            uri,
-            position: params.text_document_position.position,
-            include_declaration: params.context.include_declaration,
-            reply,
+        let path = self.indexed_request_path(&uri).await?;
+        self.request_index_result("textDocument/references", |reply| {
+            IndexMessage::References {
+                path,
+                uri,
+                position: params.text_document_position.position,
+                include_declaration: params.context.include_declaration,
+                reply,
+            }
         })
         .await
-        .flatten()
     }
 
     async fn hover_for(&self, params: HoverParams) -> LspResult<Option<Hover>> {
-        let path = params
-            .text_document_position_params
-            .text_document
-            .uri
-            .to_file_path()
-            .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
-            .into_owned();
-        self.request_index(|reply| IndexMessage::Hover {
+        let uri = params.text_document_position_params.text_document.uri;
+        let path = self.indexed_request_path(&uri).await?;
+        self.request_index_result("textDocument/hover", |reply| IndexMessage::Hover {
             path,
             position: params.text_document_position_params.position,
             reply,
         })
-        .await
-        .unwrap_or(Ok(None))
+        .await?
     }
 
     async fn completions_for(
@@ -1438,17 +1611,15 @@ impl Backend {
         params: CompletionParams,
     ) -> LspResult<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
-        let path = uri
-            .to_file_path()
-            .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
-            .into_owned();
-        self.request_index(|reply| IndexMessage::Completion {
-            path,
-            position: params.text_document_position.position,
-            reply,
+        let path = self.indexed_request_path(&uri).await?;
+        self.request_index_result("textDocument/completion", |reply| {
+            IndexMessage::Completion {
+                path,
+                position: params.text_document_position.position,
+                reply,
+            }
         })
-        .await
-        .unwrap_or(Ok(None))
+        .await?
     }
 
     async fn code_actions_for(
@@ -1483,8 +1654,8 @@ impl Backend {
             .unwrap_or_default();
         let supports_snippet_text_edits = state.supports_snippet_text_edits;
         drop(state);
-        let origin_source = if workspace.matches_translation_file(&path) && has_index {
-            self.request_index(|reply| IndexMessage::OriginSource {
+        let origin_templates = if workspace.matches_translation_file(&path) && has_index {
+            self.request_index(|reply| IndexMessage::OriginTemplates {
                 path: path.clone(),
                 reply,
             })
@@ -1495,8 +1666,9 @@ impl Backend {
         };
 
         let mut actions = Vec::new();
-        if let Some(origin_source) = origin_source.as_deref() {
-            let missing = collect_missing_translation_entries(origin_source, &source);
+        if let Some(origin_templates) = origin_templates.as_deref() {
+            let missing =
+                collect_missing_translation_entries_from_templates(origin_templates, &source);
             if !missing.is_empty() {
                 if let Some(edit) = build_missing_entries_workspace_edit(
                     &uri,
@@ -1529,7 +1701,7 @@ impl Backend {
                 &uri,
                 &path,
                 &source,
-                origin_source,
+                origin_templates,
                 params.range.start,
             ) {
                 actions.push(CodeActionOrCommand::CodeAction(action));
@@ -2032,7 +2204,6 @@ impl LanguageServer for Backend {
                     )
                     .await;
                 self.rebuild_index_with_progress().await;
-                self.publish_indexed_translation_diagnostics().await;
             }
             None => {
                 let root = root
@@ -2104,6 +2275,10 @@ impl LanguageServer for Backend {
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         let client_config = parse_client_config(&params.settings);
+        let open_documents = {
+            let state = self.state.read().await;
+            state.open_documents.keys().cloned().collect::<Vec<_>>()
+        };
         {
             let mut state = self.state.write().await;
             state.client_config = client_config;
@@ -2118,7 +2293,9 @@ impl LanguageServer for Backend {
         self.rebuild_index_with_progress().await;
         self.send_index_message(IndexMessage::SetClientConfig { client_config })
             .await;
-        self.publish_indexed_translation_diagnostics().await;
+        for uri in open_documents {
+            self.publish_document_diagnostics(&uri).await;
+        }
     }
 
     async fn goto_definition(
@@ -2129,14 +2306,21 @@ impl LanguageServer for Backend {
         let result = self
             .definition_for(params)
             .await
-            .map(GotoDefinitionResponse::Scalar);
+            .map(|location| location.map(GotoDefinitionResponse::Scalar));
         self.log_trace_timing(
             "textDocument/definition",
             started.elapsed(),
-            Some(format!("hit={}", result.is_some())),
+            Some(format!(
+                "hit={}",
+                result
+                    .as_ref()
+                    .ok()
+                    .and_then(|location| location.as_ref())
+                    .is_some()
+            )),
         )
         .await;
-        Ok(result)
+        result
     }
 
     async fn references(&self, params: ReferenceParams) -> LspResult<Option<Vec<Location>>> {
@@ -2147,11 +2331,16 @@ impl LanguageServer for Backend {
             started.elapsed(),
             Some(format!(
                 "count={}",
-                result.as_ref().map(|items| items.len()).unwrap_or(0)
+                result
+                    .as_ref()
+                    .ok()
+                    .and_then(|items| items.as_ref())
+                    .map(|items| items.len())
+                    .unwrap_or(0)
             )),
         )
         .await;
-        Ok(result)
+        result
     }
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
@@ -2320,6 +2509,14 @@ pub fn render_fluent_preview_text(
 fn render_fluent_source(source: &str, key: &str) -> Option<SourceRender> {
     let resource = parse_fluent_resource(source);
     let entry_index = find_fluent_entry_index(&resource, key)?;
+    render_fluent_source_from_resource(&resource, entry_index, key)
+}
+
+fn render_fluent_source_from_resource(
+    resource: &Resource<&str>,
+    entry_index: usize,
+    key: &str,
+) -> Option<SourceRender> {
     let mut comment_entries = Vec::new();
 
     let mut comment_start = entry_index;
@@ -5085,6 +5282,7 @@ fn enclosing_message_key_for_attribute_completion(source: &str, line: u32) -> Op
     None
 }
 
+#[cfg(test)]
 fn completion_items_for_site(origin_source: &str, site: &CompletionSite) -> Vec<CompletionItem> {
     match site {
         CompletionSite::MessageKey { prefix } => origin_message_keys(origin_source)
@@ -5122,6 +5320,51 @@ fn completion_items_for_site(origin_source: &str, site: &CompletionSite) -> Vec<
     }
 }
 
+fn indexed_completion_items_for_site(
+    origin_file: &IndexedFile,
+    site: &CompletionSite,
+) -> Vec<CompletionItem> {
+    match site {
+        CompletionSite::MessageKey { prefix } => origin_file
+            .ordered_message_keys
+            .iter()
+            .filter(|key| key.starts_with(prefix))
+            .enumerate()
+            .map(|(index, key)| {
+                indexed_completion_item(
+                    origin_file,
+                    key.clone(),
+                    "message",
+                    CompletionItemKind::TEXT,
+                    index,
+                )
+            })
+            .collect(),
+        CompletionSite::AttributeKey {
+            message_key,
+            prefix,
+        } => origin_file
+            .message_attributes
+            .get(message_key)
+            .into_iter()
+            .flatten()
+            .map(|attribute| format!(".{attribute}"))
+            .filter(|attribute| attribute.starts_with(prefix))
+            .enumerate()
+            .map(|(index, key)| {
+                indexed_completion_item(
+                    origin_file,
+                    format!("{message_key}{key}"),
+                    "attribute",
+                    CompletionItemKind::FIELD,
+                    index,
+                )
+            })
+            .collect(),
+    }
+}
+
+#[cfg(test)]
 fn completion_item(
     origin_source: &str,
     key: String,
@@ -5144,6 +5387,29 @@ fn completion_item(
     }
 }
 
+fn indexed_completion_item(
+    origin_file: &IndexedFile,
+    key: String,
+    detail: &str,
+    kind: CompletionItemKind,
+    index: usize,
+) -> CompletionItem {
+    let label = key
+        .rsplit_once('.')
+        .map(|(_, attribute_key)| format!(".{attribute_key}"))
+        .unwrap_or_else(|| key.clone());
+    CompletionItem {
+        label: label.clone(),
+        insert_text: Some(label),
+        detail: Some(detail.to_string()),
+        documentation: indexed_completion_item_documentation(origin_file, &key),
+        kind: Some(kind),
+        sort_text: Some(format!("{index:04}")),
+        ..CompletionItem::default()
+    }
+}
+
+#[cfg(test)]
 fn completion_item_documentation(origin_source: &str, key: &str) -> Option<Documentation> {
     let rendered = render_fluent_source(origin_source, key)?;
     let mut sections = Vec::new();
@@ -5161,6 +5427,27 @@ fn completion_item_documentation(origin_source: &str, key: &str) -> Option<Docum
     }))
 }
 
+fn indexed_completion_item_documentation(
+    origin_file: &IndexedFile,
+    key: &str,
+) -> Option<Documentation> {
+    let rendered = origin_file.source_renders.get(key)?;
+    let mut sections = Vec::new();
+    if let Some(comments) = rendered
+        .comments
+        .as_deref()
+        .filter(|comments| !comments.is_empty())
+    {
+        sections.push(render_ftl_block(comments));
+    }
+    sections.push(render_ftl_block(&rendered.source));
+    Some(Documentation::MarkupContent(MarkupContent {
+        kind: MarkupKind::Markdown,
+        value: sections.join("\n\n---\n\n"),
+    }))
+}
+
+#[cfg(test)]
 fn origin_message_keys(source: &str) -> Vec<String> {
     parse_fluent_resource(source)
         .body
@@ -5172,6 +5459,7 @@ fn origin_message_keys(source: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(test)]
 fn origin_message_attributes(source: &str, message_key: &str) -> Vec<String> {
     parse_fluent_resource(source)
         .body
@@ -5201,17 +5489,25 @@ impl MissingTranslationEntries {
     }
 }
 
+#[cfg(test)]
 fn collect_missing_translation_entries(
     origin_source: &str,
     translation_source: &str,
 ) -> MissingTranslationEntries {
     let templates = origin_message_templates(origin_source);
+    collect_missing_translation_entries_from_templates(&templates, translation_source)
+}
+
+fn collect_missing_translation_entries_from_templates(
+    templates: &[OriginMessageTemplate],
+    translation_source: &str,
+) -> MissingTranslationEntries {
     let existing = translation_message_attributes(translation_source);
     let mut missing = MissingTranslationEntries::default();
 
     for template in templates {
         let Some(existing_attributes) = existing.get(&template.key) else {
-            missing.missing_messages.push(template);
+            missing.missing_messages.push(template.clone());
             continue;
         };
         let attributes = template
@@ -5231,6 +5527,7 @@ fn collect_missing_translation_entries(
     missing
 }
 
+#[cfg(test)]
 fn origin_message_templates(source: &str) -> Vec<OriginMessageTemplate> {
     let resource = parse_fluent_resource(source);
     resource
@@ -5337,7 +5634,7 @@ fn build_single_message_copy_code_action(
     uri: &Uri,
     path: &Path,
     translation_source: &str,
-    origin_source: &str,
+    origin_templates: &[OriginMessageTemplate],
     position: Position,
 ) -> Option<CodeAction> {
     let key = extract_definition_key(translation_source, path, position)?;
@@ -5346,7 +5643,7 @@ fn build_single_message_copy_code_action(
         return None;
     }
 
-    let template = origin_message_templates(origin_source)
+    let template = origin_templates
         .into_iter()
         .find(|template| template.key == message_key)?;
 
@@ -5365,7 +5662,8 @@ fn build_single_message_copy_code_action(
         });
     }
 
-    let missing = collect_missing_translation_entries(origin_source, translation_source);
+    let missing =
+        collect_missing_translation_entries_from_templates(origin_templates, translation_source);
     let patch = missing
         .missing_attributes
         .into_iter()
@@ -5619,8 +5917,16 @@ fn find_fluent_entry_index(resource: &Resource<&str>, key: &str) -> Option<usize
 
 fn find_fluent_block_line_range(source: &str, key: &str) -> Option<(usize, usize)> {
     let definition = find_fluent_definition(source, key)?;
-    let start_line = usize::try_from(definition.start.line).ok()?;
     let (_, attribute_key) = split_fluent_key(key);
+    block_line_range_from_definition(source, &definition, attribute_key.is_some())
+}
+
+fn block_line_range_from_definition(
+    source: &str,
+    definition: &Range,
+    is_attribute: bool,
+) -> Option<(usize, usize)> {
+    let start_line = usize::try_from(definition.start.line).ok()?;
     let lines: Vec<&str> = source.split('\n').collect();
     let start_indent = leading_spaces(lines.get(start_line)?);
     let mut end_line = start_line;
@@ -5632,7 +5938,7 @@ fn find_fluent_block_line_range(source: &str, key: &str) -> Option<(usize, usize
         }
 
         let indent = leading_spaces(line);
-        if attribute_key.is_some() {
+        if is_attribute {
             if indent <= start_indent {
                 break;
             }
@@ -6092,6 +6398,26 @@ mod tests {
         assert!(indexed.keys.contains("menu.label"));
         assert_eq!(indexed.definitions["hello"].start.line, 1);
         assert_eq!(indexed.definitions["menu.label"].start.line, 3);
+        assert_eq!(indexed.block_line_ranges["hello"], (1, 1));
+        assert_eq!(indexed.block_line_ranges["menu"], (2, 3));
+        assert_eq!(indexed.block_line_ranges["menu.label"], (3, 3));
+        assert_eq!(
+            indexed.key_at_position(Position::new(3, 7)),
+            Some("menu.label")
+        );
+        assert_eq!(
+            indexed.source_renders["hello"].comments.as_deref(),
+            Some("# Docs\n")
+        );
+        assert_eq!(
+            indexed
+                .message_attributes
+                .get("menu")
+                .cloned()
+                .unwrap_or_default(),
+            vec!["label".to_string()]
+        );
+        assert_eq!(indexed.origin_message_templates.len(), 2);
         assert_eq!(indexed.file_match.language, "en");
         assert_eq!(indexed.file_match.filepath, "app");
     }
