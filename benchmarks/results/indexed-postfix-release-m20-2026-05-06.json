@@ -1,0 +1,88 @@
+{
+  "flavors": [
+    {
+      "indexed_startup_ms": 15.704666999999999,
+      "name": "small-realistic",
+      "notes": "Request file-read count is expected to be zero for indexed warm requests except disk add/delete refresh scans.",
+      "shape": {
+        "files_per_language": 3,
+        "files_scanned_at_startup": 12,
+        "languages": 4,
+        "messages_generated": 480,
+        "messages_per_file": 40
+      },
+      "steady_rss_kb": 7024,
+      "warm_requests": {
+        "codeAction.missingEntries": {
+          "max_ms": 11.936743,
+          "p50_ms": 8.212354,
+          "p95_ms": 11.936743
+        },
+        "completion": {
+          "max_ms": 2.208316,
+          "p50_ms": 0.407669,
+          "p95_ms": 2.208316
+        },
+        "definition": {
+          "max_ms": 6.270157,
+          "p50_ms": 2.858728,
+          "p95_ms": 6.270157
+        },
+        "hover": {
+          "max_ms": 4.494208,
+          "p50_ms": 2.8275330000000003,
+          "p95_ms": 4.494208
+        },
+        "references": {
+          "max_ms": 6.2299310000000006,
+          "p50_ms": 3.3871819999999997,
+          "p95_ms": 6.2299310000000006
+        }
+      }
+    },
+    {
+      "indexed_startup_ms": 246.04487799999998,
+      "name": "synthetic-large",
+      "notes": "Request file-read count is expected to be zero for indexed warm requests except disk add/delete refresh scans.",
+      "shape": {
+        "files_per_language": 50,
+        "files_scanned_at_startup": 1550,
+        "languages": 31,
+        "messages_generated": 31000,
+        "messages_per_file": 20
+      },
+      "steady_rss_kb": 15576,
+      "warm_requests": {
+        "codeAction.missingEntries": {
+          "max_ms": 3.736123,
+          "p50_ms": 2.472464,
+          "p95_ms": 3.736123
+        },
+        "completion": {
+          "max_ms": 0.503924,
+          "p50_ms": 0.310706,
+          "p95_ms": 0.503924
+        },
+        "definition": {
+          "max_ms": 45.846281000000005,
+          "p50_ms": 1.0196459999999998,
+          "p95_ms": 45.846281000000005
+        },
+        "hover": {
+          "max_ms": 1.516959,
+          "p50_ms": 0.9694900000000001,
+          "p95_ms": 1.516959
+        },
+        "references": {
+          "max_ms": 2.1253729999999997,
+          "p50_ms": 1.007067,
+          "p95_ms": 2.1253729999999997
+        }
+      }
+    }
+  ],
+  "generated_at_unix_ms": 1778065392904,
+  "schema": 1,
+  "server": "target/release/fluent-lsp",
+  "total_wall_ms": 963
+}
