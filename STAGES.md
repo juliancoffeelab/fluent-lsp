@@ -141,7 +141,43 @@ The fix was structural:
 
 This keeps standard LSP behavior intact while removing the repo-wide crawl and index-copy costs that made large workspaces feel catastrophically slow.
 
-## 10. Standard Trace Timing Logs
+## 10. Post-Fix Benchmark Validation
+
+Recorded run: `benchmarks/results/indexed-postfix-release-m20-2026-05-06.json`.
+
+Command:
+
+```bash
+FLUENT_LSP_BENCH_MESSAGES=20 target/release/fluent-lsp-bench benchmarks/results/indexed-postfix-release-m20-2026-05-06.json target/release/fluent-lsp
+```
+
+This run was collected after the structural performance fix from stage 9, using the same reduced synthetic shape as the earlier `release-m20` profiling artifact: 31 languages, 50 files/language, 20 messages/file.
+
+Small realistic results after the fix:
+
+- Startup/index: `15.70 ms`
+- RSS: `7,024 KB`
+- Warm p50: definition `2.86 ms`, references `3.39 ms`, hover `2.83 ms`, completion `0.41 ms`, missing-entry code action `8.21 ms`
+
+Synthetic large results after the fix:
+
+- Startup/index: `246.04 ms`
+- RSS: `15,576 KB`
+- Warm p50: definition `1.02 ms`, references `1.01 ms`, hover `0.97 ms`, completion `0.31 ms`, missing-entry code action `2.47 ms`
+
+Compared with the pre-fix indexed `release-m20` artifact (`benchmarks/results/indexer-release-m20.json`), the current implementation materially improves both startup and warm-request latency:
+
+- startup/index: `346.45 ms` -> `246.04 ms`
+- definition p50: `24.91 ms` -> `1.02 ms`
+- references p50: `24.77 ms` -> `1.01 ms`
+- hover p50: `25.51 ms` -> `0.97 ms`
+- completion p50: `26.67 ms` -> `0.31 ms`
+- missing-entry code action p50: `27.01 ms` -> `2.47 ms`
+- RSS: `22,188 KB` -> `15,576 KB`
+
+The historical baseline-vs-index comparison in stage 8 remains useful for showing the original regression, but it predates the stage 9 fix. This post-fix artifact is the current checked-in validation point for the actor-owned, mask-scoped indexed design.
+
+## 11. Standard Trace Timing Logs
 
 Added standard LSP `$/logTrace` timing notifications. The server honors the initial `initialize.trace` value and runtime standard `$/setTrace` updates. No custom editor integration is required.
 

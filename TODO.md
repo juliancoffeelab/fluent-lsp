@@ -209,3 +209,45 @@
 - Index invalidation is covered by explicit regression tests, not only happy-path tests.
 - Local-only-file warnings are implemented and tested.
 - No custom editor/client integration is required; all behaviour uses standard LSP features.
+
+## 14. Next Phase: Remove Reparsing, Tighten Semantics
+
+- Stop reparsing source files inside request handlers where indexed data should already exist.
+- Route all cross-file request behaviour through the workspace index rather than rebuilding request-local views of the same data.
+- Expand the indexed per-file model so requests can answer from precomputed data instead of reparsing:
+  - cursor-position to key/attribute resolution
+  - block/range metadata needed for definition, references, and hover
+  - completion documentation/source snippets
+  - selector expansion/count metadata used by CodeLens and selector commands
+  - origin template data used by missing-entry code actions
+- Remove request-time "figure it out again" algorithms once indexed equivalents exist.
+- Treat reparsing during request handling as a temporary bug, not a permanent fallback strategy.
+
+## 15. Next Phase: Test Hardening
+
+- Add regression tests for every request path that previously reparsed whole files or whole key sets.
+- Add focused benchmarks for the former hot spots so algorithmic regressions are obvious:
+  - definition on translation files
+  - hover and references on large files
+  - completion on large origin files
+  - CodeLens on selector-heavy files
+  - missing-entry code actions on large partially translated workspaces
+- Extend integration coverage so each request is exercised against indexed data only, not mixed indexed/reparsed behaviour.
+- Add Neovim smoke scenarios for every user-visible request whose implementation changes in this phase.
+- Treat feature work as incomplete until the corresponding Neovim smoke path exists, is documented, and uses a local scenario fixture.
+
+## 16. Next Phase: Error Reporting Policy
+
+- Tighten request wrappers so they stop quietly swallowing bad inputs and internal failures.
+- Prefer returning explicit LSP errors for client misuse and server inconsistency, especially for:
+  - invalid or non-file document URIs
+  - requests against files outside configured Fluent workspace scope
+  - malformed command arguments
+  - unavailable or failed index actor/query paths
+  - impossible index states that indicate internal bugs
+- Return `null` only when there is genuinely no semantic result to return, not when the server failed to validate input or complete the request.
+- Define request-by-request semantics for:
+  - `invalid_params` cases
+  - `internal_error` cases
+  - legitimate "no result" cases
+- Add integration tests that assert these error/no-result boundaries explicitly so the policy does not drift back toward silent failure.
