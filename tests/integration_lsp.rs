@@ -226,6 +226,57 @@ fn assert_definition(
 }
 
 #[test]
+fn definition_rejects_non_file_uris_with_invalid_params() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 6);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": "untitled://scratch" },
+            "position": { "line": 0, "character": 0 }
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 7);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String("expected a file URI".to_string())
+    );
+}
+
+#[test]
+fn completion_rejects_files_outside_the_configured_workspace() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 8);
+    let temp = tempdir().unwrap();
+    let outside_path = temp.path().join("outside.ftl");
+    std::fs::write(&outside_path, "hello = Outside\n").unwrap();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", outside_path.display()) },
+            "position": { "line": 0, "character": 2 }
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 9);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("outside the configured Fluent workspace")),
+        "unexpected error response: {response:?}"
+    );
+}
+
+#[test]
 fn references_from_origin_resolve_to_translated_fluent_files() {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");
