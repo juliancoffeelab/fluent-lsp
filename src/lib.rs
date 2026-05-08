@@ -2604,8 +2604,9 @@ fn render_fluent_source_from_resource(
     entry_index: usize,
     key: &str,
 ) -> Option<SourceRender> {
+    let source_index = SourceLineIndex::new(source);
     let comments = render_comment_source_from_resource(source, resource, entry_index);
-    let source = render_entry_source(source, &resource.body[entry_index], key)?;
+    let source = render_entry_source(source, &source_index, &resource.body[entry_index], key)?;
 
     Some(SourceRender { comments, source })
 }
@@ -2717,9 +2718,13 @@ fn write_selector_combinations_temp_document(key: &str, contents: &str) -> Resul
         .ok_or_else(|| format!("failed to convert temp path to URI: {}", path.display()))
 }
 
-fn render_entry_source(source: &str, entry: &Entry<&str>, key: &str) -> Option<String> {
-    let source_index = SourceLineIndex::new(source);
-    let span = render_source_span(source, &source_index, entry, key)?;
+fn render_entry_source(
+    source: &str,
+    source_index: &SourceLineIndex,
+    entry: &Entry<&str>,
+    key: &str,
+) -> Option<String> {
+    let span = render_source_span(source, source_index, entry, key)?;
     let rendered = source.get(span)?.to_string();
     if split_fluent_key(key).1.is_some() {
         Some(strip_attribute_container_indentation(&rendered))
@@ -6019,12 +6024,20 @@ fn find_fluent_entry_index(resource: &Resource<&str>, key: &str) -> Option<usize
 }
 
 fn find_fluent_block_line_range(source: &str, key: &str) -> Option<(usize, usize)> {
+    let source_index = SourceLineIndex::new(source);
+    find_fluent_block_line_range_with_index(source, &source_index, key)
+}
+
+fn find_fluent_block_line_range_with_index(
+    source: &str,
+    source_index: &SourceLineIndex,
+    key: &str,
+) -> Option<(usize, usize)> {
     let definition = find_fluent_definition(source, key)?;
     let (_, attribute_key) = split_fluent_key(key);
-    let source_index = SourceLineIndex::new(source);
     block_line_range_from_definition_with_index(
         source,
-        &source_index,
+        source_index,
         &definition,
         attribute_key.is_some(),
     )
@@ -6377,19 +6390,7 @@ fn render_expression_summary(expression: &fluent_syntax::ast::Expression<&str>) 
 #[derive(Debug, Clone)]
 struct SourceLineIndex {
     line_starts: Vec<usize>,
-    line_infos: Vec<SourceLineInfo>,
-}
-
-#[derive(Debug, Clone)]
-struct SourceLineInfo {
-    line_len_bytes: usize,
-    checkpoints: Vec<SourceLineCheckpoint>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SourceLineCheckpoint {
-    byte_offset: usize,
-    utf16_offset: u32,
+    line_lengths: Vec<usize>,
 }
 
 impl SourceLineIndex {
@@ -6400,20 +6401,17 @@ impl SourceLineIndex {
                 line_starts.push(byte_idx + 1);
             }
         }
-        let mut line_infos = Vec::with_capacity(line_starts.len());
+        let mut line_lengths = Vec::with_capacity(line_starts.len());
         for (line_index, line_start) in line_starts.iter().copied().enumerate() {
             let line_end = line_starts
                 .get(line_index + 1)
                 .map(|next| next - 1)
                 .unwrap_or(source.len());
-            let line = source
-                .get(line_start..line_end)
-                .expect("line boundaries should stay on UTF-8 character boundaries");
-            line_infos.push(SourceLineInfo::new(line));
+            line_lengths.push(line_end - line_start);
         }
         Self {
             line_starts,
-            line_infos,
+            line_lengths,
         }
     }
 
@@ -6423,8 +6421,8 @@ impl SourceLineIndex {
 
     fn line_text<'a>(&self, source: &'a str, line_index: usize) -> Option<&'a str> {
         let start = *self.line_starts.get(line_index)?;
-        let line_info = self.line_infos.get(line_index)?;
-        let end = start + line_info.line_len_bytes;
+        let line_length = *self.line_lengths.get(line_index)?;
+        let end = start + line_length;
         source.get(start..end)
     }
 
@@ -6449,81 +6447,15 @@ impl SourceLineIndex {
 
         let line = self.line_starts.partition_point(|&start| start <= target) - 1;
         let line_start = self.line_starts[line];
-        let line_info = self.line_infos.get(line)?;
-        let relative_target = target - line_start;
-        if relative_target <= line_info.line_len_bytes {
-            let character = line_info.utf16_offset_for(
-                source.get(line_start..target)?,
-                relative_target,
-            )?;
-            return Some(Position::new(u32::try_from(line).ok()?, character));
-        }
-
-        let mut line_number = u32::try_from(line).ok()?;
-        let mut character = line_info
-            .utf16_offset_for(
-                source.get(line_start..line_start + line_info.line_len_bytes)?,
-                line_info.line_len_bytes,
-            )
-            .unwrap_or(0);
-        for ch in source.get(line_start + line_info.line_len_bytes..target)?.chars() {
+        let mut character = 0u32;
+        for ch in source.get(line_start..target)?.chars() {
             if ch == '\n' {
-                line_number += 1;
                 character = 0;
             } else {
                 character += ch.len_utf16() as u32;
             }
         }
-        Some(Position::new(line_number, character))
-    }
-}
-
-impl SourceLineInfo {
-    fn new(line: &str) -> Self {
-        const CHECKPOINT_STRIDE_BYTES: usize = 32;
-
-        let mut checkpoints = Vec::new();
-        let mut utf16_offset = 0u32;
-        let mut last_checkpoint_byte = 0usize;
-        for (byte_offset, ch) in line.char_indices() {
-            if byte_offset > 0 && byte_offset - last_checkpoint_byte >= CHECKPOINT_STRIDE_BYTES {
-                checkpoints.push(SourceLineCheckpoint {
-                    byte_offset,
-                    utf16_offset,
-                });
-                last_checkpoint_byte = byte_offset;
-            }
-            utf16_offset += ch.len_utf16() as u32;
-        }
-        checkpoints.push(SourceLineCheckpoint {
-            byte_offset: line.len(),
-            utf16_offset,
-        });
-
-        Self {
-            line_len_bytes: line.len(),
-            checkpoints,
-        }
-    }
-
-    fn utf16_offset_for(&self, line_prefix: &str, relative_target: usize) -> Option<u32> {
-        if relative_target > self.line_len_bytes {
-            return None;
-        }
-
-        let checkpoint_index = self
-            .checkpoints
-            .partition_point(|checkpoint| checkpoint.byte_offset <= relative_target);
-        let (scan_start, mut utf16_offset) = if checkpoint_index == 0 {
-            (0usize, 0u32)
-        } else {
-            let checkpoint = self.checkpoints[checkpoint_index - 1];
-            (checkpoint.byte_offset, checkpoint.utf16_offset)
-        };
-        for ch in line_prefix.get(scan_start..relative_target)?.chars() {
-            utf16_offset += ch.len_utf16() as u32;
-        }
-        Some(utf16_offset)
+        Some(Position::new(u32::try_from(line).ok()?, character))
     }
 }
 
