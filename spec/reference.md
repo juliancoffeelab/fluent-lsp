@@ -983,6 +983,9 @@ hello = Hola Mundo
 After:
 
 ```ftl
+hello = Hola Mundo
+
+# [LSP-COPY .label]
 # [LSP-COPY .accesskey]
 # [LSP-COPY .tooltip]
 download-action =
