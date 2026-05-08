@@ -11,6 +11,7 @@ use fluent_syntax::parser;
 use fluent_syntax::serializer;
 use icu::locale::Locale;
 use icu::plurals::{PluralCategory, PluralRules};
+use rayon::prelude::*;
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
@@ -607,16 +608,13 @@ impl WorkspaceIndex {
         overlays: &FastMap<Uri, String>,
     ) {
         self.remove_file(path);
-        let Some(file_match) = workspace.file_match(path) else {
+        let Some(entry) = load_indexed_file(workspace, path, overlays) else {
             return;
         };
-        let source = Uri::from_file_path(path)
-            .and_then(|uri| overlays.get(&uri).cloned())
-            .or_else(|| std::fs::read_to_string(path).ok());
-        let Some(source) = source else {
-            return;
-        };
-        let entry = index_fluent_file(path.to_path_buf(), file_match, source);
+        self.insert_file(entry);
+    }
+
+    fn insert_file(&mut self, entry: IndexedFile) {
         self.by_identity.insert(
             (
                 entry.file_match.mask_index,
@@ -686,6 +684,18 @@ impl WorkspaceIndex {
         files.sort_by(|left, right| left.path.cmp(&right.path));
         files
     }
+}
+
+fn load_indexed_file(
+    workspace: &WorkspaceConfig,
+    path: &Path,
+    overlays: &FastMap<Uri, String>,
+) -> Option<IndexedFile> {
+    let file_match = workspace.file_match(path)?;
+    let source = Uri::from_file_path(path)
+        .and_then(|uri| overlays.get(&uri).cloned())
+        .or_else(|| std::fs::read_to_string(path).ok())?;
+    Some(index_fluent_file(path.to_path_buf(), file_match, source))
 }
 
 fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> IndexedFile {
@@ -1257,7 +1267,7 @@ pub fn build_workspace_index_snapshot(
 ) -> (FastMap<PathBuf, SystemTime>, IndexBuildSummary) {
     let paths = collect_matching_files(workspace);
     let snapshot = paths
-        .iter()
+        .par_iter()
         .filter_map(|path| {
             let modified = std::fs::metadata(path).ok()?.modified().ok()?;
             Some((path.clone(), modified))
@@ -1265,8 +1275,12 @@ pub fn build_workspace_index_snapshot(
         .collect::<FastMap<_, _>>();
 
     let mut index = WorkspaceIndex::default();
-    for path in &paths {
-        index.replace_file(workspace, path, overlays);
+    let entries = paths
+        .par_iter()
+        .filter_map(|path| load_indexed_file(workspace, path, overlays))
+        .collect::<Vec<_>>();
+    for entry in entries {
+        index.insert_file(entry);
     }
 
     let summary = IndexBuildSummary {
