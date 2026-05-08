@@ -766,10 +766,13 @@ Before:
 plain-count = Monedas disponibles.
 ```
 
-Snippet payload:
+Inserted snippet text:
 
-```json
-"{ \\$${1:count} ->\n    [one] Monedas disponibles.\n    *[other] Monedas disponibles.\n}"
+```text
+{ \$${1:count} ->
+    [one] Monedas disponibles.
+    *[other] Monedas disponibles.
+}
 ```
 
 Function-anchor example.
