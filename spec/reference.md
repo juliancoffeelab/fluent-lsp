@@ -963,22 +963,21 @@ menu-save =
 sync-status = Sync ready
 ```
 
-#### Multiple missing attributes in one message
+#### Whole missing message with attributes
 
 English source:
 
 ```ftl
-menu-save =
-    .label = Save
+download-action =
+    .label = Install build
     .accesskey = S
-    .tooltip = Save this file
+    .tooltip = Download this build
 ```
 
 Before:
 
 ```ftl
-menu-save =
-    .label = Guardar
+hello = Hola Mundo
 ```
 
 After:
@@ -986,10 +985,10 @@ After:
 ```ftl
 # [LSP-COPY .accesskey]
 # [LSP-COPY .tooltip]
-menu-save =
-    .label = Guardar
+download-action =
+    .label = Install build
     .accesskey = S
-    .tooltip = Save this file
+    .tooltip = Download this build
 ```
 
 ### Quick Fix: copy missing string `hello`
