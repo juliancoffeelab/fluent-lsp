@@ -93,11 +93,11 @@ button-copy =
 
 Examples:
 
-| Translation cursor | Opens file | Target location | Target text |
+| Cursor line in translation | Opens file | Target location | Target line in origin |
 | --- | --- | --- | --- |
 | `welcome-title` | `origin.ftl` | `1:0` | `welcome-title = Welcome` |
 | `-brand-name =` | `origin.ftl` | `3:0` | `-brand-name = Nightly` |
-| `button-copy.label = Lanzar` | `origin.ftl` | `6:4` | `.label = Launch` |
+| `.label = Lanzar` | `origin.ftl` | `6:4` | `.label = Launch` |
 
 Attribute source:
 
@@ -115,9 +115,9 @@ menu-save =
 
 Attribute example:
 
-| Translation cursor | Opens file | Target location | Target text |
+| Cursor line in translation | Opens file | Target location | Target line in origin |
 | --- | --- | --- | --- |
-| `menu-save.label = Guardar` | `origin-menu.ftl` | `2:4` | `.label = Save` |
+| `.label = Guardar` | `origin-menu.ftl` | `2:4` | `.label = Save` |
 
 Visible result:
 
@@ -193,15 +193,15 @@ menu-save =
 
 Examples:
 
-| Origin cursor | Reference file | Reference location | Reference text |
+| Cursor line in origin | Reference file | Reference location | Reference line in translation |
 | --- | --- | --- | --- |
 | `welcome-title` | `translation-es.ftl` | `1:0` | `welcome-title = Bienvenido` |
 | `welcome-title` | `translation-fr.ftl` | `0:0` | `welcome-title = Bienvenue` |
 | `-brand-name =` | `translation-es.ftl` | `3:0` | `-brand-name = Nightly` |
 | `-brand-name =` | `translation-fr.ftl` | `2:0` | `-brand-name = Nightly` |
-| `menu-save.label = Save` | `translation-es-menu.ftl` | `2:4` | `.label = Guardar` |
-| `menu-save.label = Save` | `translation-fr-menu.ftl` | `2:4` | `.label = Enregistrer` |
-| `menu-save.label = Save` | `translation-lv-menu.ftl` | `2:4` | `.label = Saglabat` |
+| `.label = Save` | `translation-es-menu.ftl` | `2:4` | `.label = Guardar` |
+| `.label = Save` | `translation-fr-menu.ftl` | `2:4` | `.label = Enregistrer` |
+| `.label = Save` | `translation-lv-menu.ftl` | `2:4` | `.label = Saglabat` |
 
 Visible result:
 
