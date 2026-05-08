@@ -10,9 +10,12 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
-fluent-syntax = { git = "https://github.com/juliancoffeelab/fluent-rs", branch = "span-followup", package = "fluent-syntax", features = [
-    "spans",
-] }
+fluent-syntax = {
+    git = "https://github.com/juliancoffeelab/fluent-rs",
+    branch = "span-followup",
+    package = "fluent-syntax",
+    features = ["spans"],
+}
 icu = { version = "2.2", features = ["compiled_data"] }
 rayon = "1.11"
 regex = "1.12"
@@ -20,22 +23,27 @@ rustc-hash = "2.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tempfile = "3.23"
-tokio = { version = "1.48", features = [
-    "fs",
-    "io-std",
-    "macros",
-    "rt-multi-thread",
-    "sync",
-    "time",
-] }
+tokio = {
+    version = "1.48",
+    features = ["fs", "io-std", "macros", "rt-multi-thread", "sync", "time"],
+}
 toml = "0.9"
-tower-lsp = { package = "tower-lsp-server", version = "0.23.0", features = [
-    "proposed",
-] }
+tower-lsp = {
+    package = "tower-lsp-server",
+    version = "0.23.0",
+    features = ["proposed"],
+}
 
 [dev-dependencies]
-fluent-bundle = { git = "https://github.com/juliancoffeelab/fluent-rs", branch = "span-followup", package = "fluent-bundle" }
+fluent-bundle = {
+    git = "https://github.com/juliancoffeelab/fluent-rs",
+    branch = "span-followup",
+    package = "fluent-bundle",
+}
 unic-langid = "0.9.6"
 
 [patch.crates-io]
-ls-types = { git = "https://github.com/juliancoffeelab/ls-types", branch = "snippet-edit-support" }
+ls-types = {
+    git = "https://github.com/juliancoffeelab/ls-types",
+    branch = "snippet-edit-support",
+}
