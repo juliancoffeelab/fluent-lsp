@@ -963,6 +963,35 @@ menu-save =
 sync-status = Sync ready
 ```
 
+#### Multiple missing attributes in one message
+
+English source:
+
+```ftl
+menu-save =
+    .label = Save
+    .accesskey = S
+    .tooltip = Save this file
+```
+
+Before:
+
+```ftl
+menu-save =
+    .label = Guardar
+```
+
+After:
+
+```ftl
+# [LSP-COPY .accesskey]
+# [LSP-COPY .tooltip]
+menu-save =
+    .label = Guardar
+    .accesskey = S
+    .tooltip = Save this file
+```
+
 ### Quick Fix: copy missing string `hello`
 
 #### Title
