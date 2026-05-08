@@ -139,6 +139,22 @@ Cursor in `locales/es/app.ftl` on:
 -brand-name = Nightly
 ```
 
+#### Attribute in top-level file
+
+Cursor in `locales/es/app.ftl` on:
+
+```ftl
+button-copy =
+    .label = Lanzar
+```
+
+`Go to Definition` opens `locales/en/app.ftl` and places the cursor on:
+
+```ftl
+button-copy =
+    .label = Launch
+```
+
 #### Attribute in nested file
 
 Cursor in `locales/es/dialogs/menu.ftl` on:
