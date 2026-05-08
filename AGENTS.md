@@ -11,6 +11,8 @@
 - Every user-visible feature must have a respective Neovim smoke test.
 - Do not treat JSON-RPC integration coverage as sufficient for feature-complete validation when the behavior is meant to be used from Neovim.
 - Feature work is not complete until the corresponding Neovim smoke path exists and is exercised by the test suite.
+- In tests, `contains`-style assertions are banned for user-visible results. Use direct comparisons instead.
+- When validating rendered Fluent output in tests, each test must validate the result with bundle message formatting and assert it with a direct `assert_eq!`.
 
 ## Smoke Test Documentation
 
@@ -24,3 +26,7 @@
 - The exact source-under-test must live inside that scenario directory, not only in a shared external fixture tree.
 - Do not rely on undocumented shared fixture paths when a scenario claims to cover a specific feature.
 - Do not consider a feature test complete if the scenario exists without this documentation and local source fixture.
+
+## TODO
+
+- Remove the `window/showMessage` fallback for selector combinations. This feature should use only standard `window/showDocument`.
