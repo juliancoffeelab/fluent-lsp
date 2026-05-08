@@ -53,8 +53,8 @@ Try it locally from this repo:
 
 Local fork:
 
-- `third_party/fluent-syntax/` is a path-patched local fork of `fluent-syntax 0.12.0`.
-- The intent is to have a clean place to add AST/source span support for editor features without waiting on upstream merges.
+- `fluent-syntax` and the test-only `fluent-bundle` dependency are pinned to `juliancoffeelab/fluent-rs` at the `span-followup` fork revision.
+- That fork carries upstream PR `projectfluent/fluent-rs#373` plus a tiny follow-up for editor-facing span regressions and local test/lint quirks.
 
 The test suite includes:
 
