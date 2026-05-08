@@ -116,7 +116,7 @@ Cursor on:
 welcome-title = Bienvenido
 ```
 
-`Go to Definition` opens `origin.ftl` and places the cursor on:
+`Go to Definition` opens `locales/en/app.ftl` and places the cursor on:
 
 ```ftl
 welcome-title = Welcome
@@ -128,7 +128,7 @@ Cursor on:
 -brand-name = Nightly
 ```
 
-`Go to Definition` opens `origin.ftl` and places the cursor on:
+`Go to Definition` opens `locales/en/app.ftl` and places the cursor on:
 
 ```ftl
 -brand-name = Nightly
@@ -141,7 +141,7 @@ button-copy =
     .label = Lanzar
 ```
 
-`Go to Definition` opens `origin.ftl` and places the cursor on:
+`Go to Definition` opens `locales/en/app.ftl` and places the cursor on:
 
 ```ftl
 button-copy =
@@ -155,7 +155,7 @@ menu-save =
     .label = Guardar
 ```
 
-`Go to Definition` opens `origin-menu.ftl` and places the cursor on:
+`Go to Definition` opens `locales/en/dialogs/menu.ftl` and places the cursor on:
 
 ```ftl
 menu-save =
