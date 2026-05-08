@@ -8,7 +8,7 @@ Required keys:
 
 ```toml
 origin_language = "en"
-file_masks = ["{lang}/{filepath}.ftl"]
+file_masks = ["locales/{lang}/{filepath}.ftl"]
 ```
 
 Optional keys:
@@ -932,8 +932,9 @@ sync-status = Sync ready
 
 #### Rules
 
-- copied whole messages receive `# [LSP-COPY]`
-- copied missing attributes receive a message-level marker such as `# [LSP-COPY .tooltip]`
+- copied whole messages without attributes receive `# [LSP-COPY]`
+- copied whole messages with attributes receive one message-level marker per copied attribute, such as `# [LSP-COPY .label]`
+- copied missing attributes on an existing message receive the same per-attribute markers, such as `# [LSP-COPY .tooltip]`
 
 #### Whole missing string added
 
@@ -1013,7 +1014,6 @@ hello = Hello World
 Before:
 
 ```ftl
-hello = { "" }
 download-action =
     .label = Descargar
 
@@ -1025,6 +1025,7 @@ After:
 ```ftl
 # [LSP-COPY]
 hello = Hello World
+
 download-action =
     .label = Descargar
 
@@ -1467,13 +1468,13 @@ Placement:
 Example source path:
 
 ```text
-es/only.ftl
+locales/es/only.ftl
 ```
 
 Without:
 
 ```text
-en/only.ftl
+locales/en/only.ftl
 ```
 
 Example diagnostic:
