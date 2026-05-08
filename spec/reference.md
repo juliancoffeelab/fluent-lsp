@@ -414,6 +414,8 @@ Hover has three forms.
 
 Key hover returns comment blocks when comments exist. Key hover does not fall back to body preview.
 
+#### Two-block comment hover
+
 Origin source in `locales/en/app.ftl`:
 
 ```ftl
@@ -446,13 +448,9 @@ Hover payload:
 ```
 ````
 
-Rules:
+#### Edge cases
 
-- origin key hover returns origin comments only
-- translation key hover returns origin comments first, local comments second
-- if only origin comments exist, hover shows one origin comment block
-- if only local comments exist, hover shows one local comment block
-- if neither side has comments, hover returns no hover
+##### Origin comments only
 
 Origin source in `locales/en/app.ftl`:
 
@@ -477,6 +475,8 @@ Hover payload:
 ```
 ````
 
+##### Local comments only
+
 Origin source in `locales/en/app.ftl`:
 
 ```ftl
@@ -500,6 +500,8 @@ Hover payload:
 ```
 ````
 
+##### No comments on either side
+
 Origin source in `locales/en/app.ftl`:
 
 ```ftl
@@ -518,9 +520,19 @@ Hover result:
 no hover
 ```
 
+#### Rules
+
+- origin key hover returns origin comments only
+- translation key hover returns origin comments first, local comments second
+- if only origin comments exist, hover shows one origin comment block
+- if only local comments exist, hover shows one local comment block
+- if neither side has comments, hover returns no hover
+
 ### Body hover
 
 Body hover returns rendered preview text.
+
+#### Two-block message hover
 
 Origin source in `locales/en/app.ftl`:
 
@@ -548,6 +560,8 @@ Abre la build mas reciente de { -brand-name } y sigue donde lo dejaste.
 ```
 ````
 
+#### Origin-only attribute hover
+
 Origin attribute source in `locales/en/dialogs/menu.ftl`:
 
 ```ftl
@@ -563,7 +577,7 @@ Save changes before closing the window
 ```
 ````
 
-Missing origin message example.
+#### Missing origin message
 
 Origin source in `locales/en/app.ftl`:
 
@@ -585,7 +599,7 @@ Texto solo local.
 ```
 ````
 
-Empty local value example.
+#### Empty local value
 
 Origin source in `locales/en/app.ftl`:
 
@@ -613,7 +627,7 @@ English empty preview fallback.
 ```
 ````
 
-Rules:
+#### Rules
 
 - origin-file body hover shows one origin preview block
 - translation-file body hover shows origin first and local second when both exist
@@ -623,6 +637,8 @@ Rules:
 ### Selector hover
 
 Selector hover prepends resolved selector values, then shows origin and local rendered preview blocks.
+
+#### Matching selector names
 
 Origin source in `locales/en/app.ftl`:
 
@@ -670,7 +686,7 @@ Copia el enlace de descarga para la cuenta de ella en { $count } dispositivos ah
 ```
 ````
 
-Mismatch example.
+#### Mismatched selector sets
 
 Origin source in `locales/en/app.ftl`:
 
@@ -719,7 +735,7 @@ Resumen para elle misme con ningun paquete listo.
 ```
 ````
 
-Origin without selectors example.
+#### Origin without selectors
 
 Origin source in `locales/en/app.ftl`:
 
@@ -753,7 +769,7 @@ Descarga lista.
 ```
 ````
 
-Rules:
+#### Rules
 
 - origin block is first
 - local block is second
@@ -766,13 +782,15 @@ Rules:
 
 ## `textDocument/completion`
 
-Behavior:
+### Behavior
 
 - completion is translation-oriented
 - completion data comes from the origin counterpart file
 - trigger character is `.`
 
-Top-level key example.
+### Examples
+
+#### Top-level key
 
 Origin source in `locales/en/app.ftl`:
 
@@ -799,7 +817,7 @@ download-action
 download-count
 ```
 
-Attribute example.
+#### Attribute
 
 Before:
 
@@ -814,7 +832,7 @@ Completion labels:
 .label
 ```
 
-Bare-dot example.
+#### Bare dot
 
 Origin source in `locales/en/dialogs/menu.ftl`:
 
@@ -838,7 +856,9 @@ Completion labels:
 .tooltip
 ```
 
-Documentation example for `commented-preview`:
+### Documentation Payloads
+
+#### Message completion item: `commented-preview`
 
 ```ftl
 # Completion doc coverage
@@ -846,7 +866,7 @@ Documentation example for `commented-preview`:
 commented-preview = Preview text for completion docs.
 ```
 
-Documentation example for `menu-save.tooltip`:
+#### Attribute completion item: `menu-save.tooltip`
 
 ```ftl
 # Menu completion documentation
@@ -855,7 +875,7 @@ menu-save =
     .tooltip = Save this file
 ```
 
-Rules:
+### Rules
 
 - translation files receive completion from their origin counterpart
 - nested translation files use the nested origin counterpart
@@ -872,11 +892,13 @@ Two action families exist:
 
 ### Quick Fix: add missing keys and attributes from English source
 
-Title:
+#### Title
 
 ```text
 Add missing keys and attributes from source
 ```
+
+#### Example
 
 Before:
 
@@ -897,7 +919,7 @@ menu-save =
 sync-status = { "" }
 ```
 
-Rules:
+#### Rules
 
 - inserts parseable empty stubs
 - preserves existing translated content
@@ -905,11 +927,13 @@ Rules:
 
 ### Quick Fix: copy missing keys and attributes from English source
 
-Title:
+#### Title
 
 ```text
 Copy missing keys and attributes from source
 ```
+
+#### Example
 
 English source:
 
@@ -941,18 +965,20 @@ menu-save =
 sync-status = Sync ready
 ```
 
-Rules:
+#### Rules
 
 - copied whole messages receive `# [LSP-COPY]`
 - copied missing attributes receive a message-level marker such as `# [LSP-COPY .tooltip]`
 
 ### Quick Fix: copy one message from English source
 
-Title:
+#### Title
 
 ```text
 Copy `hello` from source
 ```
+
+#### Example
 
 English source:
 
@@ -981,18 +1007,20 @@ download-action =
 sync-status = { "" }
 ```
 
-Rules:
+#### Rules
 
 - replaces only the selected message
 - does not touch unrelated incomplete entries
 
 ### Quick Fix: copy missing attributes for one message from English source
 
-Title:
+#### Title
 
 ```text
 Copy missing attributes for `download-action` from source
 ```
+
+#### Example
 
 English source:
 
@@ -1024,14 +1052,14 @@ download-action =
 sync-status = { "" }
 ```
 
-Rules:
+#### Rules
 
 - inserts only missing attributes for the selected message
 - hover on the copied attribute does not surface the `LSP-COPY` marker as comment content
 
 ### Refactor: selector generation
 
-Representative titles:
+#### Representative titles
 
 ```text
 Generate number selector (prefix)
@@ -1042,7 +1070,7 @@ Generate number selector from NUMBER($downloads) (prefix)
 Generate number selector from WRAP(NUMBER($downloads)) (prefix)
 ```
 
-Message-level example.
+#### Message-level example
 
 Before:
 
@@ -1059,7 +1087,7 @@ Tienes { $coins } { $coins ->
 }
 ```
 
-Whole-only example when no variable exists.
+#### Whole-only example when no variable exists
 
 Before:
 
@@ -1076,7 +1104,7 @@ Inserted snippet text:
 }
 ```
 
-Function-anchor example.
+#### Function-anchor example
 
 Before:
 
@@ -1102,7 +1130,7 @@ Descarga { NUMBER($downloads) } { NUMBER($downloads) ->
 }
 ```
 
-Punctuation example.
+#### Punctuation example
 
 Before:
 
@@ -1119,7 +1147,7 @@ Tienes { $coins } { $coins ->
 }
 ```
 
-Rules:
+#### Rules
 
 - default preferred style is `prefix`
 - client `selector_style` changes preferred style
@@ -1131,7 +1159,7 @@ Rules:
 
 ### Refactor: selector rewrite
 
-Representative titles:
+#### Representative titles
 
 ```text
 Convert selector to prefix form
@@ -1139,7 +1167,7 @@ Convert selector to suffix form
 Convert selector to whole form
 ```
 
-Whole -> prefix example.
+#### Whole -> prefix
 
 Before:
 
@@ -1159,7 +1187,7 @@ whole-coins = Tienes { $coins } { $coins ->
 }
 ```
 
-Whole -> suffix example.
+#### Whole -> suffix
 
 Before:
 
@@ -1179,7 +1207,7 @@ whole-coins = Tienes { $coins ->
 }
 ```
 
-Prefix -> whole example.
+#### Prefix -> whole
 
 Before:
 
@@ -1199,7 +1227,7 @@ prefix-coins = { $coins ->
 }
 ```
 
-Attribute rewrite example.
+#### Attribute rewrite
 
 Before:
 
@@ -1221,7 +1249,7 @@ commented-download =
     }
 ```
 
-Rules:
+#### Rules
 
 - whole selectors can rewrite to prefix and suffix
 - prefix selectors can rewrite to whole
@@ -1252,12 +1280,14 @@ Without that capability they use plain `WorkspaceEdit.changes`.
 
 ## `textDocument/codeLens`
 
-Behavior:
+### Behavior
 
 - lenses are returned for entries with selector combinations worth expanding
 - `resolveProvider` is `false`
 
-Example lens on `install-hint`:
+### Example
+
+#### Lens on `install-hint`
 
 ```json
 {
@@ -1268,13 +1298,13 @@ Example lens on `install-hint`:
 
 ## `workspace/executeCommand`
 
-Supported command:
+### Supported Command
 
 ```text
 fluent-lsp.showSelectorCombinations
 ```
 
-Arguments:
+### Arguments
 
 ```json
 [
@@ -1282,6 +1312,8 @@ Arguments:
   "install-hint"
 ]
 ```
+
+### `window/showDocument` Path
 
 With `window/showDocument` support, the server opens a temp Markdown document containing sections such as:
 
@@ -1294,7 +1326,7 @@ Source language combinations:
 Local language combinations:
 ```
 
-Document example.
+#### Document example
 
 Origin source in `locales/en/app.ftl`:
 
@@ -1324,7 +1356,7 @@ install-hint =
     } ahora.
 ```
 
-Markdown payload excerpt:
+#### Markdown payload excerpt
 
 ````text
 # Selector Combinations: `install-hint`
@@ -1346,6 +1378,8 @@ Copy the download link for their account on { $count } devices now.
 Copia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.
 ```
 ````
+
+### `window/showMessage` Fallback
 
 Without `window/showDocument` support, the server falls back to `window/showMessage`.
 
