@@ -890,47 +890,12 @@ Two action families exist:
 - missing-entry quick fixes
 - selector-generation and selector-rewrite refactors
 
-### Quick Fix: add missing keys and attributes from English source
+### Quick Fix: copy missing strings in file
 
 #### Title
 
 ```text
-Add missing keys and attributes from source
-```
-
-#### Example
-
-Before:
-
-```ftl
-hello = Hola Mundo
-menu-save =
-    .label = Guardar
-```
-
-After:
-
-```ftl
-hello = Hola Mundo
-menu-save =
-    .label = Guardar
-    .tooltip = { "" }
-
-sync-status = { "" }
-```
-
-#### Rules
-
-- inserts parseable empty stubs
-- preserves existing translated content
-- does not add an `LSP-COPY` marker
-
-### Quick Fix: copy missing keys and attributes from English source
-
-#### Title
-
-```text
-Copy missing keys and attributes from source
+Copy missing strings in file
 ```
 
 #### Example
@@ -970,12 +935,12 @@ sync-status = Sync ready
 - copied whole messages receive `# [LSP-COPY]`
 - copied missing attributes receive a message-level marker such as `# [LSP-COPY .tooltip]`
 
-### Quick Fix: copy one message from English source
+### Quick Fix: copy missing string `hello`
 
 #### Title
 
 ```text
-Copy `hello` from source
+Copy missing string `hello`
 ```
 
 #### Example
@@ -1012,12 +977,12 @@ sync-status = { "" }
 - replaces only the selected message
 - does not touch unrelated incomplete entries
 
-### Quick Fix: copy missing attributes for one message from English source
+### Quick Fix: copy missing attribute `download-action.tooltip`
 
 #### Title
 
 ```text
-Copy missing attributes for `download-action` from source
+Copy missing attribute `download-action.tooltip`
 ```
 
 #### Example
