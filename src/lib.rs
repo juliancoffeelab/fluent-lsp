@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::cell::RefCell;
 use std::ops::Range as ByteRange;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use fluent_syntax::serializer;
 use icu::locale::Locale;
 use icu::plurals::{PluralCategory, PluralRules};
 use regex::Regex;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
 use serde_json::Value;
 use tempfile::Builder as TempFileBuilder;
@@ -40,6 +42,9 @@ const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str = "fluent-lsp.showSelectorCombina
 const LSP_COPY_MARKER: &str = "# [LSP-COPY]";
 const LSP_COPY_MARKER_PREFIX: &str = "# [LSP-COPY .";
 const BACKGROUND_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+
+type FastMap<K, V> = FxHashMap<K, V>;
+type FastSet<K> = FxHashSet<K>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -399,14 +404,14 @@ fn collect_matching_files(workspace: &WorkspaceConfig) -> Vec<PathBuf> {
     files
 }
 
-fn disk_snapshot(workspace: &WorkspaceConfig) -> HashMap<PathBuf, SystemTime> {
+fn disk_snapshot(workspace: &WorkspaceConfig) -> FastMap<PathBuf, SystemTime> {
     collect_matching_files(workspace)
         .into_iter()
         .filter_map(|path| {
             let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
             Some((path, modified))
         })
-        .collect()
+        .collect::<FastMap<_, _>>()
 }
 
 #[cfg(test)]
@@ -487,13 +492,13 @@ struct OriginMessageTemplate {
     key: String,
     has_value: bool,
     attributes: Vec<OriginAttributeTemplate>,
-    source: String,
+    source_span: ByteRange<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OriginAttributeTemplate {
     key: String,
-    source: String,
+    source_span: ByteRange<usize>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -507,16 +512,27 @@ struct IndexedFile {
     path: PathBuf,
     file_match: FileMatch,
     source: String,
-    definitions: HashMap<String, Range>,
-    keys: HashSet<String>,
-    block_line_ranges: HashMap<String, (usize, usize)>,
-    source_renders: HashMap<String, SourceRender>,
+    definitions: FastMap<String, Range>,
+    keys: FastSet<String>,
+    block_line_ranges: FastMap<String, (usize, usize)>,
+    source_renders: RefCell<FastMap<String, Option<SourceRender>>>,
     ordered_message_keys: Vec<String>,
-    message_attributes: HashMap<String, Vec<String>>,
+    message_attributes: FastMap<String, Vec<String>>,
     origin_message_templates: Vec<OriginMessageTemplate>,
 }
 
 impl IndexedFile {
+    fn source_render(&self, key: &str) -> Option<SourceRender> {
+        if let Some(rendered) = self.source_renders.borrow().get(key) {
+            return rendered.clone();
+        }
+        let rendered = render_fluent_source(&self.source, key);
+        self.source_renders
+            .borrow_mut()
+            .insert(key.to_string(), rendered.clone());
+        rendered
+    }
+
     fn key_at_position(&self, position: Position) -> Option<&str> {
         let line_index = usize::try_from(position.line).ok()?;
         self.block_line_ranges
@@ -537,13 +553,13 @@ impl IndexedFile {
 
 #[derive(Debug, Clone, Default)]
 struct WorkspaceIndex {
-    files: HashMap<PathBuf, IndexedFile>,
-    by_identity: HashMap<(usize, String, String), PathBuf>,
+    files: FastMap<PathBuf, IndexedFile>,
+    by_identity: FastMap<(usize, String, String), PathBuf>,
 }
 
 impl WorkspaceIndex {
     #[cfg(test)]
-    fn build(workspace: &WorkspaceConfig, overlays: &HashMap<Uri, String>) -> Self {
+    fn build(workspace: &WorkspaceConfig, overlays: &FastMap<Uri, String>) -> Self {
         let mut paths = collect_matching_files(workspace);
         for uri in overlays.keys() {
             let Some(path) = uri.to_file_path().map(|path| path.into_owned()) else {
@@ -566,7 +582,7 @@ impl WorkspaceIndex {
     fn apply_disk_changes(
         &mut self,
         workspace: &WorkspaceConfig,
-        overlays: &HashMap<Uri, String>,
+        overlays: &FastMap<Uri, String>,
         changed_or_added: &[PathBuf],
         removed: &[PathBuf],
     ) {
@@ -588,7 +604,7 @@ impl WorkspaceIndex {
         &mut self,
         workspace: &WorkspaceConfig,
         path: &Path,
-        overlays: &HashMap<Uri, String>,
+        overlays: &FastMap<Uri, String>,
     ) {
         self.remove_file(path);
         let Some(file_match) = workspace.file_match(path) else {
@@ -674,13 +690,29 @@ impl WorkspaceIndex {
 
 fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> IndexedFile {
     let (resource, _parse_errors) = parse_fluent_resource_with_errors(&source);
-    let mut keys = HashSet::new();
-    let mut definitions = HashMap::new();
-    let mut block_line_ranges = HashMap::new();
-    let mut source_renders = HashMap::new();
-    let mut ordered_message_keys = Vec::new();
-    let mut message_attributes = HashMap::new();
-    let mut origin_message_templates = Vec::new();
+    let source_index = SourceLineIndex::new(&source);
+    let mut key_capacity = 0usize;
+    let mut message_count = 0usize;
+    for entry in &resource.body {
+        match entry {
+            Entry::Message(message) => {
+                message_count += 1;
+                key_capacity += 1 + message.attributes.len();
+            }
+            Entry::Term(term) => {
+                key_capacity += 1 + term.attributes.len();
+            }
+            _ => {}
+        }
+    }
+    let mut keys = FastSet::with_capacity_and_hasher(key_capacity, Default::default());
+    let mut definitions = FastMap::with_capacity_and_hasher(key_capacity, Default::default());
+    let mut block_line_ranges =
+        FastMap::with_capacity_and_hasher(key_capacity, Default::default());
+    let mut ordered_message_keys = Vec::with_capacity(message_count);
+    let mut message_attributes =
+        FastMap::with_capacity_and_hasher(message_count, Default::default());
+    let mut origin_message_templates = Vec::with_capacity(message_count);
 
     for (entry_index, entry) in resource.body.iter().enumerate() {
         match entry {
@@ -690,18 +722,13 @@ fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> In
                 ordered_message_keys.push(message_key.clone());
                 index_key_metadata(
                     &source,
+                    &source_index,
                     &message_key,
                     message.id.span.0.clone(),
                     false,
                     &mut definitions,
                     &mut block_line_ranges,
                 );
-                if let Some(render) =
-                    render_fluent_source_from_resource(&resource, entry_index, &message_key)
-                {
-                    source_renders.insert(message_key.clone(), render);
-                }
-
                 let attributes = message
                     .attributes
                     .iter()
@@ -716,37 +743,41 @@ fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> In
                     keys.insert(key.clone());
                     index_key_metadata(
                         &source,
+                        &source_index,
                         &key,
                         attribute.id.span.0.clone(),
                         true,
                         &mut definitions,
                         &mut block_line_ranges,
                     );
-                    if let Some(render) =
-                        render_fluent_source_from_resource(&resource, entry_index, &key)
-                    {
-                        source_renders.insert(key, render);
-                    }
                 }
 
-                let Some(message_render) = source_renders.get(&message_key) else {
-                    continue;
-                };
                 let attributes = attributes
                     .into_iter()
                     .filter_map(|attribute_key| {
                         let key = format!("{}.{}", message_key, attribute_key);
                         Some(OriginAttributeTemplate {
                             key: attribute_key,
-                            source: source_renders.get(&key)?.source.clone(),
+                            source_span: render_source_span(
+                                &source,
+                                &source_index,
+                                &resource.body[entry_index],
+                                &key,
+                            )?,
                         })
                     })
                     .collect::<Vec<_>>();
                 origin_message_templates.push(OriginMessageTemplate {
-                    key: message_key,
+                    key: message_key.clone(),
                     has_value: message.value.is_some(),
                     attributes,
-                    source: message_render.source.clone(),
+                    source_span: render_source_span(
+                        &source,
+                        &source_index,
+                        &resource.body[entry_index],
+                        &message_key,
+                    )
+                    .unwrap_or_default(),
                 });
             }
             Entry::Term(term) => {
@@ -754,34 +785,25 @@ fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> In
                 keys.insert(term_key.clone());
                 index_key_metadata(
                     &source,
+                    &source_index,
                     &term_key,
                     term.id.span.0.clone(),
                     false,
                     &mut definitions,
                     &mut block_line_ranges,
                 );
-                if let Some(render) =
-                    render_fluent_source_from_resource(&resource, entry_index, &term_key)
-                {
-                    source_renders.insert(term_key.clone(), render);
-                }
-
                 for attribute in &term.attributes {
                     let key = format!("{}.{}", term_key, attribute.id.name);
                     keys.insert(key.clone());
                     index_key_metadata(
                         &source,
+                        &source_index,
                         &key,
                         attribute.id.span.0.clone(),
                         true,
                         &mut definitions,
                         &mut block_line_ranges,
                     );
-                    if let Some(render) =
-                        render_fluent_source_from_resource(&resource, entry_index, &key)
-                    {
-                        source_renders.insert(key, render);
-                    }
                 }
             }
             _ => {}
@@ -795,7 +817,7 @@ fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> In
         definitions,
         keys,
         block_line_ranges,
-        source_renders,
+        source_renders: RefCell::new(FastMap::default()),
         ordered_message_keys,
         message_attributes,
         origin_message_templates,
@@ -804,18 +826,21 @@ fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> In
 
 fn index_key_metadata(
     source: &str,
+    source_index: &SourceLineIndex,
     key: &str,
     span: ByteRange<usize>,
     is_attribute: bool,
-    definitions: &mut HashMap<String, Range>,
-    block_line_ranges: &mut HashMap<String, (usize, usize)>,
+    definitions: &mut FastMap<String, Range>,
+    block_line_ranges: &mut FastMap<String, (usize, usize)>,
 ) {
-    let Some(range) = byte_range_to_lsp_range(source, span) else {
+    let Some(range) = byte_range_to_lsp_range_with_index(source, source_index, span) else {
         return;
     };
     let key = key.to_string();
     definitions.insert(key.clone(), range);
-    if let Some(block_range) = block_line_range_from_definition(source, &range, is_attribute) {
+    if let Some(block_range) =
+        block_line_range_from_definition_with_index(source, source_index, &range, is_attribute)
+    {
         block_line_ranges.insert(key, block_range);
     }
 }
@@ -832,7 +857,7 @@ struct ServerState {
     workspace: Option<WorkspaceConfig>,
     index_tx: Option<mpsc::UnboundedSender<IndexMessage>>,
     refresh_task: Option<JoinHandle<()>>,
-    open_documents: HashMap<Uri, String>,
+    open_documents: FastMap<Uri, String>,
     supports_show_document: bool,
     supports_snippet_text_edits: bool,
     supports_work_done_progress: bool,
@@ -912,6 +937,13 @@ struct IndexActor {
 pub struct Backend {
     client: Client,
     state: Arc<RwLock<ServerState>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct IndexBuildSummary {
+    pub discovered_files: usize,
+    pub snapshotted_files: usize,
+    pub indexed_files: usize,
 }
 
 impl IndexActor {
@@ -1005,7 +1037,7 @@ impl IndexActor {
             .send(IndexedDiagnosticUpdate { batches });
     }
 
-    fn pathbuf_overlays_as_uri_map(&self) -> HashMap<Uri, String> {
+    fn pathbuf_overlays_as_uri_map(&self) -> FastMap<Uri, String> {
         self.overlays
             .iter()
             .filter_map(|(path, text)| Some((Uri::from_file_path(path)?, text.clone())))
@@ -1071,14 +1103,13 @@ impl IndexActor {
         };
         if range_contains_position(&hover_range, position) {
             let current_comments = file
-                .source_renders
-                .get(key)
-                .and_then(|rendered| rendered.comments.clone())
+                .source_render(key)
+                .and_then(|rendered| rendered.comments)
                 .filter(|comments| !comments.is_empty());
             let origin_comments = if !self.workspace.is_origin_file(path) {
                 self.index
                     .origin_for(&self.workspace, file)
-                    .and_then(|origin_file| origin_file.source_renders.get(key))
+                    .and_then(|origin_file| origin_file.source_render(key))
                     .and_then(|rendered| rendered.comments.clone())
                     .filter(|comments| !comments.is_empty())
             } else {
@@ -1220,6 +1251,32 @@ impl IndexActor {
     }
 }
 
+pub fn build_workspace_index_snapshot(
+    workspace: &WorkspaceConfig,
+    overlays: &FastMap<Uri, String>,
+) -> (FastMap<PathBuf, SystemTime>, IndexBuildSummary) {
+    let paths = collect_matching_files(workspace);
+    let snapshot = paths
+        .iter()
+        .filter_map(|path| {
+            let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+            Some((path.clone(), modified))
+        })
+        .collect::<FastMap<_, _>>();
+
+    let mut index = WorkspaceIndex::default();
+    for path in &paths {
+        index.replace_file(workspace, path, overlays);
+    }
+
+    let summary = IndexBuildSummary {
+        discovered_files: paths.len(),
+        snapshotted_files: snapshot.len(),
+        indexed_files: index.files.len(),
+    };
+    (snapshot, summary)
+}
+
 impl Backend {
     pub fn new(client: Client) -> Self {
         Self {
@@ -1282,8 +1339,8 @@ impl Backend {
         &self,
         workspace: WorkspaceConfig,
         index: WorkspaceIndex,
-        snapshot: HashMap<PathBuf, SystemTime>,
-        overlays: HashMap<Uri, String>,
+        snapshot: FastMap<PathBuf, SystemTime>,
+        overlays: FastMap<Uri, String>,
         client_config: ClientConfig,
     ) {
         let overlay_paths = overlays
@@ -1325,7 +1382,7 @@ impl Backend {
     fn spawn_background_refresh_task(
         &self,
         workspace: WorkspaceConfig,
-        mut previous_snapshot: HashMap<PathBuf, SystemTime>,
+        mut previous_snapshot: FastMap<PathBuf, SystemTime>,
         index_tx: mpsc::UnboundedSender<IndexMessage>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
@@ -1447,7 +1504,7 @@ impl Backend {
                 let modified = std::fs::metadata(path).ok()?.modified().ok()?;
                 Some((path.clone(), modified))
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<FastMap<_, _>>();
 
         let progress = if supports_progress {
             Some(
@@ -1664,6 +1721,16 @@ impl Backend {
         } else {
             None
         };
+        let origin_source = if workspace.matches_translation_file(&path) && has_index {
+            self.request_index(|reply| IndexMessage::OriginSource {
+                path: path.clone(),
+                reply,
+            })
+            .await
+            .flatten()
+        } else {
+            None
+        };
 
         let mut actions = Vec::new();
         if let Some(origin_templates) = origin_templates.as_deref() {
@@ -1674,6 +1741,7 @@ impl Backend {
                     &uri,
                     &source,
                     &missing,
+                    None,
                     MissingEntryRenderMode::EmptyStub,
                 ) {
                     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
@@ -1687,6 +1755,7 @@ impl Backend {
                     &uri,
                     &source,
                     &missing,
+                    origin_source.as_deref(),
                     MissingEntryRenderMode::CopySource,
                 ) {
                     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
@@ -1697,14 +1766,17 @@ impl Backend {
                     }));
                 }
             }
-            if let Some(action) = build_single_message_copy_code_action(
-                &uri,
-                &path,
-                &source,
-                origin_templates,
-                params.range.start,
-            ) {
-                actions.push(CodeActionOrCommand::CodeAction(action));
+            if let Some(origin_source) = origin_source.as_deref() {
+                if let Some(action) = build_single_message_copy_code_action(
+                    &uri,
+                    &path,
+                    &source,
+                    origin_templates,
+                    origin_source,
+                    params.range.start,
+                ) {
+                    actions.push(CodeActionOrCommand::CodeAction(action));
+                }
             }
         }
 
@@ -2509,32 +2581,17 @@ pub fn render_fluent_preview_text(
 fn render_fluent_source(source: &str, key: &str) -> Option<SourceRender> {
     let resource = parse_fluent_resource(source);
     let entry_index = find_fluent_entry_index(&resource, key)?;
-    render_fluent_source_from_resource(&resource, entry_index, key)
+    render_fluent_source_from_resource(source, &resource, entry_index, key)
 }
 
 fn render_fluent_source_from_resource(
+    source: &str,
     resource: &Resource<&str>,
     entry_index: usize,
     key: &str,
 ) -> Option<SourceRender> {
-    let mut comment_entries = Vec::new();
-
-    let mut comment_start = entry_index;
-    while comment_start > 0 && is_free_comment_entry(&resource.body[comment_start - 1]) {
-        comment_start -= 1;
-    }
-    for comment_entry in &resource.body[comment_start..entry_index] {
-        comment_entries.push(comment_entry.clone());
-    }
-
-    let entry = resource.body[entry_index].clone();
-    let entry = strip_inline_comment(entry, &mut comment_entries);
-    let comments = if comment_entries.is_empty() {
-        None
-    } else {
-        Some(render_hover_comments(&comment_entries))
-    };
-    let source = render_entry_source(&entry, key)?;
+    let comments = render_comment_source_from_resource(source, resource, entry_index);
+    let source = render_entry_source(source, &resource.body[entry_index], key)?;
 
     Some(SourceRender { comments, source })
 }
@@ -2646,56 +2703,75 @@ fn write_selector_combinations_temp_document(key: &str, contents: &str) -> Resul
         .ok_or_else(|| format!("failed to convert temp path to URI: {}", path.display()))
 }
 
-fn render_entry_source(entry: &Entry<&str>, key: &str) -> Option<String> {
-    let (_, attribute_key) = split_fluent_key(key);
-    if let Some(attribute_key) = attribute_key {
-        return render_attribute_source(attribute_key, entry);
+fn render_entry_source(source: &str, entry: &Entry<&str>, key: &str) -> Option<String> {
+    let source_index = SourceLineIndex::new(source);
+    let span = render_source_span(source, &source_index, entry, key)?;
+    let rendered = source.get(span)?.to_string();
+    if split_fluent_key(key).1.is_some() {
+        Some(strip_attribute_container_indentation(&rendered))
+    } else {
+        Some(rendered)
     }
-
-    Some(serializer::serialize(&Resource {
-        body: vec![entry.clone()],
-        span: fluent_syntax::ast::Span::default(),
-    }))
 }
 
-fn render_attribute_source(attribute_key: &str, entry: &Entry<&str>) -> Option<String> {
-    let attribute = match entry {
-        Entry::Message(message) => message
-            .attributes
-            .iter()
-            .find(|attribute| attribute.id.name == attribute_key)?,
-        Entry::Term(term) => term
-            .attributes
-            .iter()
-            .find(|attribute| attribute.id.name == attribute_key)?,
+fn strip_attribute_container_indentation(source: &str) -> String {
+    let mut stripped = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        stripped.push_str(line.strip_prefix("    ").unwrap_or(line));
+    }
+    stripped
+}
+
+fn render_source_span(
+    source: &str,
+    source_index: &SourceLineIndex,
+    entry: &Entry<&str>,
+    key: &str,
+) -> Option<ByteRange<usize>> {
+    let key_span = match entry {
+        Entry::Message(message) => {
+            let (_, attribute_key) = split_fluent_key(key);
+            if let Some(attribute_key) = attribute_key {
+                message
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.id.name == attribute_key)?
+                    .id
+                    .span
+                    .0
+                    .clone()
+            } else if key == message.id.name {
+                message.id.span.0.clone()
+            } else {
+                return None;
+            }
+        }
+        Entry::Term(term) => {
+            let (_, attribute_key) = split_fluent_key(key);
+            if let Some(attribute_key) = attribute_key {
+                term.attributes
+                    .iter()
+                    .find(|attribute| attribute.id.name == attribute_key)?
+                    .id
+                    .span
+                    .0
+                    .clone()
+            } else if key == format!("-{}", term.id.name) {
+                term.id.span.0.clone()
+            } else {
+                return None;
+            }
+        }
         _ => return None,
     };
-
-    let synthetic = Entry::Message(fluent_syntax::ast::Message {
-        id: fluent_syntax::ast::Identifier {
-            name: "__hover",
-            span: fluent_syntax::ast::Span(0..7),
-        },
-        value: None,
-        attributes: vec![attribute.clone()],
-        comment: None,
-        span: fluent_syntax::ast::Span::default(),
-    });
-    let rendered = serializer::serialize(&Resource {
-        body: vec![synthetic],
-        span: fluent_syntax::ast::Span::default(),
-    });
-    Some(strip_attribute_container(&rendered))
-}
-
-fn strip_attribute_container(rendered: &str) -> String {
-    rendered
-        .lines()
-        .skip(1)
-        .map(|line| line.strip_prefix("    ").unwrap_or(line))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
+    let definition = byte_range_to_lsp_range_with_index(source, source_index, key_span)?;
+    let is_attribute = split_fluent_key(key).1.is_some();
+    let (start_line, end_line) =
+        block_line_range_from_definition_with_index(source, source_index, &definition, is_attribute)?;
+    Some(
+        source_index.line_start_offset(start_line)?
+            ..source_index.end_of_line_offset(source, end_line)?,
+    )
 }
 
 fn render_message_preview(
@@ -2765,27 +2841,6 @@ fn render_expression_preview(
     }
 }
 
-fn strip_inline_comment<'a>(
-    entry: Entry<&'a str>,
-    comment_entries: &mut Vec<Entry<&'a str>>,
-) -> Entry<&'a str> {
-    match entry {
-        Entry::Message(mut message) => {
-            if let Some(comment) = message.comment.take() {
-                comment_entries.push(Entry::Comment(comment));
-            }
-            Entry::Message(message)
-        }
-        Entry::Term(mut term) => {
-            if let Some(comment) = term.comment.take() {
-                comment_entries.push(Entry::Comment(comment));
-            }
-            Entry::Term(term)
-        }
-        other => other,
-    }
-}
-
 fn is_free_comment_entry(entry: &Entry<&str>) -> bool {
     matches!(
         entry,
@@ -2793,43 +2848,58 @@ fn is_free_comment_entry(entry: &Entry<&str>) -> bool {
     )
 }
 
-fn render_hover_comments(entries: &[Entry<&str>]) -> String {
+fn render_comment_source_from_resource(
+    source: &str,
+    resource: &Resource<&str>,
+    entry_index: usize,
+) -> Option<String> {
+    let mut spans = Vec::new();
+    let mut comment_start = entry_index;
+    while comment_start > 0 && is_free_comment_entry(&resource.body[comment_start - 1]) {
+        comment_start -= 1;
+    }
+    for comment_entry in &resource.body[comment_start..entry_index] {
+        spans.push(comment_entry_span(comment_entry)?);
+    }
+    match &resource.body[entry_index] {
+        Entry::Message(message) => {
+            if let Some(comment) = &message.comment {
+                spans.push(comment.span.0.clone());
+            }
+        }
+        Entry::Term(term) => {
+            if let Some(comment) = &term.comment {
+                spans.push(comment.span.0.clone());
+            }
+        }
+        _ => {}
+    }
+    if spans.is_empty() {
+        return None;
+    }
     let mut rendered = String::new();
-    for entry in entries {
-        match entry {
-            Entry::Comment(comment) => append_comment_with_prefix(&mut rendered, comment, "#"),
-            Entry::GroupComment(comment) => {
-                append_comment_with_prefix(&mut rendered, comment, "##")
-            }
-            Entry::ResourceComment(comment) => {
-                append_comment_with_prefix(&mut rendered, comment, "###")
-            }
-            _ => {}
-        }
+    for span in spans {
+        rendered.push_str(source.get(span)?);
     }
-    rendered
+    let filtered = rendered
+        .lines()
+        .filter(|line| parse_lsp_copy_marker_line(line).is_none())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(if filtered.is_empty() {
+        filtered
+    } else {
+        format!("{filtered}\n")
+    })
 }
 
-fn append_comment_with_prefix(
-    buffer: &mut String,
-    comment: &fluent_syntax::ast::Comment<&str>,
-    prefix: &str,
-) {
-    for line in &comment.content {
-        if is_lsp_copy_marker_comment_content(line) {
-            continue;
-        }
-        buffer.push_str(prefix);
-        if !line.trim().is_empty() {
-            buffer.push(' ');
-            buffer.push_str(line);
-        }
-        buffer.push('\n');
+fn comment_entry_span(entry: &Entry<&str>) -> Option<ByteRange<usize>> {
+    match entry {
+        Entry::Comment(comment)
+        | Entry::GroupComment(comment)
+        | Entry::ResourceComment(comment) => Some(comment.span.0.clone()),
+        _ => None,
     }
-}
-
-fn is_lsp_copy_marker_comment_content(line: &str) -> bool {
-    parse_lsp_copy_marker_line(&format!("# {}", line.trim_start())).is_some()
 }
 
 fn parse_lsp_copy_marker_line(line: &str) -> Option<LspCopyMarkerKind> {
@@ -5431,7 +5501,7 @@ fn indexed_completion_item_documentation(
     origin_file: &IndexedFile,
     key: &str,
 ) -> Option<Documentation> {
-    let rendered = origin_file.source_renders.get(key)?;
+    let rendered = origin_file.source_render(key)?;
     let mut sections = Vec::new();
     if let Some(comments) = rendered
         .comments
@@ -5530,21 +5600,26 @@ fn collect_missing_translation_entries_from_templates(
 #[cfg(test)]
 fn origin_message_templates(source: &str) -> Vec<OriginMessageTemplate> {
     let resource = parse_fluent_resource(source);
+    let source_index = SourceLineIndex::new(source);
     resource
         .body
-        .into_iter()
+        .iter()
         .filter_map(|entry| match entry {
             Entry::Message(message) => {
                 let key = message.id.name.to_string();
-                let source = render_fluent_entry(source, &key)?;
-                let entry = Entry::Message(message.clone());
                 let attributes = message
                     .attributes
                     .iter()
                     .filter_map(|attribute| {
+                        let attribute_key = format!("{}.{}", key, attribute.id.name);
                         Some(OriginAttributeTemplate {
                             key: attribute.id.name.to_string(),
-                            source: render_attribute_source(attribute.id.name, &entry)?,
+                            source_span: render_source_span(
+                                source,
+                                &source_index,
+                                entry,
+                                &attribute_key,
+                            )?,
                         })
                     })
                     .collect::<Vec<_>>();
@@ -5552,7 +5627,7 @@ fn origin_message_templates(source: &str) -> Vec<OriginMessageTemplate> {
                     key,
                     has_value: message.value.is_some(),
                     attributes,
-                    source,
+                    source_span: render_source_span(source, &source_index, entry, message.id.name)?,
                 })
             }
             _ => None,
@@ -5560,7 +5635,7 @@ fn origin_message_templates(source: &str) -> Vec<OriginMessageTemplate> {
         .collect()
 }
 
-fn translation_message_attributes(source: &str) -> HashMap<String, HashSet<String>> {
+fn translation_message_attributes(source: &str) -> FastMap<String, FastSet<String>> {
     let resource = parse_fluent_resource(source);
     resource
         .body
@@ -5572,7 +5647,7 @@ fn translation_message_attributes(source: &str) -> HashMap<String, HashSet<Strin
                     .attributes
                     .into_iter()
                     .map(|attribute| attribute.id.name.to_string())
-                    .collect::<HashSet<_>>(),
+                    .collect::<FastSet<_>>(),
             )),
             _ => None,
         })
@@ -5583,11 +5658,12 @@ fn build_missing_entries_workspace_edit(
     uri: &Uri,
     source: &str,
     missing: &MissingTranslationEntries,
+    origin_source: Option<&str>,
     mode: MissingEntryRenderMode,
 ) -> Option<WorkspaceEdit> {
     let mut insertions = BTreeMap::<usize, String>::new();
     for patch in &missing.missing_attributes {
-        let insertion = render_missing_attribute_patch(patch, mode);
+        let insertion = render_missing_attribute_patch(origin_source.unwrap_or(""), patch, mode);
         let offset = message_block_insert_offset(source, &patch.message_key)?;
         insertions
             .entry(offset)
@@ -5604,7 +5680,8 @@ fn build_missing_entries_workspace_edit(
     }
 
     if !missing.missing_messages.is_empty() {
-        let insertion = render_missing_messages_appendix(source, &missing.missing_messages, mode);
+        let insertion =
+            render_missing_messages_appendix(source, origin_source, &missing.missing_messages, mode);
         insertions
             .entry(source.len())
             .and_modify(|existing| existing.push_str(&insertion))
@@ -5635,6 +5712,7 @@ fn build_single_message_copy_code_action(
     path: &Path,
     translation_source: &str,
     origin_templates: &[OriginMessageTemplate],
+    origin_source: &str,
     position: Position,
 ) -> Option<CodeAction> {
     let key = extract_definition_key(translation_source, path, position)?;
@@ -5647,12 +5725,12 @@ fn build_single_message_copy_code_action(
         .into_iter()
         .find(|template| template.key == message_key)?;
 
-    if message_matches_empty_stub(translation_source, &template) {
+    if message_matches_empty_stub(translation_source, template) {
         let edit = build_replace_message_workspace_edit(
             uri,
             translation_source,
             message_key,
-            render_missing_message(&template, MissingEntryRenderMode::CopySource),
+            render_missing_message(origin_source, &template, MissingEntryRenderMode::CopySource),
         )?;
         return Some(CodeAction {
             title: format!("Copy `{message_key}` from source"),
@@ -5675,6 +5753,7 @@ fn build_single_message_copy_code_action(
             missing_messages: Vec::new(),
             missing_attributes: vec![patch],
         },
+        Some(origin_source),
         MissingEntryRenderMode::CopySource,
     )?;
     Some(CodeAction {
@@ -5687,12 +5766,13 @@ fn build_single_message_copy_code_action(
 
 fn render_missing_messages_appendix(
     source: &str,
+    origin_source: Option<&str>,
     missing_messages: &[OriginMessageTemplate],
     mode: MissingEntryRenderMode,
 ) -> String {
     let rendered = missing_messages
         .iter()
-        .map(|message| render_missing_message(message, mode))
+        .map(|message| render_missing_message(origin_source.unwrap_or(""), message, mode))
         .collect::<Vec<_>>()
         .join("\n");
     if source.trim().is_empty() {
@@ -5706,7 +5786,11 @@ fn render_missing_messages_appendix(
     }
 }
 
-fn render_missing_message(message: &OriginMessageTemplate, mode: MissingEntryRenderMode) -> String {
+fn render_missing_message(
+    origin_source: &str,
+    message: &OriginMessageTemplate,
+    mode: MissingEntryRenderMode,
+) -> String {
     match mode {
         MissingEntryRenderMode::EmptyStub => {
             let mut rendered = if message.has_value {
@@ -5720,7 +5804,10 @@ fn render_missing_message(message: &OriginMessageTemplate, mode: MissingEntryRen
             rendered
         }
         MissingEntryRenderMode::CopySource => {
-            let mut rendered = format!("{LSP_COPY_MARKER}\n{}", message.source);
+            let mut rendered = format!(
+                "{LSP_COPY_MARKER}\n{}",
+                &origin_source[message.source_span.clone()]
+            );
             if !rendered.ends_with('\n') {
                 rendered.push('\n');
             }
@@ -5730,6 +5817,7 @@ fn render_missing_message(message: &OriginMessageTemplate, mode: MissingEntryRen
 }
 
 fn render_missing_attribute_patch(
+    origin_source: &str,
     patch: &MissingAttributePatch,
     mode: MissingEntryRenderMode,
 ) -> String {
@@ -5744,7 +5832,7 @@ fn render_missing_attribute_patch(
             .iter()
             .map(|attribute| {
                 let mut rendered = String::new();
-                for line in attribute.source.lines() {
+                for line in origin_source[attribute.source_span.clone()].lines() {
                     rendered.push_str("    ");
                     rendered.push_str(line);
                     rendered.push('\n');
@@ -5831,7 +5919,8 @@ fn message_matches_empty_stub(source: &str, template: &OriginMessageTemplate) ->
     render_fluent_entry(source, &template.key)
         .map(|entry| {
             entry.trim_end()
-                == render_missing_message(template, MissingEntryRenderMode::EmptyStub).trim_end()
+                == render_missing_message("", template, MissingEntryRenderMode::EmptyStub)
+                    .trim_end()
         })
         .unwrap_or(false)
 }
@@ -5918,20 +6007,27 @@ fn find_fluent_entry_index(resource: &Resource<&str>, key: &str) -> Option<usize
 fn find_fluent_block_line_range(source: &str, key: &str) -> Option<(usize, usize)> {
     let definition = find_fluent_definition(source, key)?;
     let (_, attribute_key) = split_fluent_key(key);
-    block_line_range_from_definition(source, &definition, attribute_key.is_some())
+    let source_index = SourceLineIndex::new(source);
+    block_line_range_from_definition_with_index(
+        source,
+        &source_index,
+        &definition,
+        attribute_key.is_some(),
+    )
 }
 
-fn block_line_range_from_definition(
+fn block_line_range_from_definition_with_index(
     source: &str,
+    source_index: &SourceLineIndex,
     definition: &Range,
     is_attribute: bool,
 ) -> Option<(usize, usize)> {
     let start_line = usize::try_from(definition.start.line).ok()?;
-    let lines: Vec<&str> = source.split('\n').collect();
-    let start_indent = leading_spaces(lines.get(start_line)?);
+    let start_indent = leading_spaces(source_index.line_text(source, start_line)?);
     let mut end_line = start_line;
 
-    for (index, line) in lines.iter().enumerate().skip(start_line + 1) {
+    for index in start_line + 1..source_index.line_count() {
+        let line = source_index.line_text(source, index)?;
         let trimmed = line.trim_start();
         if trimmed.is_empty() {
             continue;
@@ -6264,38 +6360,93 @@ fn render_expression_summary(expression: &fluent_syntax::ast::Expression<&str>) 
     }
 }
 
+#[derive(Debug, Clone)]
+struct SourceLineIndex {
+    line_starts: Vec<usize>,
+}
+
+impl SourceLineIndex {
+    fn new(source: &str) -> Self {
+        let mut line_starts = vec![0];
+        for (byte_idx, ch) in source.char_indices() {
+            if ch == '\n' && byte_idx + 1 < source.len() {
+                line_starts.push(byte_idx + 1);
+            }
+        }
+        Self { line_starts }
+    }
+
+    fn line_count(&self) -> usize {
+        self.line_starts.len()
+    }
+
+    fn line_text<'a>(&self, source: &'a str, line_index: usize) -> Option<&'a str> {
+        let start = *self.line_starts.get(line_index)?;
+        let end = self
+            .line_starts
+            .get(line_index + 1)
+            .map(|next| next - 1)
+            .unwrap_or(source.len());
+        source.get(start..end)
+    }
+
+    fn line_start_offset(&self, line_index: usize) -> Option<usize> {
+        self.line_starts.get(line_index).copied()
+    }
+
+    fn end_of_line_offset(&self, source: &str, line_index: usize) -> Option<usize> {
+        self.line_start_offset(line_index)?;
+        Some(
+            self.line_starts
+                .get(line_index + 1)
+                .copied()
+                .unwrap_or(source.len()),
+        )
+    }
+
+    fn position(&self, source: &str, target: usize) -> Option<Position> {
+        if target > source.len() || !source.is_char_boundary(target) {
+            return None;
+        }
+
+        let line = self.line_starts.partition_point(|&start| start <= target) - 1;
+        let line_start = self.line_starts[line];
+        let mut line_number = u32::try_from(line).ok()?;
+        let mut character = 0u32;
+        for ch in source.get(line_start..target)?.chars() {
+            if ch == '\n' {
+                line_number += 1;
+                character = 0;
+            } else {
+                character += ch.len_utf16() as u32;
+            }
+        }
+        Some(Position::new(line_number, character))
+    }
+}
+
 fn byte_range_to_lsp_range(source: &str, span: ByteRange<usize>) -> Option<Range> {
+    let source_index = SourceLineIndex::new(source);
+    byte_range_to_lsp_range_with_index(source, &source_index, span)
+}
+
+fn byte_range_to_lsp_range_with_index(
+    source: &str,
+    source_index: &SourceLineIndex,
+    span: ByteRange<usize>,
+) -> Option<Range> {
     Some(Range {
-        start: byte_index_to_position(source, span.start)?,
-        end: byte_index_to_position(source, span.end)?,
+        start: byte_index_to_position_with_index(source, source_index, span.start)?,
+        end: byte_index_to_position_with_index(source, source_index, span.end)?,
     })
 }
 
-fn byte_index_to_position(source: &str, target: usize) -> Option<Position> {
-    if target > source.len() || !source.is_char_boundary(target) {
-        return None;
-    }
-
-    let mut line = 0u32;
-    let mut character = 0u32;
-    for (byte_idx, ch) in source.char_indices() {
-        if byte_idx == target {
-            return Some(Position::new(line, character));
-        }
-
-        if ch == '\n' {
-            line += 1;
-            character = 0;
-        } else {
-            character += ch.len_utf16() as u32;
-        }
-    }
-
-    if target == source.len() {
-        Some(Position::new(line, character))
-    } else {
-        None
-    }
+fn byte_index_to_position_with_index(
+    source: &str,
+    source_index: &SourceLineIndex,
+    target: usize,
+) -> Option<Position> {
+    source_index.position(source, target)
 }
 
 fn line_at(source: &str, line_index: usize) -> Option<(&str, usize)> {
@@ -6406,7 +6557,10 @@ mod tests {
             Some("menu.label")
         );
         assert_eq!(
-            indexed.source_renders["hello"].comments.as_deref(),
+            indexed
+                .source_render("hello")
+                .and_then(|rendered| rendered.comments)
+                .as_deref(),
             Some("# Docs\n")
         );
         assert_eq!(
@@ -6433,7 +6587,7 @@ mod tests {
         std::fs::write(&origin, "hello = Hello\n").unwrap();
         std::fs::write(&local, "hello = Hola\n").unwrap();
 
-        let mut index = WorkspaceIndex::build(&workspace, &HashMap::new());
+        let mut index = WorkspaceIndex::build(&workspace, &FastMap::default());
         let local_file = index.file(&local).unwrap().clone();
         assert_eq!(
             index.origin_for(&workspace, &local_file).unwrap().path,
@@ -6447,7 +6601,7 @@ mod tests {
         );
 
         std::fs::write(&local, "renamed = Hola\n").unwrap();
-        index.replace_file(&workspace, &local, &HashMap::new());
+        index.replace_file(&workspace, &local, &FastMap::default());
         assert!(!index.file(&local).unwrap().keys.contains("hello"));
         assert!(index.file(&local).unwrap().keys.contains("renamed"));
 
@@ -6468,14 +6622,14 @@ mod tests {
         let path = temp.path().join("locales/en/app.ftl");
         std::fs::write(&path, "disk-key = Disk\n").unwrap();
         let uri = Uri::from_file_path(&path).unwrap();
-        let mut overlays = HashMap::new();
+        let mut overlays = FastMap::default();
         overlays.insert(uri, "overlay-key = Overlay\n".to_string());
 
         let mut index = WorkspaceIndex::build(&workspace, &overlays);
         assert!(index.file(&path).unwrap().keys.contains("overlay-key"));
         assert!(!index.file(&path).unwrap().keys.contains("disk-key"));
 
-        index.replace_file(&workspace, &path, &HashMap::new());
+        index.replace_file(&workspace, &path, &FastMap::default());
         assert!(index.file(&path).unwrap().keys.contains("disk-key"));
         assert!(!index.file(&path).unwrap().keys.contains("overlay-key"));
     }
@@ -6488,14 +6642,14 @@ mod tests {
         let local = temp.path().join("locales/es/only.ftl");
         std::fs::write(&local, "broken\nvalid = Value\n").unwrap();
 
-        let mut index = WorkspaceIndex::build(&workspace, &HashMap::new());
+        let mut index = WorkspaceIndex::build(&workspace, &FastMap::default());
         assert_eq!(index.local_only_files(&workspace).len(), 1);
         assert!(index.file(&local).unwrap().keys.contains("valid"));
 
         std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
         let origin = temp.path().join("locales/en/only.ftl");
         std::fs::write(&origin, "valid = Origin\n").unwrap();
-        index.apply_disk_changes(&workspace, &HashMap::new(), &[origin], &[]);
+        index.apply_disk_changes(&workspace, &FastMap::default(), &[origin], &[]);
         assert!(index.local_only_files(&workspace).is_empty());
     }
 
@@ -6815,6 +6969,7 @@ download-action =\n\
             &Uri::from_file_path("/tmp/app.ftl").unwrap(),
             translation,
             &missing,
+            None,
             MissingEntryRenderMode::EmptyStub,
         )
         .unwrap();
@@ -6840,6 +6995,7 @@ download-action =\n\
             &Uri::from_file_path("/tmp/app.ftl").unwrap(),
             translation,
             &missing,
+            Some(origin),
             MissingEntryRenderMode::CopySource,
         )
         .unwrap();
@@ -8110,6 +8266,45 @@ download-action =\n\
         let generated =
             "Instala { $files } { $files ->\n    [one] ahora.\n    *[other] ahora mismo.\n}";
         assert_generated_pattern_parses(generated);
+    }
+
+    #[test]
+    fn source_line_index_maps_byte_offsets_to_lsp_positions() {
+        let source = "alpha\nbeta🙂\ngamma";
+        let index = SourceLineIndex::new(source);
+
+        assert_eq!(
+            byte_index_to_position_with_index(source, &index, 0),
+            Some(Position::new(0, 0))
+        );
+        assert_eq!(
+            byte_index_to_position_with_index(source, &index, 6),
+            Some(Position::new(1, 0))
+        );
+        assert_eq!(
+            byte_index_to_position_with_index(source, &index, 10),
+            Some(Position::new(1, 4))
+        );
+        assert_eq!(
+            byte_index_to_position_with_index(source, &index, 14),
+            Some(Position::new(1, 6))
+        );
+        assert_eq!(
+            byte_index_to_position_with_index(source, &index, source.len()),
+            Some(Position::new(2, 5))
+        );
+    }
+
+    #[test]
+    fn source_line_index_reuses_lines_for_block_ranges() {
+        let source = "message = Value\n    .attr = First\n        Continued\nnext = Other\n";
+        let index = SourceLineIndex::new(source);
+        let attr_definition = Range::new(Position::new(1, 4), Position::new(1, 9));
+
+        assert_eq!(
+            block_line_range_from_definition_with_index(source, &index, &attr_definition, true),
+            Some((1, 2))
+        );
     }
 
     fn assert_generated_pattern_parses(generated: &str) {
