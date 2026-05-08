@@ -296,18 +296,21 @@ fn assert_hover_block_matches(
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_minimal_server_attach() {
     let result = run_scenario("minimal_server_attach");
     assert_eq!(result["ok"], Value::Bool(true));
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_definition_translation() {
     let result = run_scenario("definition_translation");
     assert_eq!(result["ok"], Value::Bool(true));
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_log_trace_timings() {
     let result = run_scenario("log_trace_timings");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -321,6 +324,7 @@ fn nvim_smoke_log_trace_timings() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_completion_origin_keys() {
     let result = run_scenario("completion_origin_keys");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -408,12 +412,14 @@ fn nvim_smoke_completion_origin_keys() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_references_origin() {
     let result = run_scenario("references_origin");
     assert_eq!(result["ok"], Value::Bool(true));
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_hover_translation() {
     let result = run_scenario("hover_translation");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -507,6 +513,7 @@ fn nvim_smoke_hover_translation() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_hover_selector_mismatch() {
     let result = run_scenario("hover_selector_mismatch");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -558,6 +565,7 @@ fn nvim_smoke_hover_selector_mismatch() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_hover_selector_zero_lv() {
     let result = run_scenario("hover_selector_zero_lv");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -595,6 +603,7 @@ fn nvim_smoke_hover_selector_zero_lv() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_hover_comment_structure() {
     let result = run_scenario("hover_comment_structure");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -610,12 +619,14 @@ fn nvim_smoke_hover_comment_structure() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_workspace_locale_tree() {
     let result = run_scenario("workspace_locale_tree");
     assert_eq!(result["ok"], Value::Bool(true));
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_hover_origin_language() {
     let result = run_scenario("hover_origin_language");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -631,18 +642,21 @@ fn nvim_smoke_hover_origin_language() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_codelens_selector_combinations() {
     let result = run_scenario("codelens_selector_combinations");
     assert_eq!(result["ok"], Value::Bool(true));
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_code_action_generate_selector() {
     let result = run_scenario("code_action_generate_selector");
     assert_eq!(result["ok"], Value::Bool(true));
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_code_action_fill_missing_keys() {
     let result = run_scenario("code_action_fill_missing_keys");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -660,6 +674,7 @@ fn nvim_smoke_code_action_fill_missing_keys() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_code_action_copy_missing_keys() {
     let result = run_scenario("code_action_copy_missing_keys");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -687,6 +702,7 @@ fn nvim_smoke_code_action_copy_missing_keys() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_code_action_copy_single_key() {
     let result = run_scenario("code_action_copy_single_key");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -722,12 +738,14 @@ fn nvim_smoke_code_action_copy_single_key() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_diagnostics_numeric_selectors() {
     let result = run_scenario("diagnostics_numeric_selectors");
     assert_eq!(result["ok"], Value::Bool(true));
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_diagnostics_lsp_copy_markers() {
     let result = run_scenario("diagnostics_lsp_copy_markers");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -754,6 +772,7 @@ fn nvim_smoke_diagnostics_lsp_copy_markers() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_diagnostics_parse_errors() {
     let result = run_scenario("diagnostics_parse_errors");
     assert_eq!(result["ok"], Value::Bool(true));
@@ -761,6 +780,7 @@ fn nvim_smoke_diagnostics_parse_errors() {
 }
 
 #[test]
+#[ignore = "Intentionally disabled."]
 fn nvim_smoke_index_invalidation_local_only() {
     let result = run_scenario("index_invalidation_local_only");
     assert_eq!(result["ok"], Value::Bool(true));

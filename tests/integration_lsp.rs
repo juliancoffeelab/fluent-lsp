@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use fluent_bundle::{FluentBundle, FluentResource};
-use fluent_lsp::render_fluent_preview_text;
+use fluent_bundle::{FluentArgs, FluentBundle, FluentResource, FluentValue};
 use fluent_syntax::parser;
 use serde_json::{Value, json};
 use std::convert::TryFrom;
@@ -225,6 +224,26 @@ fn assert_definition(
     );
 }
 
+fn assert_definition_is_absent(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    source_path: &Path,
+    position: (u32, u32),
+) {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+
+    let definition = recv_response(lsp, request_id);
+    assert_eq!(definition["result"], Value::Null);
+}
+
 #[test]
 fn definition_rejects_non_file_uris_with_invalid_params() {
     let root = fixture_root();
@@ -249,6 +268,118 @@ fn definition_rejects_non_file_uris_with_invalid_params() {
 }
 
 #[test]
+fn definition_rejects_files_outside_the_configured_workspace() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 6_006);
+    let temp = tempdir().unwrap();
+    let outside_path = temp.path().join("outside.ftl");
+    std::fs::write(&outside_path, "hello = Outside\n").unwrap();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_007,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", outside_path.display()) },
+            "position": { "line": 0, "character": 0 }
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 6_007);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String(format!(
+            "document is outside the configured Fluent workspace: {}",
+            outside_path.display()
+        ))
+    );
+}
+
+#[test]
+fn goto_definition_from_origin_file_returns_no_location() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 6_100);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    assert_definition_is_absent(
+        &mut lsp,
+        6_101,
+        &source_path,
+        position_of(&source_text, "welcome-title"),
+    );
+}
+
+#[test]
+fn goto_definition_returns_no_location_for_translation_key_missing_in_origin() {
+    let workspace = temp_workspace(&[
+        ("locales/en/app.ftl", "welcome-title = Welcome\n"),
+        (
+            "locales/es/app.ftl",
+            "welcome-title = Bienvenido\nlocal-only = Solo local\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_102);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    assert_definition_is_absent(
+        &mut lsp,
+        6_103,
+        &source_path,
+        position_of(&source_text, "local-only"),
+    );
+}
+
+#[test]
+fn goto_definition_returns_no_location_when_origin_counterpart_file_is_missing() {
+    let workspace = temp_workspace(&[("locales/es/only.ftl", "orphan-title = Huerfano\n")]);
+    let source_path = workspace.path().join("locales/es/only.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_104);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    assert_definition_is_absent(
+        &mut lsp,
+        6_105,
+        &source_path,
+        position_of(&source_text, "orphan-title"),
+    );
+}
+
+#[test]
+fn goto_definition_returns_no_location_for_translation_attribute_missing_in_origin() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "download-action =\n    .label = Download\n",
+        ),
+        (
+            "locales/es/app.ftl",
+            "download-action =\n    .label = Descargar\n    .tooltip = Descarga esta build\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_130);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    assert_definition_is_absent(
+        &mut lsp,
+        6_131,
+        &source_path,
+        position_of(&source_text, ".tooltip ="),
+    );
+}
+
+#[test]
 fn completion_rejects_files_outside_the_configured_workspace() {
     let root = fixture_root();
     let mut lsp = initialized_lsp(&root, 8);
@@ -268,11 +399,36 @@ fn completion_rejects_files_outside_the_configured_workspace() {
 
     let response = recv_response(&mut lsp, 9);
     assert_eq!(response["error"]["code"], Value::from(-32602));
-    assert!(
-        response["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("outside the configured Fluent workspace")),
+    assert_eq!(
+        response["error"]["message"],
+        Value::String(format!(
+            "document is outside the configured Fluent workspace: {}",
+            outside_path.display()
+        )),
         "unexpected error response: {response:?}"
+    );
+}
+
+#[test]
+fn completion_rejects_non_file_uris_with_invalid_params() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 8_100);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 8_101,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": "untitled://scratch" },
+            "position": { "line": 0, "character": 0 }
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 8_101);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String("expected a file URI".to_string())
     );
 }
 
@@ -364,6 +520,124 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
 }
 
 #[test]
+fn references_from_origin_return_empty_list_when_no_translation_matches() {
+    let workspace = temp_workspace(&[
+        ("locales/en/app.ftl", "orphan-title = Welcome\n"),
+        ("locales/es/app.ftl", "welcome-title = Bienvenido\n"),
+        ("locales/fr/app.ftl", "welcome-title = Bienvenue\n"),
+    ]);
+    let source_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_106);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    assert_references_are_empty(
+        &mut lsp,
+        6_107,
+        &source_path,
+        position_of(&source_text, "orphan-title"),
+    );
+}
+
+#[test]
+fn references_from_origin_attribute_return_empty_list_when_no_translation_matches() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "download-action =\n    .label = Download\n    .tooltip = Download this build\n",
+        ),
+        (
+            "locales/es/app.ftl",
+            "download-action =\n    .label = Descargar\n",
+        ),
+    ]);
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_132);
+    open_document(&mut lsp, &origin_path, &origin_text);
+
+    assert_references_are_empty(
+        &mut lsp,
+        6_133,
+        &origin_path,
+        position_of(&origin_text, ".tooltip ="),
+    );
+}
+
+#[test]
+fn references_from_translation_file_return_no_result() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 6_108);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    assert_references_are_absent(
+        &mut lsp,
+        6_109,
+        &source_path,
+        position_of(&source_text, "welcome-title"),
+    );
+}
+
+#[test]
+fn references_reject_non_file_uris_with_invalid_params() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 6_120);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_121,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": "untitled://scratch" },
+            "position": { "line": 0, "character": 0 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 6_121);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String("expected a file URI".to_string())
+    );
+}
+
+#[test]
+fn references_reject_files_outside_the_configured_workspace() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 6_122);
+    let temp = tempdir().unwrap();
+    let outside_path = temp.path().join("outside.ftl");
+    std::fs::write(&outside_path, "hello = Outside\n").unwrap();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_123,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", outside_path.display()) },
+            "position": { "line": 0, "character": 0 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 6_123);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String(format!(
+            "document is outside the configured Fluent workspace: {}",
+            outside_path.display()
+        ))
+    );
+}
+
+#[test]
 fn initialized_builds_index_and_reports_progress_when_supported() {
     let root = fixture_root();
     let mut lsp = LspProcess::start();
@@ -440,12 +714,14 @@ fn log_trace_reports_index_and_request_timings_when_enabled() {
     }));
     let _ = recv_notification(&mut lsp, "window/logMessage");
     let index_trace = recv_notification(&mut lsp, "$/logTrace");
+    let index_trace_message = index_trace["params"]["message"].as_str().unwrap();
+    let (index_prefix, index_elapsed_ms) = index_trace_message
+        .split_once(" elapsed_ms=")
+        .expect("workspace/index trace should include elapsed_ms");
+    assert_eq!(index_prefix, "fluent-lsp timing operation=workspace/index");
     assert!(
-        index_trace["params"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("operation=workspace/index"),
-        "unexpected index trace: {index_trace:?}"
+        index_elapsed_ms.parse::<f64>().is_ok(),
+        "unexpected workspace/index elapsed_ms payload: {index_trace:?}"
     );
     assert!(index_trace["params"].get("verbose").is_none());
 
@@ -464,12 +740,17 @@ fn log_trace_reports_index_and_request_timings_when_enabled() {
     }));
     let request_trace = recv_notification(&mut lsp, "$/logTrace");
     let _ = recv_response(&mut lsp, 154);
+    let request_trace_message = request_trace["params"]["message"].as_str().unwrap();
+    let (request_prefix, request_elapsed_ms) = request_trace_message
+        .split_once(" elapsed_ms=")
+        .expect("definition trace should include elapsed_ms");
+    assert_eq!(
+        request_prefix,
+        "fluent-lsp timing operation=textDocument/definition"
+    );
     assert!(
-        request_trace["params"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("operation=textDocument/definition"),
-        "unexpected request trace: {request_trace:?}"
+        request_elapsed_ms.parse::<f64>().is_ok(),
+        "unexpected definition elapsed_ms payload: {request_trace:?}"
     );
     assert!(request_trace["params"].get("verbose").is_none());
 }
@@ -560,7 +841,11 @@ fn set_trace_enables_request_timings_after_initialize() {
             "value": "verbose"
         }
     }));
-    let trace_ack = recv_log_trace_matching(&mut lsp, "trace updated value=verbose");
+    let trace_ack = recv_notification(&mut lsp, "$/logTrace");
+    assert_eq!(
+        trace_ack["params"]["message"],
+        Value::String("fluent-lsp trace updated value=verbose".to_string())
+    );
     assert!(
         trace_ack["params"]["verbose"].is_null(),
         "unexpected verbose payload for trace ack: {trace_ack:?}"
@@ -578,14 +863,19 @@ fn set_trace_enables_request_timings_after_initialize() {
             }
         }
     }));
-    let request_trace = recv_log_trace_matching(&mut lsp, "operation=textDocument/definition");
+    let request_trace = recv_notification(&mut lsp, "$/logTrace");
     let _ = recv_response(&mut lsp, 158);
+    let request_trace_message = request_trace["params"]["message"].as_str().unwrap();
+    let (request_prefix, request_elapsed_ms) = request_trace_message
+        .split_once(" elapsed_ms=")
+        .expect("definition trace should include elapsed_ms");
+    assert_eq!(
+        request_prefix,
+        "fluent-lsp timing operation=textDocument/definition"
+    );
     assert!(
-        request_trace["params"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("operation=textDocument/definition"),
-        "unexpected request trace: {request_trace:?}"
+        request_elapsed_ms.parse::<f64>().is_ok(),
+        "unexpected definition elapsed_ms payload: {request_trace:?}"
     );
     assert_eq!(
         request_trace["params"]["verbose"],
@@ -625,8 +915,10 @@ fn indexed_requests_reflect_live_origin_changes_without_restart() {
         &translation_path,
         position_of(translation_text, "fresh-key"),
     );
-    let value = hover["result"]["contents"]["value"].as_str().unwrap();
-    assert!(value.contains("# Fresh origin docs"));
+    assert_eq!(
+        extract_ftl_blocks(hover["result"]["contents"]["value"].as_str().unwrap()),
+        vec!["# Fresh origin docs".to_string()]
+    );
 
     let completion_text = "fresh";
     send_change_document(&mut lsp, &translation_path, 2, completion_text);
@@ -738,10 +1030,18 @@ fn local_only_file_warning_updates_when_origin_counterpart_appears() {
     send_save_document(&mut lsp, &local_path, Some(local_text));
     let warning = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = warning["params"]["diagnostics"].as_array().unwrap();
-    assert!(diagnostics.iter().any(|diagnostic| diagnostic["message"]
-        == Value::String(
-            "Translation file has no origin-language counterpart for `only`".to_string()
-        )));
+    let counterpart_warning = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                == Value::String(
+                    "Translation file has no origin-language counterpart for `only`".to_string(),
+                )
+        })
+        .expect("missing missing-origin-counterpart diagnostic");
+    assert_eq!(counterpart_warning["severity"], Value::from(2));
+    assert_eq!(counterpart_warning["range"]["start"]["line"], Value::from(0));
+    assert_eq!(counterpart_warning["range"]["start"]["character"], Value::from(0));
 
     std::fs::create_dir_all(workspace.path().join("locales/en")).unwrap();
     std::fs::write(
@@ -813,9 +1113,14 @@ fn translation_only_keys_warn_and_clear_when_origin_adds_counterparts() {
                 )
         })
         .unwrap();
+    assert_eq!(extra["severity"], Value::from(2));
     assert_eq!(
         extra["range"]["start"]["line"],
         Value::from(position_of(translation_text, "extra").0)
+    );
+    assert_eq!(
+        extra["range"]["start"]["character"],
+        Value::from(position_of(translation_text, "extra").1)
     );
     let tooltip = diagnostics
         .iter()
@@ -827,9 +1132,14 @@ fn translation_only_keys_warn_and_clear_when_origin_adds_counterparts() {
                 )
         })
         .unwrap();
+    assert_eq!(tooltip["severity"], Value::from(2));
     assert_eq!(
         tooltip["range"]["start"]["line"],
         Value::from(position_of(translation_text, "tooltip").0)
+    );
+    assert_eq!(
+        tooltip["range"]["start"]["character"],
+        Value::from(position_of(translation_text, "tooltip").1)
     );
 
     std::fs::write(
@@ -857,6 +1167,29 @@ fn translation_only_keys_warn_and_clear_when_origin_adds_counterparts() {
             break;
         }
     }
+}
+
+#[test]
+fn translation_only_warnings_are_absent_for_matching_translation_files() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "shared = Hello\nmenu =\n    .label = Save\n    .tooltip = Origin tooltip\n",
+        ),
+        (
+            "locales/es/app.ftl",
+            "shared = Hola\nmenu =\n    .label = Guardar\n    .tooltip = Tooltip local\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 5_206);
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(notification["params"]["diagnostics"], Value::Array(Vec::new()));
 }
 
 #[test]
@@ -901,6 +1234,42 @@ fn completion_from_translation_uses_origin_language_keys_and_attributes() {
 }
 
 #[test]
+fn completion_omits_already_present_top_level_keys() {
+    let workspace = completion_workspace();
+    let app_path = workspace.path().join("locales/es/app.ftl");
+    let source = "download-action = Descargar\n\ndown";
+
+    let mut lsp = initialized_lsp(workspace.path(), 17_100);
+    send_open_document(&mut lsp, &app_path, source);
+
+    let labels = request_completion_labels(
+        &mut lsp,
+        17_101,
+        &app_path,
+        position_after(source, "down"),
+    );
+    assert_eq!(labels, vec!["download-count".to_string()]);
+}
+
+#[test]
+fn completion_omits_already_present_attributes() {
+    let workspace = completion_workspace();
+    let menu_path = workspace.path().join("locales/es/dialogs/menu.ftl");
+    let source = "menu-save =\n    .label = Guardar\n    .\n";
+
+    let mut lsp = initialized_lsp(workspace.path(), 17_102);
+    send_open_document(&mut lsp, &menu_path, source);
+
+    let labels = request_completion_labels(
+        &mut lsp,
+        17_103,
+        &menu_path,
+        position_after(source, "."),
+    );
+    assert_eq!(labels, vec![".tooltip".to_string()]);
+}
+
+#[test]
 fn completion_uses_nested_origin_counterpart_and_skips_origin_files() {
     let workspace = completion_workspace();
     let nested_translation = workspace.path().join("locales/es/dialogs/menu.ftl");
@@ -928,6 +1297,23 @@ fn completion_uses_nested_origin_counterpart_and_skips_origin_files() {
 }
 
 #[test]
+fn completion_returns_empty_results_for_nested_origin_files() {
+    let workspace = completion_workspace();
+    let origin_menu = workspace.path().join("locales/en/dialogs/menu.ftl");
+    let source = "menu-save =\n    .t\n";
+
+    let mut lsp = initialized_lsp(workspace.path(), 20_100);
+    send_open_document(&mut lsp, &origin_menu, source);
+    let labels = request_completion_labels(
+        &mut lsp,
+        20_101,
+        &origin_menu,
+        position_after(source, ".t"),
+    );
+    assert!(labels.is_empty());
+}
+
+#[test]
 fn completion_returns_empty_results_for_unmatched_prefixes() {
     let workspace = completion_workspace();
     let app_path = workspace.path().join("locales/es/app.ftl");
@@ -937,6 +1323,42 @@ fn completion_returns_empty_results_for_unmatched_prefixes() {
     send_open_document(&mut lsp, &app_path, source);
 
     let labels = request_completion_labels(&mut lsp, 22, &app_path, position_after(source, "zzz"));
+    assert!(labels.is_empty());
+}
+
+#[test]
+fn completion_returns_empty_results_inside_comments() {
+    let workspace = completion_workspace();
+    let app_path = workspace.path().join("locales/es/app.ftl");
+    let source = "welcome-title = Bienvenido\n\n# down";
+
+    let mut lsp = initialized_lsp(workspace.path(), 22_102);
+    send_open_document(&mut lsp, &app_path, source);
+
+    let labels = request_completion_labels(
+        &mut lsp,
+        22_103,
+        &app_path,
+        position_after(source, "down"),
+    );
+    assert!(labels.is_empty());
+}
+
+#[test]
+fn completion_returns_empty_results_without_origin_counterpart_file() {
+    let workspace = temp_workspace(&[("locales/es/only.ftl", "fresh\n")]);
+    let source_path = workspace.path().join("locales/es/only.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 22_100);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let labels = request_completion_labels(
+        &mut lsp,
+        22_101,
+        &source_path,
+        position_after(&source_text, "fresh"),
+    );
     assert!(labels.is_empty());
 }
 
@@ -967,9 +1389,10 @@ fn completion_items_include_origin_documentation_for_keys_and_attributes() {
     let key_docs = key_item["documentation"]["value"]
         .as_str()
         .expect("expected markdown completion docs");
-    assert!(key_docs.contains("# Completion doc coverage"));
-    assert!(key_docs.contains("# Keep this note in completion hover"));
-    assert!(key_docs.contains("commented-preview = Preview text for completion docs."));
+    assert_eq!(
+        key_docs,
+        "```ftl\n# Completion doc coverage\n# Keep this note in completion hover\n```\n\n---\n\n```ftl\ncommented-preview = Preview text for completion docs.\n```"
+    );
 
     let attribute_text = "menu-save =\n    .t\n";
     send_open_document(&mut lsp, &menu_path, attribute_text);
@@ -990,9 +1413,10 @@ fn completion_items_include_origin_documentation_for_keys_and_attributes() {
     let attribute_docs = attribute_item["documentation"]["value"]
         .as_str()
         .expect("expected markdown attribute docs");
-    assert!(attribute_docs.contains("# Menu completion documentation"));
-    assert!(attribute_docs.contains("# Keep this entry visible in completion hover"));
-    assert!(attribute_docs.contains(".tooltip = Save this file"));
+    assert_eq!(
+        attribute_docs,
+        "```ftl\n# Menu completion documentation\n# Keep this entry visible in completion hover\n```\n\n---\n\n```ftl\n.tooltip = Save this file\n```"
+    );
 }
 
 #[test]
@@ -1019,8 +1443,17 @@ fn code_action_fills_missing_translation_entries_with_parseable_stubs() {
         &format!("file://{}", source_path.display()),
     );
     assert_fluent_parses(&updated);
-    assert!(updated.contains("    .tooltip = { \"\" }\n"));
-    assert!(updated.contains("\n\nsync-status = { \"\" }\n"));
+    assert_eq!(
+        updated,
+        concat!(
+            "hello = Hola Mundo\n",
+            "menu-save =\n",
+            "    .label = Guardar\n",
+            "    .tooltip = { \"\" }\n",
+            "\n",
+            "sync-status = { \"\" }\n",
+        )
+    );
     assert_eq!(runtime_message_text(&updated, "es", "hello"), "Hola Mundo");
 }
 
@@ -1050,10 +1483,19 @@ fn code_action_copies_missing_translation_entries_with_markers() {
         &format!("file://{}", source_path.display()),
     );
     assert_fluent_parses(&updated);
-    assert_eq!(updated.matches("LSP-COPY").count(), 2);
-    assert!(updated.contains("# [LSP-COPY .tooltip]\nmenu-save =\n    .label = Guardar\n"));
-    assert!(updated.contains("    .tooltip = Save this file\n"));
-    assert!(updated.contains("\n\n# [LSP-COPY]\nsync-status = Sync ready\n"));
+    assert_eq!(
+        updated,
+        concat!(
+            "hello = Hola Mundo\n",
+            "# [LSP-COPY .tooltip]\n",
+            "menu-save =\n",
+            "    .label = Guardar\n",
+            "    .tooltip = Save this file\n",
+            "\n",
+            "# [LSP-COPY]\n",
+            "sync-status = Sync ready\n",
+        )
+    );
     assert_eq!(runtime_message_text(&updated, "es", "hello"), "Hola Mundo");
     assert_eq!(
         runtime_message_text(&updated, "es", "menu-save.tooltip"),
@@ -1097,6 +1539,28 @@ fn whole_file_missing_entry_actions_are_absent_when_translation_is_complete() {
         }),
         "unexpected whole-file missing-entry action(s): {actions:?}"
     );
+}
+
+#[test]
+fn whole_file_missing_entry_actions_are_absent_without_origin_counterpart_file() {
+    let workspace = temp_workspace(&[("locales/es/only.ftl", "hello = Hola Mundo\n")]);
+    let source_path = workspace.path().join("locales/es/only.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 5_200);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions_allow_empty(
+        &mut lsp,
+        5_201,
+        &source_path,
+        position_of(&source_text, "hello = Hola Mundo"),
+    );
+    assert!(actions.iter().all(|action| {
+        action["title"] != Value::String("Add missing keys and attributes from source".to_string())
+            && action["title"]
+                != Value::String("Copy missing keys and attributes from source".to_string())
+    }));
 }
 
 #[test]
@@ -1162,6 +1626,37 @@ fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
 }
 
 #[test]
+fn hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments() {
+    let workspace = copy_marker_workspace();
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_text = std::fs::read_to_string(workspace.path().join("locales/en/app.ftl")).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 60_100);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_hover = request_hover(
+        &mut lsp,
+        60_101,
+        &source_path,
+        position_of(&source_text, ".tooltip = Download this build"),
+    );
+    let key_value = key_hover["result"]["contents"]["value"].as_str().unwrap();
+    assert_hover_block_matches(key_value, 0, &origin_text, "en", "download-action.tooltip", &[]);
+    assert_hover_block_matches(key_value, 1, &source_text, "es", "download-action.tooltip", &[]);
+
+    let body_hover = request_hover(
+        &mut lsp,
+        60_102,
+        &source_path,
+        position_of(&source_text, "Download this build"),
+    );
+    let body_value = body_hover["result"]["contents"]["value"].as_str().unwrap();
+    assert_hover_block_matches(body_value, 0, &origin_text, "en", "download-action.tooltip", &[]);
+    assert_hover_block_matches(body_value, 1, &source_text, "es", "download-action.tooltip", &[]);
+}
+
+#[test]
 fn code_action_copies_single_stub_message_without_touching_other_entries() {
     let workspace = single_key_copy_workspace();
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -1186,10 +1681,17 @@ fn code_action_copies_single_stub_message_without_touching_other_entries() {
     );
 
     assert_fluent_parses(&updated);
-    assert!(updated.starts_with("# [LSP-COPY]\nhello = Hello World\n"));
-    assert!(updated.contains("download-action =\n    .label = Descargar\n"));
-    assert!(updated.contains("sync-status = { \"\" }\n"));
-    assert_eq!(updated.matches("LSP-COPY").count(), 1);
+    assert_eq!(
+        updated,
+        concat!(
+            "# [LSP-COPY]\n",
+            "hello = Hello World\n",
+            "download-action =\n",
+            "    .label = Descargar\n",
+            "\n",
+            "sync-status = { \"\" }\n",
+        )
+    );
     assert_eq!(
         runtime_message_text(&updated, "es", "hello"),
         runtime_message_text(&origin_text, "en", "hello")
@@ -1224,11 +1726,18 @@ fn code_action_copies_missing_attributes_for_selected_message_only() {
     );
 
     assert_fluent_parses(&updated);
-    assert!(updated.contains("hello = { \"\" }\n"));
-    assert!(updated.contains("sync-status = { \"\" }\n"));
-    assert!(updated.contains("# [LSP-COPY .tooltip]\ndownload-action =\n    .label = Descargar\n"));
-    assert!(updated.contains("    .tooltip = Download this build\n"));
-    assert_eq!(updated.matches("LSP-COPY").count(), 1);
+    assert_eq!(
+        updated,
+        concat!(
+            "hello = { \"\" }\n",
+            "# [LSP-COPY .tooltip]\n",
+            "download-action =\n",
+            "    .label = Descargar\n",
+            "    .tooltip = Download this build\n",
+            "\n",
+            "sync-status = { \"\" }\n",
+        )
+    );
     assert_eq!(
         runtime_message_text(&updated, "es", "download-action.tooltip"),
         runtime_message_text(&origin_text, "en", "download-action.tooltip")
@@ -1275,6 +1784,84 @@ fn single_message_copy_actions_are_absent_for_complete_entries() {
             != Value::String(
                 "Copy missing attributes for `download-action` from source".to_string(),
             )
+    }));
+}
+
+#[test]
+fn single_message_copy_action_is_absent_when_selected_key_has_no_origin_counterpart() {
+    let workspace = temp_workspace(&[
+        ("locales/en/app.ftl", "shared = Hello\n"),
+        ("locales/es/app.ftl", "shared = Hola\nlocal-only = { \"\" }\n"),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 5_202);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions_allow_empty(
+        &mut lsp,
+        5_203,
+        &source_path,
+        position_of(&source_text, "local-only = { \"\" }"),
+    );
+    assert!(
+        actions
+            .iter()
+            .all(|action| action["title"] != Value::String("Copy `local-only` from source".to_string()))
+    );
+}
+
+#[test]
+fn missing_attribute_copy_action_is_absent_when_selected_message_has_no_origin_counterpart() {
+    let workspace = temp_workspace(&[
+        ("locales/en/app.ftl", "shared = Hello\n"),
+        (
+            "locales/es/app.ftl",
+            "shared = Hola\norphan =\n    .label = Huerfano\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 5_204);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions_allow_empty(
+        &mut lsp,
+        5_205,
+        &source_path,
+        position_of(&source_text, "orphan ="),
+    );
+    assert!(actions.iter().all(|action| {
+        action["title"]
+            != Value::String("Copy missing attributes for `orphan` from source".to_string())
+    }));
+}
+
+#[test]
+fn origin_files_do_not_offer_translation_only_missing_entry_quick_fixes() {
+    let workspace = missing_entry_workspace();
+    let source_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 9_300);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions_allow_empty(
+        &mut lsp,
+        9_301,
+        &source_path,
+        position_of(&source_text, "hello = Hello World"),
+    );
+    assert!(actions.iter().all(|action| {
+        action["title"]
+            != Value::String("Copy missing strings in file".to_string())
+            && action["title"] != Value::String("Copy missing string `hello`".to_string())
+            && action["title"]
+                != Value::String(
+                    "Copy missing attribute `download-action.tooltip`".to_string(),
+                )
     }));
 }
 
@@ -1331,12 +1918,12 @@ fn hover_from_translation_shows_local_formatted_messages() {
         22,
         &source_path,
         position_of(&source_text, "Abre la build mas reciente de"),
-        "```ftl\nOpen the latest { -brand-name } build and pick up where you left off.\n```\n\n---\n\n```ftl\nAbre la build mas reciente de { -brand-name } y sigue donde lo dejaste.\n```",
+        "```ftl\nOpen the latest Nightly build and pick up where you left off.\n```\n\n---\n\n```ftl\nAbre la build mas reciente de Nightly y sigue donde lo dejaste.\n```",
         2,
         0,
     );
-    assert_hover_block_matches(&body_hover, 0, &origin_text, "welcome-body", &[]);
-    assert_hover_block_matches(&body_hover, 1, &source_text, "welcome-body", &[]);
+    assert_hover_block_matches(&body_hover, 0, &origin_text, "en", "welcome-body", &[]);
+    assert_hover_block_matches(&body_hover, 1, &source_text, "es", "welcome-body", &[]);
 
     let empty_key_position = position_of(&source_text, "empty-preview");
     let empty_hover = assert_hover(
@@ -1361,24 +1948,12 @@ fn hover_from_translation_shows_local_formatted_messages() {
         23,
         &source_path,
         position_of(&source_text, "[female] ella"),
-        "`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on { $count } devices now.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```",
+        "`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on 2 devices now.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en 2 dispositivos ahora.\n```",
         8,
         0,
     );
-    assert_hover_block_matches(
-        &selector_hover,
-        0,
-        &origin_text,
-        "install-hint",
-        &[("$gender", "female")],
-    );
-    assert_hover_block_matches(
-        &selector_hover,
-        1,
-        &source_text,
-        "install-hint",
-        &[("$gender", "female")],
-    );
+    assert_hover_block_matches(&selector_hover, 0, &origin_text, "en", "install-hint", &[("$gender", "female")]);
+    assert_hover_block_matches(&selector_hover, 1, &source_text, "es", "install-hint", &[("$gender", "female")]);
 
     let attribute_hover = assert_hover(
         &mut lsp,
@@ -1388,55 +1963,31 @@ fn hover_from_translation_shows_local_formatted_messages() {
             &source_text,
             "Instala la build recomendada para la cuenta de",
         ),
-        "`$gender=*`, `$count=*`\n\n```ftl\nInstall the recommended build for their account on { $count } devices now.\n```\n\n---\n\n`$gender=*`, `$count=*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.\n```",
+        "`$gender=*`, `$count=*`\n\n```ftl\nInstall the recommended build for their account on 2 devices now.\n```\n\n---\n\n`$gender=*`, `$count=*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en 2 dispositivos ahora.\n```",
         21,
         5,
     );
-    assert_hover_block_matches(
-        &attribute_hover,
-        0,
-        &origin_text,
-        "download-action.tooltip",
-        &[],
-    );
-    assert_hover_block_matches(
-        &attribute_hover,
-        1,
-        &source_text,
-        "download-action.tooltip",
-        &[],
-    );
+    assert_hover_block_matches(&attribute_hover, 0, &origin_text, "en", "download-action.tooltip", &[]);
+    assert_hover_block_matches(&attribute_hover, 1, &source_text, "es", "download-action.tooltip", &[]);
 
     let post_selector_hover = assert_hover(
         &mut lsp,
         25,
         &source_path,
         position_of(&source_text, "en { $count } { $count ->"),
-        "`$gender=other`, `$count=*`\n\n```ftl\nCopy the download link for their account on { $count } devices now.\n```\n\n---\n\n`$gender=other`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```",
+        "`$gender=other`, `$count=*`\n\n```ftl\nCopy the download link for their account on 2 devices now.\n```\n\n---\n\n`$gender=other`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en 2 dispositivos ahora.\n```",
         8,
         0,
     );
-    assert_hover_block_matches(
-        &post_selector_hover,
-        0,
-        &origin_text,
-        "install-hint",
-        &[("$gender", "other")],
-    );
-    assert_hover_block_matches(
-        &post_selector_hover,
-        1,
-        &source_text,
-        "install-hint",
-        &[("$gender", "other")],
-    );
+    assert_hover_block_matches(&post_selector_hover, 0, &origin_text, "en", "install-hint", &[("$gender", "other")]);
+    assert_hover_block_matches(&post_selector_hover, 1, &source_text, "es", "install-hint", &[("$gender", "other")]);
 
     let second_selector_hover = assert_hover(
         &mut lsp,
         26,
         &source_path,
         position_of(&source_text, "[one] dispositivo"),
-        "`$gender=other`, `$count=one`\n\n```ftl\nCopy the download link for their account on { $count } device now.\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.\n```",
+        "`$gender=other`, `$count=one`\n\n```ftl\nCopy the download link for their account on 1 device now.\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en 1 dispositivo ahora.\n```",
         8,
         0,
     );
@@ -1444,6 +1995,7 @@ fn hover_from_translation_shows_local_formatted_messages() {
         &second_selector_hover,
         0,
         &origin_text,
+        "en",
         "install-hint",
         &[("$gender", "other"), ("$count", "one")],
     );
@@ -1451,6 +2003,7 @@ fn hover_from_translation_shows_local_formatted_messages() {
         &second_selector_hover,
         1,
         &source_text,
+        "es",
         "install-hint",
         &[("$gender", "other"), ("$count", "one")],
     );
@@ -1497,7 +2050,7 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
         28,
         &source_path,
         position_of(&source_text, "[female] ella misma"),
-        "`$platform=*`, `$count=*`\n\n```ftl\nSummary for mobile users with { $count } packages ready.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nResumen para ella misma con { $count } paquetes listo.\n```",
+        "`$platform=*`, `$count=*`\n\n```ftl\nSummary for mobile users with 2 packages ready.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nResumen para ella misma con 2 paquetes listo.\n```",
         50,
         0,
     );
@@ -1633,7 +2186,81 @@ fn hover_from_origin_file_shows_formatted_attribute_text() {
         position_of(&source_text, "Save changes before closing the window"),
     );
     let body_value = body_hover["result"]["contents"]["value"].as_str().unwrap();
-    assert_hover_block_matches(body_value, 0, &source_text, "menu-save.tooltip", &[]);
+    assert_hover_block_matches(body_value, 0, &source_text, "en", "menu-save.tooltip", &[]);
+}
+
+#[test]
+fn hover_from_origin_file_shows_one_body_preview_block_for_top_level_message() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 6_124);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let hover = request_hover(
+        &mut lsp,
+        6_125,
+        &source_path,
+        position_of(&source_text, "Preview text for hover comments."),
+    );
+    let value = hover["result"]["contents"]["value"].as_str().unwrap();
+    assert_eq!(
+        extract_ftl_blocks(value),
+        vec!["Preview text for hover comments.".to_string()]
+    );
+}
+
+#[test]
+fn hover_rejects_non_file_uris_with_invalid_params() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 6_126);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_127,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": "untitled://scratch" },
+            "position": { "line": 0, "character": 0 }
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 6_127);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String("expected a file URI".to_string())
+    );
+}
+
+#[test]
+fn hover_rejects_files_outside_the_configured_workspace() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 6_128);
+    let temp = tempdir().unwrap();
+    let outside_path = temp.path().join("outside.ftl");
+    std::fs::write(&outside_path, "hello = Outside\n").unwrap();
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_129,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", outside_path.display()) },
+            "position": { "line": 0, "character": 0 }
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 6_129);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String(format!(
+            "document is outside the configured Fluent workspace: {}",
+            outside_path.display()
+        ))
+    );
 }
 
 #[test]
@@ -1757,6 +2384,171 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
 }
 
 #[test]
+fn hover_key_with_origin_comments_only_shows_one_origin_comment_block() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\ncommented-preview = Preview text for hover comments.\n",
+        ),
+        (
+            "locales/es/app.ftl",
+            "commented-preview = Texto de vista previa para comentarios de hover.\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_110);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_position = position_of(&source_text, "commented-preview");
+    assert_hover(
+        &mut lsp,
+        6_111,
+        &source_path,
+        key_position,
+        "```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```",
+        key_position.0,
+        0,
+    );
+}
+
+#[test]
+fn hover_key_with_local_comments_only_shows_one_local_comment_block() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "local-note = Preview text for hover comments.\n",
+        ),
+        (
+            "locales/es/app.ftl",
+            "# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\nlocal-note = Texto de vista previa para comentarios de hover.\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_112);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_position = position_of(&source_text, "local-note");
+    assert_hover(
+        &mut lsp,
+        6_113,
+        &source_path,
+        key_position,
+        "```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```",
+        key_position.0,
+        0,
+    );
+}
+
+#[test]
+fn hover_key_without_comments_returns_no_hover() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "plain-note = Preview text for hover comments.\n",
+        ),
+        (
+            "locales/es/app.ftl",
+            "plain-note = Texto de vista previa para comentarios de hover.\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_114);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let hover = request_hover(
+        &mut lsp,
+        6_115,
+        &source_path,
+        position_of(&source_text, "plain-note"),
+    );
+    assert_eq!(hover["result"], Value::Null);
+}
+
+#[test]
+fn hover_body_without_origin_message_shows_one_local_preview_block() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "welcome-body = Open the latest build.\n",
+        ),
+        ("locales/es/app.ftl", "local-only = Texto solo local.\n"),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_116);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    assert_hover(
+        &mut lsp,
+        6_117,
+        &source_path,
+        position_of(&source_text, "Texto solo local."),
+        "```ftl\nTexto solo local.\n```",
+        0,
+        0,
+    );
+}
+
+#[test]
+fn hover_selector_without_origin_selectors_leaves_origin_block_headerless() {
+    let workspace = temp_workspace(&[
+        ("locales/en/app.ftl", "download-state = Download ready.\n"),
+        (
+            "locales/es/app.ftl",
+            "download-state =\n    { $count ->\n        [one] Descarga lista.\n       *[other] Descargas listas.\n    }\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_118);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    assert_hover(
+        &mut lsp,
+        6_119,
+        &source_path,
+        position_of(&source_text, "[one] Descarga lista."),
+        "```ftl\nDownload ready.\n```\n\n---\n\n`$count=one`\n\n```ftl\nDescarga lista.\n```",
+        0,
+        0,
+    );
+}
+
+#[test]
+fn hover_selector_without_origin_message_shows_one_local_selector_block() {
+    let workspace = temp_workspace(&[
+        ("locales/en/app.ftl", "welcome = Hello.\n"),
+        (
+            "locales/es/app.ftl",
+            "download-state =\n    { $count ->\n        [one] Descarga lista.\n       *[other] Descargas listas.\n    }\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_134);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    assert_hover(
+        &mut lsp,
+        6_135,
+        &source_path,
+        position_of(&source_text, "[one] Descarga lista."),
+        "`$count=one`\n\n```ftl\nDescarga lista.\n```",
+        0,
+        0,
+    );
+}
+
+#[test]
 fn hover_body_preview_stays_semantic_across_translation_locales() {
     let root = fixture_root();
     let origin_path = root.join("locales/en/app.ftl");
@@ -1791,8 +2583,8 @@ fn hover_body_preview_stays_semantic_across_translation_locales() {
             position_of(&source, body_needle),
         );
         let value = hover["result"]["contents"]["value"].as_str().unwrap();
-        assert_hover_block_matches(value, 0, &origin_text, "commented-preview", &[]);
-        assert_hover_block_matches(value, 1, &source, "commented-preview", &[]);
+        assert_hover_block_matches(value, 0, &origin_text, "en", "commented-preview", &[]);
+        assert_hover_block_matches(value, 1, &source, &relative_path[8..10], "commented-preview", &[]);
     }
 }
 
@@ -1825,7 +2617,7 @@ fn hover_on_uncommented_key_does_not_fall_back_to_body_preview() {
         position_of(&source_text, "Zero summary"),
     );
     let body_value = body_hover["result"]["contents"]["value"].as_str().unwrap();
-    assert_hover_block_matches(body_value, 0, &source_text, "zero-rollout", &[]);
+    assert_hover_block_matches(body_value, 0, &source_text, "en", "zero-rollout", &[]);
 }
 
 #[test]
@@ -1932,25 +2724,84 @@ fn code_lens_opens_full_selector_combinations_document() {
     let document_uri = request["params"]["uri"]
         .as_str()
         .expect("showDocument uri must be a string");
+    let document_file_name = Path::new(
+        document_uri
+            .strip_prefix("file://")
+            .expect("expected file uri for temp document"),
+    )
+    .file_name()
+    .and_then(|name| name.to_str())
+    .expect("temp document file name should be valid UTF-8");
     assert!(
-        document_uri.contains("fluent-lsp-selector-combinations-")
-            && document_uri.ends_with("-install-hint.md"),
+        document_file_name
+            .strip_prefix("fluent-lsp-selector-combinations-")
+            .is_some_and(|tail| tail.ends_with("-install-hint.md")),
         "unexpected temp document uri: {document_uri}"
     );
     let document_path = document_uri
         .strip_prefix("file://")
         .expect("expected file uri for temp document");
     let document_text = std::fs::read_to_string(document_path).expect("read temp document");
-    assert!(document_text.contains("Current language: `es`"));
-    assert!(document_text.contains("Source language: `en`"));
-    assert!(document_text.contains("Source text:"));
-    assert!(document_text.contains("Current text:"));
-    assert!(document_text.contains("Source language combinations:"));
-    assert!(document_text.contains("Current language combinations:"));
-    assert!(document_text.contains("Copy the download link for their account"));
-    assert!(document_text.contains("Copia el enlace de descarga para la cuenta de elle"));
-    assert!(document_text.contains("`$gender=other`, `$count=other`\n```ftl\nCopy the download link for their account on { $count } devices now.\n```"));
-    assert!(document_text.contains("`$gender=other`, `$count=other`\n```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```"));
+    let expected_document = concat!(
+        "# Selector combinations for `install-hint`\n\n",
+        "Current language: `es`\n\n",
+        "Source language: `en`\n\n",
+        "Logical file: `app`\n\n",
+        "Source text:\n\n",
+        "```ftl\n",
+        "# Shortcut reminder near the download button\n",
+        "```\n\n",
+        "```ftl\n",
+        "install-hint =\n",
+        "    Copy the download link for { $gender ->\n",
+        "        [female] her\n",
+        "        [male] his\n",
+        "       *[other] their\n",
+        "    } account on { $count } { $count ->\n",
+        "        [one] device\n",
+        "       *[other] devices\n",
+        "    } now.\n",
+        "```\n\n",
+        "Source language combinations:\n",
+        "`$gender=female`, `$count=one`\n",
+        "```ftl\nCopy the download link for her account on { $count } device now.\n```\n",
+        "`$gender=female`, `$count=other`\n",
+        "```ftl\nCopy the download link for her account on { $count } devices now.\n```\n",
+        "`$gender=male`, `$count=one`\n",
+        "```ftl\nCopy the download link for his account on { $count } device now.\n```\n",
+        "`$gender=male`, `$count=other`\n",
+        "```ftl\nCopy the download link for his account on { $count } devices now.\n```\n",
+        "`$gender=other`, `$count=one`\n",
+        "```ftl\nCopy the download link for their account on { $count } device now.\n```\n",
+        "`$gender=other`, `$count=other`\n",
+        "```ftl\nCopy the download link for their account on { $count } devices now.\n```\n\n",
+        "Current text:\n\n",
+        "```ftl\n",
+        "install-hint =\n",
+        "    Copia el enlace de descarga para la cuenta de { $gender ->\n",
+        "        [female] ella\n",
+        "        [male] el\n",
+        "       *[other] elle\n",
+        "    } en { $count } { $count ->\n",
+        "        [one] dispositivo\n",
+        "       *[other] dispositivos\n",
+        "    } ahora.\n",
+        "```\n\n",
+        "Current language combinations:\n",
+        "`$gender=female`, `$count=one`\n",
+        "```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivo ahora.\n```\n",
+        "`$gender=female`, `$count=other`\n",
+        "```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```\n",
+        "`$gender=male`, `$count=one`\n",
+        "```ftl\nCopia el enlace de descarga para la cuenta de el en { $count } dispositivo ahora.\n```\n",
+        "`$gender=male`, `$count=other`\n",
+        "```ftl\nCopia el enlace de descarga para la cuenta de el en { $count } dispositivos ahora.\n```\n",
+        "`$gender=other`, `$count=one`\n",
+        "```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.\n```\n",
+        "`$gender=other`, `$count=other`\n",
+        "```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```",
+    );
+    assert_eq!(document_text, expected_document);
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -1962,6 +2813,125 @@ fn code_lens_opens_full_selector_combinations_document() {
 
     let response = recv_response(&mut lsp, 42);
     assert_eq!(response["result"], Value::Null);
+}
+
+#[test]
+fn code_lens_returns_empty_list_for_files_without_selector_combinations() {
+    let workspace = temp_workspace(&[
+        ("locales/en/app.ftl", "hello = Hello\n"),
+        ("locales/es/app.ftl", "hello = Hola\n"),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 42_100);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_101,
+        "method": "textDocument/codeLens",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) }
+        }
+    }));
+
+    let lenses = recv_response(&mut lsp, 42_101);
+    assert_eq!(lenses["result"], Value::Array(Vec::new()));
+}
+
+#[test]
+fn execute_command_rejects_unknown_command() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 42_102);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_103,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": "fluent-lsp.unknown",
+            "arguments": []
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 42_103);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String("unknown command: fluent-lsp.unknown".to_string())
+    );
+}
+
+#[test]
+fn execute_command_rejects_missing_document_uri_argument() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 42_104);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_105,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": "fluent-lsp.showSelectorCombinations",
+            "arguments": []
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 42_105);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String("missing document URI argument".to_string())
+    );
+}
+
+#[test]
+fn execute_command_rejects_missing_fluent_key_argument() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 42_106);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_107,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": "fluent-lsp.showSelectorCombinations",
+            "arguments": [
+                format!("file://{}", fixture_root().join("locales/es/app.ftl").display())
+            ]
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 42_107);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String("missing Fluent key argument".to_string())
+    );
+}
+
+#[test]
+fn execute_command_rejects_non_file_document_uris() {
+    let root = fixture_root();
+    let mut lsp = initialized_lsp(&root, 42_108);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_109,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": "fluent-lsp.showSelectorCombinations",
+            "arguments": ["untitled://scratch", "install-hint"]
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 42_109);
+    assert_eq!(response["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String("document URI must point to a file".to_string())
+    );
 }
 
 #[test]
@@ -2324,6 +3294,66 @@ fn code_action_keeps_punctuation_attached_in_prefix_generation() {
 }
 
 #[test]
+fn code_action_generation_is_absent_when_message_already_has_selector() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 116);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        117,
+        &source_path,
+        position_of(&source_text, "whole-coins"),
+    );
+    let mut titles = rewrite_actions_only(actions)
+        .into_iter()
+        .map(|action| action["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    titles.sort();
+
+    assert_eq!(
+        titles,
+        vec![
+            "Convert selector to prefix form".to_string(),
+            "Convert selector to suffix form".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn code_action_generation_is_absent_when_attribute_already_has_selector() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 118);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        119,
+        &source_path,
+        position_of(&source_text, "{ $files ->"),
+    );
+    let mut titles = rewrite_actions_only(actions)
+        .into_iter()
+        .map(|action| action["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    titles.sort();
+
+    assert_eq!(
+        titles,
+        vec![
+            "Convert selector to prefix form".to_string(),
+            "Convert selector to suffix form".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn code_action_rewrites_whole_selector_to_prefix_and_suffix() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
@@ -2466,6 +3496,68 @@ fn code_action_rewrites_nested_whole_selector_inside_variant() {
     );
     assert!(actions.iter().any(|candidate| candidate["title"]
         == Value::String("Convert selector to suffix form".to_string())));
+}
+
+#[test]
+fn code_action_rewrite_is_absent_when_message_has_no_selector() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 120);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        121,
+        &source_path,
+        position_of(&source_text, "coins-line"),
+    );
+    let mut titles = rewrite_actions_only(actions)
+        .into_iter()
+        .map(|action| action["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    titles.sort();
+
+    assert_eq!(
+        titles,
+        vec![
+            "Generate number selector (prefix)".to_string(),
+            "Generate number selector (suffix)".to_string(),
+            "Generate number selector (whole)".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn code_action_rewrite_is_absent_when_attribute_has_no_selector() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(&root, 122);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let actions = request_code_actions(
+        &mut lsp,
+        123,
+        &source_path,
+        position_of(&source_text, "$files"),
+    );
+    let mut titles = rewrite_actions_only(actions)
+        .into_iter()
+        .map(|action| action["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    titles.sort();
+
+    assert_eq!(
+        titles,
+        vec![
+            "Generate number selector from $files (prefix)".to_string(),
+            "Generate number selector from $files (suffix)".to_string(),
+            "Generate number selector from $files (whole)".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -2643,7 +3735,17 @@ fn diagnostics_report_unsupported_and_missing_categories_when_enabled() {
         .collect::<Vec<_>>();
 
     assert_eq!(diagnostics.len(), 4);
-    assert!(messages.contains(&"`few` is not a supported plural category for `lv`".to_string()));
+    let mut sorted_messages = messages.clone();
+    sorted_messages.sort();
+    assert_eq!(
+        sorted_messages,
+        vec![
+            "Numeric selector for `lv` is missing category `one`".to_string(),
+            "Numeric selector for `lv` is missing category `zero`".to_string(),
+            "Numeric selector for `lv` is missing category `zero`".to_string(),
+            "`few` is not a supported plural category for `lv`".to_string(),
+        ]
+    );
     assert_eq!(
         messages
             .iter()
@@ -2651,7 +3753,6 @@ fn diagnostics_report_unsupported_and_missing_categories_when_enabled() {
             .count(),
         2
     );
-    assert!(messages.contains(&"Numeric selector for `lv` is missing category `one`".to_string()));
 
     let unsupported = diagnostics
         .iter()
@@ -2699,12 +3800,14 @@ fn diagnostics_report_selector_style_mismatches_when_enabled() {
         .map(|diagnostic| diagnostic["message"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
 
-    assert!(
-        messages.contains(&"Selector style is `whole`, but workspace prefers `prefix`".to_string())
-    );
-    assert!(
-        messages
-            .contains(&"Selector style is `suffix`, but workspace prefers `prefix`".to_string())
+    let mut sorted_messages = messages;
+    sorted_messages.sort();
+    assert_eq!(
+        sorted_messages,
+        vec![
+            "Selector style is `suffix`, but workspace prefers `prefix`".to_string(),
+            "Selector style is `whole`, but workspace prefers `prefix`".to_string(),
+        ]
     );
 }
 
@@ -2743,15 +3846,14 @@ fn file_config_overrides_client_style_diagnostic_settings() {
         .map(|diagnostic| diagnostic["message"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
 
-    assert!(
-        !messages
-            .contains(&"Selector style is `whole`, but workspace prefers `prefix`".to_string())
-    );
-    assert!(
-        messages.contains(&"Selector style is `prefix`, but workspace prefers `whole`".to_string())
-    );
-    assert!(
-        messages.contains(&"Selector style is `suffix`, but workspace prefers `whole`".to_string())
+    let mut sorted_messages = messages;
+    sorted_messages.sort();
+    assert_eq!(
+        sorted_messages,
+        vec![
+            "Selector style is `prefix`, but workspace prefers `whole`".to_string(),
+            "Selector style is `suffix`, but workspace prefers `whole`".to_string(),
+        ]
     );
 }
 
@@ -2950,16 +4052,9 @@ fn diagnostics_use_unicode_plural_categories_for_ukrainian() {
         .collect::<Vec<_>>();
 
     assert_eq!(diagnostics.len(), 1);
-    assert!(messages.contains(&"Numeric selector for `uk` is missing category `one`".to_string()));
-    assert!(
-        !messages
-            .iter()
-            .any(|message| message.contains("`few` is not a supported plural category"))
-    );
-    assert!(
-        !messages
-            .iter()
-            .any(|message| message.contains("`many` is not a supported plural category"))
+    assert_eq!(
+        messages,
+        vec!["Numeric selector for `uk` is missing category `one`".to_string()]
     );
 }
 
@@ -3060,17 +4155,12 @@ fn initialized_lsp_with_capabilities(
 
     let initialize = lsp.recv();
     assert_eq!(initialize["id"], request_id);
-    let kinds = initialize["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    assert!(
-        kinds.contains(&Value::String("quickfix".to_string())),
-        "missing quickfix code-action kind: {kinds:?}"
-    );
-    assert!(
-        kinds.contains(&Value::String("refactor.rewrite".to_string())),
-        "missing rewrite code-action kind: {kinds:?}"
+    assert_eq!(
+        initialize["result"]["capabilities"]["codeActionProvider"]["codeActionKinds"],
+        Value::Array(vec![
+            Value::String("quickfix".to_string()),
+            Value::String("refactor.rewrite".to_string()),
+        ])
     );
 
     lsp.send(&json!({
@@ -3166,18 +4256,6 @@ fn recv_notification(lsp: &mut LspProcess, method: &str) -> Value {
     loop {
         let message = lsp.recv();
         if message["method"] == Value::String(method.to_string()) {
-            return message;
-        }
-    }
-}
-
-fn recv_log_trace_matching(lsp: &mut LspProcess, needle: &str) -> Value {
-    loop {
-        let message = recv_notification(lsp, "$/logTrace");
-        if message["params"]["message"]
-            .as_str()
-            .is_some_and(|value| value.contains(needle))
-        {
             return message;
         }
     }
@@ -3317,6 +4395,25 @@ fn copy_dir(source: &Path, dest: &Path) {
     }
 }
 
+fn temp_workspace(files: &[(&str, &str)]) -> TempDir {
+    let temp = tempdir().unwrap();
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+    )
+    .unwrap();
+
+    for (relative_path, contents) in files {
+        let path = temp.path().join(relative_path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, contents).unwrap();
+    }
+
+    temp
+}
+
 fn assert_references(
     lsp: &mut LspProcess,
     request_id: i64,
@@ -3353,6 +4450,48 @@ fn assert_references(
             Value::from(expected.character)
         );
     }
+}
+
+fn assert_references_are_empty(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    source_path: &Path,
+    position: (u32, u32),
+) {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+
+    let references = recv_response(lsp, request_id);
+    assert_eq!(references["result"], Value::Array(Vec::new()));
+}
+
+fn assert_references_are_absent(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    source_path: &Path,
+    position: (u32, u32),
+) {
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+
+    let references = recv_response(lsp, request_id);
+    assert_eq!(references["result"], Value::Null);
 }
 
 fn assert_hover(
@@ -3413,9 +4552,23 @@ fn assert_fluent_parses(source: &str) {
 }
 
 fn runtime_message_text(source: &str, locale: &str, key: &str) -> String {
+    runtime_message_text_with_overrides(source, locale, key, &[])
+}
+
+fn runtime_message_text_with_overrides(
+    source: &str,
+    locale: &str,
+    key: &str,
+    overrides: &[(&str, &str)],
+) -> String {
     let resource = FluentResource::try_new(source.to_string()).unwrap_or_else(|(_, errors)| {
         panic!("failed to build FluentResource with {errors:?}\n{source}")
     });
+    let parsed = parser::parse(source)
+        .unwrap_or_else(|(_, errors)| panic!("failed to parse Fluent source with {errors:?}\n{source}"))
+        ;
+    let parsed_pattern = find_runtime_pattern(&parsed, key)
+        .unwrap_or_else(|| panic!("missing parsed pattern `{key}` in runtime source"));
     let locale: LanguageIdentifier = locale.parse().expect("valid language identifier");
     let mut bundle = FluentBundle::new(vec![locale]);
     bundle.set_use_isolating(false);
@@ -3438,15 +4591,125 @@ fn runtime_message_text(source: &str, locale: &str, key: &str) -> String {
             .value()
             .unwrap_or_else(|| panic!("message `{message_key}` has no value"))
     };
+    let override_map = overrides
+        .iter()
+        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+        .collect::<HashMap<_, _>>();
+    let mut args = FluentArgs::new();
+    collect_runtime_selector_args(parsed_pattern, &override_map, &mut args);
     let mut errors = Vec::new();
     let rendered = bundle
-        .format_pattern(pattern, None, &mut errors)
+        .format_pattern(pattern, Some(&args), &mut errors)
         .into_owned();
     assert!(
         errors.is_empty(),
         "runtime formatting errors for `{key}`: {errors:?}"
     );
     rendered
+}
+
+fn find_runtime_pattern<'a>(
+    resource: &'a fluent_syntax::ast::Resource<&'a str>,
+    key: &str,
+) -> Option<&'a fluent_syntax::ast::Pattern<&'a str>> {
+    let (entry_key, attribute_key) = split_runtime_key(key);
+    resource.body.iter().find_map(|entry| match entry {
+        fluent_syntax::ast::Entry::Message(message) if entry_key == message.id.name => {
+            if let Some(attribute_key) = attribute_key {
+                message
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.id.name == attribute_key)
+                    .map(|attribute| &attribute.value)
+            } else {
+                message.value.as_ref()
+            }
+        }
+        fluent_syntax::ast::Entry::Term(term) if entry_key == format!("-{}", term.id.name) => {
+            if let Some(attribute_key) = attribute_key {
+                term.attributes
+                    .iter()
+                    .find(|attribute| attribute.id.name == attribute_key)
+                    .map(|attribute| &attribute.value)
+            } else {
+                Some(&term.value)
+            }
+        }
+        _ => None,
+    })
+}
+
+fn collect_runtime_selector_args(
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    overrides: &HashMap<String, String>,
+    args: &mut FluentArgs<'_>,
+) {
+    for element in &pattern.elements {
+        let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = element else {
+            continue;
+        };
+        collect_runtime_selector_args_from_expression(expression, overrides, args);
+    }
+}
+
+fn collect_runtime_selector_args_from_expression(
+    expression: &fluent_syntax::ast::Expression<&str>,
+    overrides: &HashMap<String, String>,
+    args: &mut FluentArgs<'_>,
+) {
+    let fluent_syntax::ast::Expression::Select {
+        selector, variants, ..
+    } = expression
+    else {
+        return;
+    };
+    let fluent_syntax::ast::InlineExpression::VariableReference { id, .. } = selector else {
+        return;
+    };
+
+    let selector_name = format!("${}", id.name);
+    let selected_key = overrides
+        .get(&selector_name)
+        .cloned()
+        .or_else(|| {
+            variants
+                .iter()
+                .find(|variant| variant.default)
+                .or_else(|| variants.first())
+                .map(|variant| runtime_variant_key(&variant.key))
+        })
+        .unwrap_or_else(|| panic!("missing selectable variant for `{selector_name}`"));
+    args.set(id.name.to_string(), runtime_selector_value(&selected_key));
+
+    let selected_variant = variants
+        .iter()
+        .find(|variant| runtime_variant_key(&variant.key) == selected_key)
+        .or_else(|| variants.iter().find(|variant| variant.default))
+        .or_else(|| variants.first())
+        .unwrap_or_else(|| panic!("missing selected variant `{selected_key}` for `{selector_name}`"));
+    collect_runtime_selector_args(&selected_variant.value, overrides, args);
+}
+
+fn runtime_variant_key(key: &fluent_syntax::ast::VariantKey<&str>) -> String {
+    match key {
+        fluent_syntax::ast::VariantKey::Identifier { name, .. } => (*name).to_string(),
+        fluent_syntax::ast::VariantKey::NumberLiteral { value, .. } => (*value).to_string(),
+    }
+}
+
+fn runtime_selector_value(selected_key: &str) -> FluentValue<'static> {
+    match selected_key {
+        "zero" => 0i64.into(),
+        "one" => 1i64.into(),
+        "two" => 2i64.into(),
+        "few" => 3i64.into(),
+        "many" => 5i64.into(),
+        "other" => 2i64.into(),
+        _ => selected_key
+            .parse::<i64>()
+            .map(FluentValue::from)
+            .unwrap_or_else(|_| selected_key.to_string().into()),
+    }
 }
 
 fn split_runtime_key(key: &str) -> (&str, Option<&str>) {
@@ -3477,16 +4740,12 @@ fn assert_hover_block_matches(
     markdown: &str,
     block_index: usize,
     source: &str,
+    locale: &str,
     key: &str,
     overrides: &[(&str, &str)],
 ) {
     assert_fluent_parses(source);
-    let override_map = overrides
-        .iter()
-        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-        .collect::<HashMap<_, _>>();
-    let expected = render_fluent_preview_text(source, key, Some(&override_map))
-        .unwrap_or_else(|| panic!("missing semantic preview for `{key}`"));
+    let expected = runtime_message_text_with_overrides(source, locale, key, overrides);
     let blocks = extract_ftl_blocks(markdown);
     let actual = blocks
         .get(block_index)
