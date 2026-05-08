@@ -108,7 +108,9 @@ menu-save =
     .label = Guardar
 ```
 
-Examples:
+### Examples
+
+#### Top-level key
 
 Cursor in `locales/es/app.ftl` on:
 
@@ -122,6 +124,8 @@ welcome-title = Bienvenido
 welcome-title = Welcome
 ```
 
+#### Term
+
 Cursor in `locales/es/app.ftl` on:
 
 ```ftl
@@ -133,6 +137,8 @@ Cursor in `locales/es/app.ftl` on:
 ```ftl
 -brand-name = Nightly
 ```
+
+#### Attribute in top-level file
 
 Cursor in `locales/es/app.ftl` on:
 
@@ -148,6 +154,8 @@ button-copy =
     .label = Launch
 ```
 
+#### Attribute in nested file
+
 Cursor in `locales/es/dialogs/menu.ftl` on:
 
 ```ftl
@@ -162,7 +170,9 @@ menu-save =
     .label = Save
 ```
 
-Edge cases:
+### Edge Cases
+
+#### Request from an origin file
 
 Origin source in `locales/en/app.ftl`:
 
@@ -177,6 +187,8 @@ welcome-title = Welcome
 ```
 
 `Go to Definition` does nothing.
+
+#### Translation entry missing in the origin file
 
 Origin source in `locales/en/app.ftl`:
 
@@ -199,6 +211,8 @@ local-only = Solo local
 
 `Go to Definition` does nothing.
 
+#### Translation file without an origin counterpart
+
 Translation source in `locales/es/only.ftl`:
 
 ```ftl
@@ -214,6 +228,8 @@ orphan-title = Huerfano
 ```
 
 `Go to Definition` does nothing.
+
+### Request Errors
 
 Error example for a non-file URI:
 
@@ -270,7 +286,9 @@ menu-save =
     .label = Guardar
 ```
 
-Examples:
+### Examples
+
+#### Top-level key
 
 Cursor in `locales/en/app.ftl` on:
 
@@ -288,6 +306,8 @@ welcome-title = Bienvenido
 welcome-title = Bienvenue
 ```
 
+#### Term
+
 Cursor in `locales/en/app.ftl` on:
 
 ```ftl
@@ -303,6 +323,8 @@ Cursor in `locales/en/app.ftl` on:
 ```ftl
 -brand-name = Nightly
 ```
+
+#### Attribute in nested file
 
 Cursor in `locales/en/dialogs/menu.ftl` on:
 
@@ -328,7 +350,9 @@ menu-save =
     .label = Saglabat
 ```
 
-Edge cases:
+### Edge Cases
+
+#### Origin entry with no translation matches
 
 Origin source in `locales/en/app.ftl`:
 
@@ -354,6 +378,8 @@ orphan-title = Welcome
 
 `Find References` shows no locations.
 
+#### Request from a translation file
+
 Translation source in `locales/es/app.ftl`:
 
 ```ftl
@@ -367,6 +393,8 @@ welcome-title = Bienvenido
 ```
 
 `Find References` does nothing.
+
+### Request Errors
 
 The same invalid-params errors as `textDocument/definition` apply to non-file URIs and files outside the configured workspace.
 
