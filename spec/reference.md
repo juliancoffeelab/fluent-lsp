@@ -473,6 +473,16 @@ Behavior:
 
 Top-level key example.
 
+Origin source:
+
+```ftl
+download-action =
+    .label = Install build
+
+download-count =
+    .tooltip = Download { $files } files.
+```
+
 Before:
 
 ```ftl
@@ -504,6 +514,14 @@ Completion labels:
 ```
 
 Bare-dot example.
+
+Origin source:
+
+```ftl
+menu-save =
+    .label = Save
+    .tooltip = Save this file
+```
 
 Before:
 
