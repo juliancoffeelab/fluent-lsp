@@ -935,6 +935,34 @@ sync-status = Sync ready
 - copied whole messages receive `# [LSP-COPY]`
 - copied missing attributes receive a message-level marker such as `# [LSP-COPY .tooltip]`
 
+#### Whole missing string added
+
+English source:
+
+```ftl
+menu-save =
+    .label = Save
+
+sync-status = Sync ready
+```
+
+Before:
+
+```ftl
+menu-save =
+    .label = Guardar
+```
+
+After:
+
+```ftl
+menu-save =
+    .label = Guardar
+
+# [LSP-COPY]
+sync-status = Sync ready
+```
+
 ### Quick Fix: copy missing string `hello`
 
 #### Title
