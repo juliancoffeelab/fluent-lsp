@@ -182,7 +182,7 @@ fn run_flavor(name: &str, shape: Shape, server: &Path) -> Value {
         measure(&mut groups, "completion", || {
             request_completion(&mut lsp, &translation, iteration);
         });
-        measure(&mut groups, "codeAction.missingEntries", || {
+        measure(&mut groups, "codeAction.allAtCursor", || {
             request_code_action(&mut lsp, &translation, iteration);
         });
     }

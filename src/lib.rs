@@ -470,6 +470,14 @@ struct GenerateSelectorTarget {
     selected_function: Option<FunctionSelectorTarget>,
 }
 
+struct SelectorCodeActionContext<'a> {
+    key: String,
+    resource: Resource<&'a str>,
+    definition_range: Range,
+    position: Position,
+    position_byte_index: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SelectorRewriteAction {
     kind: SelectorRewriteKind,
@@ -500,6 +508,29 @@ struct OriginMessageTemplate {
 struct OriginAttributeTemplate {
     key: String,
     source_span: ByteRange<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MissingEntriesBenchSummary {
+    pub missing_message_count: usize,
+    pub missing_attribute_group_count: usize,
+    pub empty_stub_edit_count: usize,
+    pub copy_source_edit_count: usize,
+    pub single_message_copy_action_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CodeActionsBenchSummary {
+    pub missing_message_count: usize,
+    pub missing_attribute_group_count: usize,
+    pub missing_entries_action_count: usize,
+    pub single_message_copy_action_count: usize,
+    pub generate_selector_action_count: usize,
+    pub rewrite_selector_action_count: usize,
+    pub missing_entries_ms: f64,
+    pub generate_selector_ms: f64,
+    pub rewrite_selector_ms: f64,
+    pub total_ms: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -922,6 +953,11 @@ enum IndexMessage {
         position: Position,
         reply: oneshot::Sender<LspResult<Option<CompletionResponse>>>,
     },
+    KeyAtPosition {
+        path: PathBuf,
+        position: Position,
+        reply: oneshot::Sender<Option<String>>,
+    },
     OriginSource {
         path: PathBuf,
         reply: oneshot::Sender<Option<String>>,
@@ -1198,6 +1234,10 @@ impl IndexActor {
             .map(|origin_file| origin_file.origin_message_templates.clone())
     }
 
+    fn key_at_position(&self, path: &Path, position: Position) -> Option<String> {
+        self.index.file(path)?.key_at_position(position).map(str::to_string)
+    }
+
     fn origin_source(&self, path: &Path) -> Option<String> {
         if self.workspace.is_origin_file(path) {
             return self.index.file(path).map(|file| file.source.clone());
@@ -1246,6 +1286,13 @@ impl IndexActor {
                     reply,
                 } => {
                     let _ = reply.send(self.completion(&path, position));
+                }
+                IndexMessage::KeyAtPosition {
+                    path,
+                    position,
+                    reply,
+                } => {
+                    let _ = reply.send(self.key_at_position(&path, position));
                 }
                 IndexMessage::OriginSource { path, reply } => {
                     let _ = reply.send(self.origin_source(&path));
@@ -1745,6 +1792,23 @@ impl Backend {
         } else {
             None
         };
+        let current_key = if is_fluent_file(&path) && has_index {
+            self.request_index(|reply| IndexMessage::KeyAtPosition {
+                path: path.clone(),
+                position: params.range.start,
+                reply,
+            })
+            .await
+            .flatten()
+        } else {
+            None
+        };
+        let selector_context = build_selector_code_action_context(
+            &source,
+            &path,
+            params.range.start,
+            current_key.as_deref(),
+        );
 
         let mut actions = Vec::new();
         if let Some(origin_templates) = origin_templates.as_deref() {
@@ -1783,18 +1847,20 @@ impl Backend {
             if let Some(origin_source) = origin_source.as_deref() {
                 if let Some(action) = build_single_message_copy_code_action(
                     &uri,
-                    &path,
                     &source,
                     origin_templates,
                     origin_source,
-                    params.range.start,
+                    current_key.as_deref(),
                 ) {
                     actions.push(CodeActionOrCommand::CodeAction(action));
                 }
             }
         }
 
-        if let Some(target) = find_generate_selector_target(&source, &path, params.range.start) {
+        if let Some(target) = selector_context
+            .as_ref()
+            .and_then(|context| find_generate_selector_target_in_context(&source, context))
+        {
             let Some(edit_range) = byte_range_to_lsp_range(&source, target.pattern_span.clone())
             else {
                 return Ok(None);
@@ -1865,8 +1931,9 @@ impl Backend {
             }
         }
 
-        if let Some((pattern_span, rewrite_actions)) =
-            find_selector_rewrite_target(&source, &path, params.range.start)
+        if let Some((pattern_span, rewrite_actions)) = selector_context
+            .as_ref()
+            .and_then(|context| find_selector_rewrite_target_in_context(&source, context))
         {
             let Some(edit_range) = byte_range_to_lsp_range(&source, pattern_span.clone()) else {
                 return Ok(None);
@@ -2564,6 +2631,48 @@ pub fn extract_definition_key(source: &str, path: &Path, position: Position) -> 
     } else {
         extract_key_at_position(source, position)
     }
+}
+
+fn indexed_fluent_key_at_position(source: &str, position: Position) -> Option<String> {
+    index_fluent_file(
+        PathBuf::from("/tmp/indexed-fluent-key-at-position.ftl"),
+        FileMatch {
+            mask_index: 0,
+            language: "bench".to_string(),
+            filepath: "indexed-fluent-key-at-position.ftl".to_string(),
+        },
+        source.to_string(),
+    )
+    .key_at_position(position)
+    .map(str::to_string)
+}
+
+fn build_selector_code_action_context<'a>(
+    source: &'a str,
+    path: &Path,
+    position: Position,
+    current_key: Option<&str>,
+) -> Option<SelectorCodeActionContext<'a>> {
+    if !is_fluent_file(path) {
+        return None;
+    }
+
+    let key = current_key
+        .map(str::to_string)
+        .or_else(|| extract_definition_key(source, path, position))?;
+    let position_byte_index = position_to_byte_index(source, position)?;
+    let resource = parse_fluent_resource(source);
+    let definition_span = find_fluent_definition_span(&resource, &key)?;
+    let source_index = SourceLineIndex::new(source);
+    let definition_range = byte_range_to_lsp_range_with_index(source, &source_index, definition_span)?;
+
+    Some(SelectorCodeActionContext {
+        key,
+        resource,
+        definition_range,
+        position,
+        position_byte_index,
+    })
 }
 
 pub fn find_fluent_definition(source: &str, key: &str) -> Option<Range> {
@@ -3572,26 +3681,25 @@ fn find_generate_selector_target(
     path: &Path,
     position: Position,
 ) -> Option<GenerateSelectorTarget> {
-    if !is_fluent_file(path) {
-        return None;
-    }
+    let context = build_selector_code_action_context(source, path, position, None)?;
+    find_generate_selector_target_in_context(source, &context)
+}
 
-    let key = extract_definition_key(source, path, position)?;
-    let definition_range = find_fluent_definition(source, &key)?;
-    let resource = parse_fluent_resource(source);
-    let pattern = find_fluent_pattern(&resource, &key)?;
+fn find_generate_selector_target_in_context(
+    source: &str,
+    context: &SelectorCodeActionContext<'_>,
+) -> Option<GenerateSelectorTarget> {
+    let pattern = find_fluent_pattern(&context.resource, &context.key)?;
     let variables = collect_variable_placeables(source, pattern);
     let functions = collect_function_selector_targets(source, pattern);
     let selected_variable = variables
         .iter()
-        .find(|variable| position_overlaps_byte_span(source, position, &variable.selection_span))
+        .find(|variable| variable.selection_span.contains(&context.position_byte_index))
         .cloned();
     let selected_function = if selected_variable.is_none() {
         functions
             .iter()
-            .filter(|function| {
-                position_overlaps_byte_span(source, position, &function.selection_span)
-            })
+            .filter(|function| function.selection_span.contains(&context.position_byte_index))
             .min_by_key(|function| function.selection_span.end - function.selection_span.start)
             .cloned()
     } else {
@@ -3602,10 +3710,11 @@ fn find_generate_selector_target(
         variable.container_span.clone()
     } else if let Some(function) = &selected_function {
         function.container_span.clone()
-    } else if let Some(position_span) = deepest_pattern_span_for_position(source, pattern, position)
+    } else if let Some(position_span) =
+        deepest_pattern_span_for_byte_index(pattern, context.position_byte_index)
     {
         position_span
-    } else if range_contains_position(&definition_range, position) {
+    } else if range_contains_position(&context.definition_range, context.position) {
         pattern.span.0.clone()
     } else {
         return None;
@@ -3635,7 +3744,7 @@ fn find_generate_selector_target(
     }
 
     Some(GenerateSelectorTarget {
-        key,
+        key: context.key.clone(),
         pattern_span,
         variables,
         selected_variable,
@@ -3816,16 +3925,17 @@ fn find_selector_rewrite_target(
     path: &Path,
     position: Position,
 ) -> Option<(ByteRange<usize>, Vec<SelectorRewriteAction>)> {
-    if !is_fluent_file(path) {
-        return None;
-    }
+    let context = build_selector_code_action_context(source, path, position, None)?;
+    find_selector_rewrite_target_in_context(source, &context)
+}
 
-    let key = extract_definition_key(source, path, position)?;
-    let definition_range = find_fluent_definition(source, &key)?;
-    let resource = parse_fluent_resource(source);
-    let root_pattern = find_fluent_pattern(&resource, &key)?;
+fn find_selector_rewrite_target_in_context(
+    source: &str,
+    context: &SelectorCodeActionContext<'_>,
+) -> Option<(ByteRange<usize>, Vec<SelectorRewriteAction>)> {
+    let root_pattern = find_fluent_pattern(&context.resource, &context.key)?;
 
-    if range_contains_position(&definition_range, position) {
+    if range_contains_position(&context.definition_range, context.position) {
         let actions = selector_rewrite_actions_for_pattern(source, root_pattern);
         if !actions.is_empty() {
             return Some((
@@ -3835,10 +3945,9 @@ fn find_selector_rewrite_target(
         }
     }
 
-    let byte_index = position_to_byte_index(source, position)?;
     let mut candidate_patterns = Vec::new();
     collect_pattern_refs(root_pattern, &mut candidate_patterns);
-    candidate_patterns.retain(|pattern| pattern.span.0.contains(&byte_index));
+    candidate_patterns.retain(|pattern| pattern.span.0.contains(&context.position_byte_index));
     candidate_patterns.sort_by_key(|pattern| pattern.span.0.end - pattern.span.0.start);
 
     for pattern in candidate_patterns {
@@ -3850,7 +3959,8 @@ fn find_selector_rewrite_target(
             ));
         }
 
-        let actions = selector_rewrite_actions_for_occurrence(source, pattern, byte_index);
+        let actions =
+            selector_rewrite_actions_for_occurrence(source, pattern, context.position_byte_index);
         if !actions.is_empty() {
             return Some((
                 trim_trailing_newlines_from_span(source, pattern.span.0.clone()),
@@ -4839,6 +4949,13 @@ fn deepest_pattern_span_for_position(
     position: Position,
 ) -> Option<ByteRange<usize>> {
     let byte_index = position_to_byte_index(source, position)?;
+    deepest_pattern_span_for_byte_index(pattern, byte_index)
+}
+
+fn deepest_pattern_span_for_byte_index(
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+    byte_index: usize,
+) -> Option<ByteRange<usize>> {
     let mut spans = Vec::new();
     collect_pattern_spans(pattern, &mut spans);
     spans
@@ -5616,8 +5733,11 @@ fn collect_missing_translation_entries_from_templates(
     missing
 }
 
-#[cfg(test)]
-fn origin_message_templates(source: &str) -> Vec<OriginMessageTemplate> {
+fn translation_language_from_path(path: &Path) -> Option<String> {
+    path.parent()?.file_name()?.to_str().map(str::to_string)
+}
+
+fn origin_message_templates_from_source(source: &str) -> Vec<OriginMessageTemplate> {
     let resource = parse_fluent_resource(source);
     let source_index = SourceLineIndex::new(source);
     resource
@@ -5652,6 +5772,11 @@ fn origin_message_templates(source: &str) -> Vec<OriginMessageTemplate> {
             _ => None,
         })
         .collect()
+}
+
+#[cfg(test)]
+fn origin_message_templates(source: &str) -> Vec<OriginMessageTemplate> {
+    origin_message_templates_from_source(source)
 }
 
 fn translation_message_attributes(source: &str) -> FastMap<String, FastSet<String>> {
@@ -5728,13 +5853,12 @@ fn build_missing_entries_workspace_edit(
 
 fn build_single_message_copy_code_action(
     uri: &Uri,
-    path: &Path,
     translation_source: &str,
     origin_templates: &[OriginMessageTemplate],
     origin_source: &str,
-    position: Position,
+    current_key: Option<&str>,
 ) -> Option<CodeAction> {
-    let key = extract_definition_key(translation_source, path, position)?;
+    let key = current_key?;
     let (message_key, attribute_key) = split_fluent_key(&key);
     if attribute_key.is_some() {
         return None;
@@ -5781,6 +5905,159 @@ fn build_single_message_copy_code_action(
         edit: Some(edit),
         ..CodeAction::default()
     })
+}
+
+pub fn benchmark_missing_entries_code_actions(
+    origin_source: &str,
+    translation_source: &str,
+) -> MissingEntriesBenchSummary {
+    let origin_templates = origin_message_templates_from_source(origin_source);
+    let missing =
+        collect_missing_translation_entries_from_templates(&origin_templates, translation_source);
+    let uri = Uri::from_file_path("/tmp/missing-entries-bench.ftl")
+        .expect("fixed file URI should be valid");
+
+    let empty_stub_edit_count = build_missing_entries_workspace_edit(
+        &uri,
+        translation_source,
+        &missing,
+        None,
+        MissingEntryRenderMode::EmptyStub,
+    )
+    .map(|edit| edit.changes.as_ref().map(|changes| changes.len()).unwrap_or(0))
+    .unwrap_or(0);
+
+    let copy_source_edit_count = build_missing_entries_workspace_edit(
+        &uri,
+        translation_source,
+        &missing,
+        Some(origin_source),
+        MissingEntryRenderMode::CopySource,
+    )
+    .map(|edit| edit.changes.as_ref().map(|changes| changes.len()).unwrap_or(0))
+    .unwrap_or(0);
+
+    let single_message_copy_action_count = build_single_message_copy_code_action(
+        &uri,
+        translation_source,
+        &origin_templates,
+        origin_source,
+        indexed_fluent_key_at_position(translation_source, Position::new(0, 0)).as_deref(),
+    )
+    .map(|_| 1)
+    .unwrap_or(0);
+
+    MissingEntriesBenchSummary {
+        missing_message_count: missing.missing_messages.len(),
+        missing_attribute_group_count: missing.missing_attributes.len(),
+        empty_stub_edit_count,
+        copy_source_edit_count,
+        single_message_copy_action_count,
+    }
+}
+
+pub fn benchmark_code_actions_at_cursor(
+    origin_source: &str,
+    translation_source: &str,
+    translation_path: &Path,
+    position: Position,
+) -> CodeActionsBenchSummary {
+    let total_started = Instant::now();
+    let uri = Uri::from_file_path("/tmp/code-actions-bench.ftl")
+        .expect("fixed file URI should be valid");
+    let current_key = indexed_fluent_key_at_position(translation_source, position);
+    let selector_context =
+        build_selector_code_action_context(
+            translation_source,
+            translation_path,
+            position,
+            current_key.as_deref(),
+        );
+
+    let missing_started = Instant::now();
+    let origin_templates = origin_message_templates_from_source(origin_source);
+    let missing =
+        collect_missing_translation_entries_from_templates(&origin_templates, translation_source);
+    let mut missing_entries_action_count = 0usize;
+    if build_missing_entries_workspace_edit(
+        &uri,
+        translation_source,
+        &missing,
+        None,
+        MissingEntryRenderMode::EmptyStub,
+    )
+    .is_some()
+    {
+        missing_entries_action_count += 1;
+    }
+    if build_missing_entries_workspace_edit(
+        &uri,
+        translation_source,
+        &missing,
+        Some(origin_source),
+        MissingEntryRenderMode::CopySource,
+    )
+    .is_some()
+    {
+        missing_entries_action_count += 1;
+    }
+    let single_message_copy_action_count = build_single_message_copy_code_action(
+        &uri,
+        translation_source,
+        &origin_templates,
+        origin_source,
+        current_key.as_deref(),
+    )
+    .map(|_| 1)
+    .unwrap_or(0);
+    let missing_entries_ms = missing_started.elapsed().as_secs_f64() * 1000.0;
+
+    let generate_started = Instant::now();
+    let generate_selector_action_count = if let Some(target) = selector_context
+        .as_ref()
+        .and_then(|context| find_generate_selector_target_in_context(translation_source, context))
+    {
+            let language = translation_language_from_path(translation_path).unwrap_or_default();
+            let ordered_styles =
+                ordered_selector_styles(available_selector_styles(&target), SelectorStyle::default());
+            ordered_styles
+                .into_iter()
+                .filter(|candidate_style| {
+                    generate_number_selector_edit(
+                        translation_source,
+                        &target,
+                        &language,
+                        *candidate_style,
+                        false,
+                    )
+                    .is_some()
+                })
+                .count()
+    } else {
+        0
+    };
+    let generate_selector_ms = generate_started.elapsed().as_secs_f64() * 1000.0;
+
+    let rewrite_started = Instant::now();
+    let rewrite_selector_action_count = selector_context
+        .as_ref()
+        .and_then(|context| find_selector_rewrite_target_in_context(translation_source, context))
+        .map(|(_, actions)| actions.len())
+        .unwrap_or(0);
+    let rewrite_selector_ms = rewrite_started.elapsed().as_secs_f64() * 1000.0;
+
+    CodeActionsBenchSummary {
+        missing_message_count: missing.missing_messages.len(),
+        missing_attribute_group_count: missing.missing_attributes.len(),
+        missing_entries_action_count,
+        single_message_copy_action_count,
+        generate_selector_action_count,
+        rewrite_selector_action_count,
+        missing_entries_ms,
+        generate_selector_ms,
+        rewrite_selector_ms,
+        total_ms: total_started.elapsed().as_secs_f64() * 1000.0,
+    }
 }
 
 fn render_missing_messages_appendix(
