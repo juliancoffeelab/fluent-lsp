@@ -83,6 +83,41 @@ Examples:
 | `locales/es/app.ftl` | `button-copy.label = Lanzar` | `locales/en/app.ftl:13:5` |
 | `locales/es/dialogs/menu.ftl` | `menu-save.label = Guardar` | `locales/en/dialogs/menu.ftl:4:5` |
 
+Request example:
+
+```json
+{
+  "method": "textDocument/definition",
+  "params": {
+    "textDocument": {
+      "uri": "file:///workspace/locales/es/app.ftl"
+    },
+    "position": {
+      "line": 1,
+      "character": 0
+    }
+  }
+}
+```
+
+Response example:
+
+```json
+{
+  "uri": "file:///workspace/locales/en/app.ftl",
+  "range": {
+    "start": {
+      "line": 1,
+      "character": 0
+    },
+    "end": {
+      "line": 1,
+      "character": 13
+    }
+  }
+}
+```
+
 Error example:
 
 ```json
@@ -106,6 +141,59 @@ Examples:
 | `locales/en/app.ftl` | `welcome-title` | `locales/es/app.ftl:1:0`, `locales/fr/app.ftl:0:0` |
 | `locales/en/app.ftl` | `-brand-name =` | `locales/es/app.ftl:3:1`, `locales/fr/app.ftl:2:1` |
 | `locales/en/dialogs/menu.ftl` | `menu-save.label = Save` | `locales/es/dialogs/menu.ftl:1:5`, `locales/fr/dialogs/menu.ftl:1:5`, `locales/lv/dialogs/menu.ftl:1:5` |
+
+Request example:
+
+```json
+{
+  "method": "textDocument/references",
+  "params": {
+    "textDocument": {
+      "uri": "file:///workspace/locales/en/app.ftl"
+    },
+    "position": {
+      "line": 1,
+      "character": 0
+    },
+    "context": {
+      "includeDeclaration": true
+    }
+  }
+}
+```
+
+Response example:
+
+```json
+[
+  {
+    "uri": "file:///workspace/locales/es/app.ftl",
+    "range": {
+      "start": {
+        "line": 1,
+        "character": 0
+      },
+      "end": {
+        "line": 1,
+        "character": 13
+      }
+    }
+  },
+  {
+    "uri": "file:///workspace/locales/fr/app.ftl",
+    "range": {
+      "start": {
+        "line": 0,
+        "character": 0
+      },
+      "end": {
+        "line": 0,
+        "character": 13
+      }
+    }
+  }
+]
+```
 
 Index-backed behavior:
 
