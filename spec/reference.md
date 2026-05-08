@@ -72,7 +72,7 @@ Behavior:
 - non-file URIs are rejected
 - files outside the configured Fluent workspace are rejected
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 welcome-title = Welcome
@@ -83,7 +83,7 @@ button-copy =
     .label = Launch
 ```
 
-Translation source:
+Translation source in `locales/es/app.ftl`:
 
 ```ftl
 welcome-title = Bienvenido
@@ -94,14 +94,14 @@ button-copy =
     .label = Lanzar
 ```
 
-Attribute source:
+Attribute source in `locales/en/dialogs/menu.ftl`:
 
 ```ftl
 menu-save =
     .label = Save
 ```
 
-Attribute translation:
+Attribute translation in `locales/es/dialogs/menu.ftl`:
 
 ```ftl
 menu-save =
@@ -164,7 +164,7 @@ menu-save =
 
 Edge cases:
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 welcome-title = Welcome
@@ -178,13 +178,13 @@ welcome-title = Welcome
 
 `Go to Definition` does nothing.
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 welcome-title = Welcome
 ```
 
-Translation source:
+Translation source in `locales/es/app.ftl`:
 
 ```ftl
 welcome-title = Bienvenido
@@ -199,7 +199,7 @@ local-only = Solo local
 
 `Go to Definition` does nothing.
 
-Translation source:
+Translation source in `locales/es/only.ftl`:
 
 ```ftl
 orphan-title = Huerfano
@@ -242,7 +242,7 @@ Behavior:
 - results use the indexed workspace model
 - with `includeDeclaration = false`, the origin definition is not included
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 welcome-title = Welcome
@@ -253,7 +253,7 @@ menu-save =
     .label = Save
 ```
 
-Translation sources:
+Translation sources in `locales/es/app.ftl`, `locales/fr/app.ftl`, and nested files such as `locales/es/dialogs/menu.ftl`:
 
 ```ftl
 welcome-title = Bienvenido
@@ -330,13 +330,13 @@ menu-save =
 
 Edge cases:
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 orphan-title = Welcome
 ```
 
-Translation sources:
+Translation sources in `locales/es/app.ftl` and `locales/fr/app.ftl`:
 
 ```ftl
 welcome-title = Bienvenido
@@ -354,7 +354,7 @@ orphan-title = Welcome
 
 `Find References` shows no locations.
 
-Translation source:
+Translation source in `locales/es/app.ftl`:
 
 ```ftl
 welcome-title = Bienvenido
@@ -385,7 +385,7 @@ Hover has three forms.
 
 Key hover returns comment blocks when comments exist. Key hover does not fall back to body preview.
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 # Comment-only hover coverage
@@ -393,7 +393,7 @@ Origin source:
 commented-preview = Preview text for hover comments.
 ```
 
-Local source:
+Local source in `locales/es/app.ftl`:
 
 ```ftl
 # Cobertura de hover con comentarios
@@ -425,7 +425,7 @@ Rules:
 - if only local comments exist, hover shows one local comment block
 - if neither side has comments, hover returns no hover
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 # Comment-only hover coverage
@@ -433,7 +433,7 @@ Origin source:
 commented-preview = Preview text for hover comments.
 ```
 
-Local source:
+Local source in `locales/es/app.ftl`:
 
 ```ftl
 commented-preview = Texto de vista previa para comentarios de hover.
@@ -448,13 +448,13 @@ Hover payload:
 ```
 ````
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 local-note = Preview text for hover comments.
 ```
 
-Local source:
+Local source in `locales/es/app.ftl`:
 
 ```ftl
 # Cobertura de hover con comentarios
@@ -471,13 +471,13 @@ Hover payload:
 ```
 ````
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 plain-note = Preview text for hover comments.
 ```
 
-Local source:
+Local source in `locales/es/app.ftl`:
 
 ```ftl
 plain-note = Texto de vista previa para comentarios de hover.
@@ -493,13 +493,13 @@ no hover
 
 Body hover returns rendered preview text.
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 welcome-body = Open the latest { -brand-name } build and pick up where you left off.
 ```
 
-Local source:
+Local source in `locales/es/app.ftl`:
 
 ```ftl
 welcome-body = Abre la build mas reciente de { -brand-name } y sigue donde lo dejaste.
@@ -519,7 +519,7 @@ Abre la build mas reciente de { -brand-name } y sigue donde lo dejaste.
 ```
 ````
 
-Origin attribute source:
+Origin attribute source in `locales/en/dialogs/menu.ftl`:
 
 ```ftl
 menu-save =
@@ -536,13 +536,13 @@ Save changes before closing the window
 
 Missing origin message example.
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 welcome-body = Open the latest { -brand-name } build and pick up where you left off.
 ```
 
-Local source:
+Local source in `locales/es/app.ftl`:
 
 ```ftl
 local-only = Texto solo local.
@@ -558,13 +558,13 @@ Texto solo local.
 
 Empty local value example.
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 empty-preview = English empty preview fallback.
 ```
 
-Local source:
+Local source in `locales/es/app.ftl`:
 
 ```ftl
 empty-preview = { "" }
@@ -595,7 +595,7 @@ Rules:
 
 Selector hover prepends resolved selector values, then shows origin and local rendered preview blocks.
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 install-hint =
@@ -609,7 +609,7 @@ install-hint =
     } now.
 ```
 
-Local source:
+Local source in `locales/es/app.ftl`:
 
 ```ftl
 install-hint =
@@ -643,7 +643,7 @@ Copia el enlace de descarga para la cuenta de ella en { $count } dispositivos ah
 
 Mismatch example.
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 mismatch-rollout =
@@ -657,7 +657,7 @@ mismatch-rollout =
     } ready.
 ```
 
-Local source:
+Local source in `locales/es/app.ftl`:
 
 ```ftl
 mismatch-rollout =
@@ -692,13 +692,13 @@ Resumen para elle misme con ningun paquete listo.
 
 Origin without selectors example.
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 download-state = Download ready.
 ```
 
-Local source:
+Local source in `locales/es/app.ftl`:
 
 ```ftl
 download-state =
@@ -745,7 +745,7 @@ Behavior:
 
 Top-level key example.
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 download-action =
@@ -787,7 +787,7 @@ Completion labels:
 
 Bare-dot example.
 
-Origin source:
+Origin source in `locales/en/dialogs/menu.ftl`:
 
 ```ftl
 menu-save =
@@ -1267,7 +1267,7 @@ Local language combinations:
 
 Document example.
 
-Origin source:
+Origin source in `locales/en/app.ftl`:
 
 ```ftl
 install-hint =
@@ -1281,7 +1281,7 @@ install-hint =
     } now.
 ```
 
-Local source:
+Local source in `locales/es/app.ftl`:
 
 ```ftl
 install-hint =
