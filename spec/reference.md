@@ -8,13 +8,8 @@ Required keys:
 
 ```toml
 origin_language = "en"
-file_masks = ["locales/{lang}/{filepath}.ftl"]
+file_masks = ["{lang}/{filepath}.ftl"]
 ```
-
-Path examples:
-
-- `locales/es/app.ftl` -> `locales/en/app.ftl`
-- `locales/es/dialogs/menu.ftl` -> `locales/en/dialogs/menu.ftl`
 
 Optional keys:
 
@@ -261,11 +256,9 @@ Key hover returns comment blocks when comments exist.
 Origin source:
 
 ```ftl
-### Shared menu copy
-## File menu
-# Primary action
-menu-save =
-    .label = Save
+# Comment-only hover coverage
+# Keep this translator guidance visible on key hover
+commented-preview = Preview text for hover comments.
 ```
 
 Local source:
@@ -963,7 +956,7 @@ Arguments:
 
 ```json
 [
-  "file:///.../locales/es/app.ftl",
+  "file:///.../translation.ftl",
   "install-hint"
 ]
 ```
@@ -1094,13 +1087,13 @@ Placement:
 Example source path:
 
 ```text
-locales/es/only.ftl
+es/only.ftl
 ```
 
 Without:
 
 ```text
-locales/en/only.ftl
+en/only.ftl
 ```
 
 Example diagnostic:
