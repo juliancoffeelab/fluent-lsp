@@ -110,7 +110,7 @@ menu-save =
 
 Examples:
 
-Cursor on:
+Cursor in `locales/es/app.ftl` on:
 
 ```ftl
 welcome-title = Bienvenido
@@ -122,7 +122,7 @@ welcome-title = Bienvenido
 welcome-title = Welcome
 ```
 
-Cursor on:
+Cursor in `locales/es/app.ftl` on:
 
 ```ftl
 -brand-name = Nightly
@@ -134,7 +134,7 @@ Cursor on:
 -brand-name = Nightly
 ```
 
-Cursor on:
+Cursor in `locales/es/app.ftl` on:
 
 ```ftl
 button-copy =
@@ -148,7 +148,7 @@ button-copy =
     .label = Launch
 ```
 
-Cursor on:
+Cursor in `locales/es/dialogs/menu.ftl` on:
 
 ```ftl
 menu-save =
@@ -170,7 +170,7 @@ Origin source in `locales/en/app.ftl`:
 welcome-title = Welcome
 ```
 
-Cursor on:
+Cursor in `locales/en/app.ftl` on:
 
 ```ftl
 welcome-title = Welcome
@@ -191,7 +191,7 @@ welcome-title = Bienvenido
 local-only = Solo local
 ```
 
-Cursor on:
+Cursor in `locales/es/app.ftl` on:
 
 ```ftl
 local-only = Solo local
@@ -207,7 +207,7 @@ orphan-title = Huerfano
 
 There is no matching origin counterpart file.
 
-Cursor on:
+Cursor in `locales/es/only.ftl` on:
 
 ```ftl
 orphan-title = Huerfano
@@ -272,7 +272,7 @@ menu-save =
 
 Examples:
 
-Cursor on:
+Cursor in `locales/en/app.ftl` on:
 
 ```ftl
 welcome-title = Welcome
@@ -288,7 +288,7 @@ welcome-title = Bienvenido
 welcome-title = Bienvenue
 ```
 
-Cursor on:
+Cursor in `locales/en/app.ftl` on:
 
 ```ftl
 -brand-name = Nightly
@@ -304,7 +304,7 @@ Cursor on:
 -brand-name = Nightly
 ```
 
-Cursor on:
+Cursor in `locales/en/dialogs/menu.ftl` on:
 
 ```ftl
 menu-save =
@@ -346,7 +346,7 @@ welcome-title = Bienvenido
 welcome-title = Bienvenue
 ```
 
-Cursor on:
+Cursor in `locales/en/app.ftl` on:
 
 ```ftl
 orphan-title = Welcome
@@ -360,7 +360,7 @@ Translation source in `locales/es/app.ftl`:
 welcome-title = Bienvenido
 ```
 
-Cursor on:
+Cursor in `locales/es/app.ftl` on:
 
 ```ftl
 welcome-title = Bienvenido
