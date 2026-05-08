@@ -68,6 +68,7 @@ Behavior:
 
 - works only from translation files
 - resolves to the matching origin entry or attribute definition
+- attributes resolve the same way in top-level and nested translation files
 - opens one origin file location
 - non-file URIs are rejected
 - files outside the configured Fluent workspace are rejected
@@ -136,22 +137,6 @@ Cursor in `locales/es/app.ftl` on:
 
 ```ftl
 -brand-name = Nightly
-```
-
-#### Attribute in top-level file
-
-Cursor in `locales/es/app.ftl` on:
-
-```ftl
-button-copy =
-    .label = Lanzar
-```
-
-`Go to Definition` opens `locales/en/app.ftl` and places the cursor on:
-
-```ftl
-button-copy =
-    .label = Launch
 ```
 
 #### Attribute in nested file
