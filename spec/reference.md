@@ -210,15 +210,25 @@ Hover has three forms.
 
 Key hover returns comment blocks when comments exist.
 
-Origin example, hover on the `menu-save` key area in `locales/en/dialogs/menu.ftl`:
+Origin source:
 
 ```ftl
 ### Shared menu copy
 ## File menu
 # Primary action
+menu-save =
+    .label = Save
 ```
 
-Translation example, hover on `commented-preview` in `locales/es/app.ftl`:
+Local source:
+
+```ftl
+# Cobertura de hover con comentarios
+# Mantener visible esta nota para traduccion en el hover de clave
+commented-preview = Texto de vista previa para comentarios de hover.
+```
+
+Hover payload:
 
 ````text
 ```ftl
@@ -244,7 +254,19 @@ Rules:
 
 Body hover returns rendered preview text.
 
-Translation example, hover in `welcome-body` in `locales/es/app.ftl`:
+Origin source:
+
+```ftl
+welcome-body = Open the latest { -brand-name } build and pick up where you left off.
+```
+
+Local source:
+
+```ftl
+welcome-body = Abre la build mas reciente de { -brand-name } y sigue donde lo dejaste.
+```
+
+Hover payload:
 
 ````text
 ```ftl
@@ -258,13 +280,28 @@ Abre la build mas reciente de { -brand-name } y sigue donde lo dejaste.
 ```
 ````
 
-Origin attribute example, hover in `menu-save.tooltip` in `locales/en/dialogs/menu.ftl`:
+Origin attribute source:
 
 ```ftl
-Save changes before closing the window
+menu-save =
+    .tooltip = Save changes before closing the window
 ```
 
-Empty local value example, hover on `empty-preview = { "" }` in `locales/es/app.ftl`:
+Empty local value example.
+
+Origin source:
+
+```ftl
+empty-preview = English empty preview fallback.
+```
+
+Local source:
+
+```ftl
+empty-preview = { "" }
+```
+
+Hover payload:
 
 ````text
 ```ftl
@@ -282,7 +319,35 @@ English empty preview fallback.
 
 Selector hover prepends resolved selector values, then shows origin and local rendered preview blocks.
 
-Example, hover on the `[female]` branch of `install-hint` in `locales/es/app.ftl`:
+Origin source:
+
+```ftl
+install-hint =
+    Copy the download link for { $gender ->
+        [female] her
+        [male] his
+       *[other] their
+    } account on { $count } { $count ->
+        [one] device
+       *[other] devices
+    } now.
+```
+
+Local source:
+
+```ftl
+install-hint =
+    Copia el enlace de descarga para la cuenta de { $gender ->
+        [female] ella
+        [male] el
+       *[other] elle
+    } en { $count } { $count ->
+        [one] dispositivo
+       *[other] dispositivos
+    } ahora.
+```
+
+Hover payload for the `[female]` branch:
 
 ````text
 `$gender=female`, `$count=*`
@@ -300,7 +365,38 @@ Copia el enlace de descarga para la cuenta de ella en { $count } dispositivos ah
 ```
 ````
 
-Mismatch example, hover in `mismatch-rollout`:
+Mismatch example.
+
+Origin source:
+
+```ftl
+mismatch-rollout =
+    Summary for { $platform ->
+        [desktop] desktop
+       *[mobile] mobile
+    } users with { $count ->
+        [0] no packages
+        [1] one package
+       *[other] { $count } packages
+    } ready.
+```
+
+Local source:
+
+```ftl
+mismatch-rollout =
+    Resumen para { $gender ->
+        [female] ella misma
+        [male] el mismo
+       *[other] elle misme
+    } con { $count ->
+        [0] ningun paquete
+        [1] un paquete
+       *[other] { $count } paquetes
+    } listo.
+```
+
+Hover payload for the `[0]` branch:
 
 ````text
 `$platform=*`, `$count=0`
@@ -835,16 +931,53 @@ Source language combinations:
 Local language combinations:
 ```
 
-Combination example from that document:
+Document example.
+
+Origin source:
+
+```ftl
+install-hint =
+    Copy the download link for { $gender ->
+        [female] her
+        [male] his
+       *[other] their
+    } account on { $count } { $count ->
+        [one] device
+       *[other] devices
+    } now.
+```
+
+Local source:
+
+```ftl
+install-hint =
+    Copia el enlace de descarga para la cuenta de { $gender ->
+        [female] ella
+        [male] el
+       *[other] elle
+    } en { $count } { $count ->
+        [one] dispositivo
+       *[other] dispositivos
+    } ahora.
+```
+
+Markdown payload excerpt:
 
 ````text
+# Selector Combinations: `install-hint`
+
+Language: `es`
+Source language: `en`
+
+## Source language combinations
+
 `$gender=other`, `$count=other`
 ```ftl
 Copy the download link for their account on { $count } devices now.
 ```
-````
 
-````text
+## Local language combinations
+
 `$gender=other`, `$count=other`
 ```ftl
 Copia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.
