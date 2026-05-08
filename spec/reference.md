@@ -74,48 +74,82 @@ Behavior:
 - translation file -> matching origin entry or attribute
 - only file URIs are accepted
 
-Examples:
+Origin source:
 
-| From | Cursor | Result |
-| --- | --- | --- |
-| `locales/es/app.ftl` | `welcome-title` | `locales/en/app.ftl:1:0` |
-| `locales/es/app.ftl` | `-brand-name =` | `locales/en/app.ftl:8:1` |
-| `locales/es/app.ftl` | `button-copy.label = Lanzar` | `locales/en/app.ftl:13:5` |
-| `locales/es/dialogs/menu.ftl` | `menu-save.label = Guardar` | `locales/en/dialogs/menu.ftl:4:5` |
+```ftl
+welcome-title = Welcome
 
-Request example:
+-brand-name = Nightly
 
-```json
-{
-  "method": "textDocument/definition",
-  "params": {
-    "textDocument": {
-      "uri": "file:///workspace/locales/es/app.ftl"
-    },
-    "position": {
-      "line": 1,
-      "character": 0
-    }
-  }
-}
+button-copy =
+    .label = Launch
 ```
 
-Response example:
+Translation source:
 
-```json
-{
-  "uri": "file:///workspace/locales/en/app.ftl",
-  "range": {
-    "start": {
-      "line": 1,
-      "character": 0
-    },
-    "end": {
-      "line": 1,
-      "character": 13
-    }
-  }
-}
+```ftl
+welcome-title = Bienvenido
+
+-brand-name = Nightly
+
+button-copy =
+    .label = Lanzar
+```
+
+Examples:
+
+| Translation cursor | Origin result |
+| --- | --- | --- |
+| `welcome-title` | `welcome-title` |
+| `-brand-name =` | `-brand-name =` |
+| `button-copy.label = Lanzar` | `button-copy.label = Launch` |
+
+Attribute source:
+
+```ftl
+menu-save =
+    .label = Save
+```
+
+Attribute translation:
+
+```ftl
+menu-save =
+    .label = Guardar
+```
+
+Attribute example:
+
+| Translation cursor | Origin result |
+| --- | --- |
+| `menu-save.label = Guardar` | `menu-save.label = Save` |
+
+Visible result:
+
+Cursor on:
+
+```ftl
+welcome-title = Bienvenido
+```
+
+Opens:
+
+```ftl
+welcome-title = Welcome
+```
+
+Cursor on:
+
+```ftl
+button-copy =
+    .label = Lanzar
+```
+
+Opens:
+
+```ftl
+button-copy =
+    .label = Launch
 ```
 
 Error example:
@@ -134,65 +168,79 @@ Behavior:
 - origin file -> matching entries or attributes in translations
 - results use the indexed workspace model
 
-Examples:
+Origin source:
 
-| From | Cursor | Result locations |
-| --- | --- | --- |
-| `locales/en/app.ftl` | `welcome-title` | `locales/es/app.ftl:1:0`, `locales/fr/app.ftl:0:0` |
-| `locales/en/app.ftl` | `-brand-name =` | `locales/es/app.ftl:3:1`, `locales/fr/app.ftl:2:1` |
-| `locales/en/dialogs/menu.ftl` | `menu-save.label = Save` | `locales/es/dialogs/menu.ftl:1:5`, `locales/fr/dialogs/menu.ftl:1:5`, `locales/lv/dialogs/menu.ftl:1:5` |
+```ftl
+welcome-title = Welcome
 
-Request example:
+-brand-name = Nightly
 
-```json
-{
-  "method": "textDocument/references",
-  "params": {
-    "textDocument": {
-      "uri": "file:///workspace/locales/en/app.ftl"
-    },
-    "position": {
-      "line": 1,
-      "character": 0
-    },
-    "context": {
-      "includeDeclaration": true
-    }
-  }
-}
+menu-save =
+    .label = Save
 ```
 
-Response example:
+Translation sources:
 
-```json
-[
-  {
-    "uri": "file:///workspace/locales/es/app.ftl",
-    "range": {
-      "start": {
-        "line": 1,
-        "character": 0
-      },
-      "end": {
-        "line": 1,
-        "character": 13
-      }
-    }
-  },
-  {
-    "uri": "file:///workspace/locales/fr/app.ftl",
-    "range": {
-      "start": {
-        "line": 0,
-        "character": 0
-      },
-      "end": {
-        "line": 0,
-        "character": 13
-      }
-    }
-  }
-]
+```ftl
+welcome-title = Bienvenido
+-brand-name = Nightly
+```
+
+```ftl
+welcome-title = Bienvenue
+-brand-name = Nightly
+```
+
+```ftl
+menu-save =
+    .label = Guardar
+```
+
+Examples:
+
+| Origin cursor | Reference results |
+| --- | --- | --- |
+| `welcome-title` | `welcome-title = Bienvenido`, `welcome-title = Bienvenue` |
+| `-brand-name =` | `-brand-name = Nightly`, `-brand-name = Nightly` |
+| `menu-save.label = Save` | `menu-save.label = Guardar`, `menu-save.label = Enregistrer`, `menu-save.label = Saglabat` |
+
+Visible result:
+
+Cursor on:
+
+```ftl
+welcome-title = Welcome
+```
+
+Shows references:
+
+```ftl
+welcome-title = Bienvenido
+welcome-title = Bienvenue
+```
+
+Cursor on:
+
+```ftl
+menu-save =
+    .label = Save
+```
+
+Shows references:
+
+```ftl
+menu-save =
+    .label = Guardar
+```
+
+```ftl
+menu-save =
+    .label = Enregistrer
+```
+
+```ftl
+menu-save =
+    .label = Saglabat
 ```
 
 Index-backed behavior:
