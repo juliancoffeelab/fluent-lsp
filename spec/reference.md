@@ -93,11 +93,11 @@ button-copy =
 
 Examples:
 
-| Translation cursor | Origin result |
-| --- | --- | --- |
-| `welcome-title` | `welcome-title` |
-| `-brand-name =` | `-brand-name =` |
-| `button-copy.label = Lanzar` | `button-copy.label = Launch` |
+| Translation cursor | Opens file | Target location | Target text |
+| --- | --- | --- | --- |
+| `welcome-title` | `origin.ftl` | `1:0` | `welcome-title = Welcome` |
+| `-brand-name =` | `origin.ftl` | `3:0` | `-brand-name = Nightly` |
+| `button-copy.label = Lanzar` | `origin.ftl` | `6:4` | `.label = Launch` |
 
 Attribute source:
 
@@ -115,9 +115,9 @@ menu-save =
 
 Attribute example:
 
-| Translation cursor | Origin result |
-| --- | --- |
-| `menu-save.label = Guardar` | `menu-save.label = Save` |
+| Translation cursor | Opens file | Target location | Target text |
+| --- | --- | --- | --- |
+| `menu-save.label = Guardar` | `origin-menu.ftl` | `2:4` | `.label = Save` |
 
 Visible result:
 
@@ -127,7 +127,7 @@ Cursor on:
 welcome-title = Bienvenido
 ```
 
-Opens:
+Editor opens `origin.ftl` and places the cursor on:
 
 ```ftl
 welcome-title = Welcome
@@ -140,7 +140,7 @@ button-copy =
     .label = Lanzar
 ```
 
-Opens:
+Editor opens `origin.ftl` and places the cursor on:
 
 ```ftl
 button-copy =
@@ -193,11 +193,15 @@ menu-save =
 
 Examples:
 
-| Origin cursor | Reference results |
-| --- | --- | --- |
-| `welcome-title` | `welcome-title = Bienvenido`, `welcome-title = Bienvenue` |
-| `-brand-name =` | `-brand-name = Nightly`, `-brand-name = Nightly` |
-| `menu-save.label = Save` | `menu-save.label = Guardar`, `menu-save.label = Enregistrer`, `menu-save.label = Saglabat` |
+| Origin cursor | Reference file | Reference location | Reference text |
+| --- | --- | --- | --- |
+| `welcome-title` | `translation-es.ftl` | `1:0` | `welcome-title = Bienvenido` |
+| `welcome-title` | `translation-fr.ftl` | `0:0` | `welcome-title = Bienvenue` |
+| `-brand-name =` | `translation-es.ftl` | `3:0` | `-brand-name = Nightly` |
+| `-brand-name =` | `translation-fr.ftl` | `2:0` | `-brand-name = Nightly` |
+| `menu-save.label = Save` | `translation-es-menu.ftl` | `2:4` | `.label = Guardar` |
+| `menu-save.label = Save` | `translation-fr-menu.ftl` | `2:4` | `.label = Enregistrer` |
+| `menu-save.label = Save` | `translation-lv-menu.ftl` | `2:4` | `.label = Saglabat` |
 
 Visible result:
 
@@ -207,10 +211,13 @@ Cursor on:
 welcome-title = Welcome
 ```
 
-Shows references:
+Editor shows references:
 
 ```ftl
 welcome-title = Bienvenido
+```
+
+```ftl
 welcome-title = Bienvenue
 ```
 
@@ -221,7 +228,7 @@ menu-save =
     .label = Save
 ```
 
-Shows references:
+Editor shows references:
 
 ```ftl
 menu-save =
