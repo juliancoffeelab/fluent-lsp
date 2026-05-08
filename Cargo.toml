@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "third_party/ls-types"]
+members = ["."]
 default-members = ["."]
 resolver = "2"
 
@@ -36,4 +36,4 @@ fluent-bundle = { git = "https://github.com/juliancoffeelab/fluent-rs", branch =
 unic-langid = "0.9.6"
 
 [patch.crates-io]
-ls-types = { path = "third_party/ls-types" }
+ls-types = { git = "https://github.com/juliancoffeelab/ls-types", branch = "snippet-edit-support" }
