@@ -1,30 +1,41 @@
 # fluent-lsp Reference
 
-This document is descriptive, not aspirational.
-It summarizes the current behavior implemented in `src/lib.rs` and exercised by:
+## Configuration
 
-- `tests/integration_lsp.rs`
-- `tests/nvim_smoke.rs`
-- `tests/nvim/*/README.md`
-
-When this document and the code disagree, the code and tests win.
-
-## Scope
-
-`fluent-lsp` is currently a Fluent-focused LSP server for locale-tree workspaces.
-The common tested shape is:
+Examples below assume this workspace shape:
 
 ```toml
 origin_language = "en"
 file_masks = ["locales/{lang}/{filepath}.ftl"]
 ```
 
-It recognizes Fluent files through `file_masks`, treats `origin_language` as the source of truth, and matches translation files by `{lang}` plus `{filepath}`.
+Example file pairs:
 
-The workspace config also supports these current options:
+```text
+locales/en/app.ftl
+locales/es/app.ftl
+locales/en/dialogs/menu.ftl
+locales/es/dialogs/menu.ftl
+```
+
+Path mapping examples:
+
+- `locales/es/app.ftl` -> `locales/en/app.ftl`
+- `locales/es/dialogs/menu.ftl` -> `locales/en/dialogs/menu.ftl`
+
+### `fluent-lsp.toml`
+
+Required keys:
 
 ```toml
-selector_style = "prefix" # or "suffix" or "whole"
+origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+```
+
+Supported optional keys:
+
+```toml
+selector_style = "prefix" # "prefix" | "suffix" | "whole"
 error_on_unsupported_plural_categories = true
 warn_on_missing_plural_categories = true
 warn_on_selector_style_mismatch = true
@@ -32,111 +43,102 @@ warn_on_selector_style_mismatch = true
 
 Current precedence:
 
-- file config overrides client `workspace/didChangeConfiguration` for the same setting
-- client settings still matter when the file config does not set an override
+- file config overrides client `workspace/didChangeConfiguration`
+- client settings apply when file config does not override them
 
 ## Advertised LSP Capabilities
 
-On `initialize`, the server currently advertises:
+`initialize` currently returns these relevant capabilities:
 
-- `textDocument/definition`
-- `textDocument/references`
-- `textDocument/hover`
-- `textDocument/completion`
-  - trigger characters: `.`
-- `textDocument/codeAction`
-  - kinds: `quickfix`, `refactor.rewrite`
-- `textDocument/codeLens`
-  - `resolveProvider = false`
-- `workspace/executeCommand`
-  - command: `fluent-lsp.showSelectorCombinations`
-- full-document sync
-  - `didOpen`
-  - `didChange` with `TextDocumentSyncKind::FULL`
-  - `didSave`
-  - `didClose`
+```json
+{
+  "definitionProvider": true,
+  "referencesProvider": true,
+  "hoverProvider": true,
+  "completionProvider": {
+    "triggerCharacters": ["."]
+  },
+  "codeActionProvider": {
+    "codeActionKinds": ["quickfix", "refactor.rewrite"],
+    "resolveProvider": false
+  },
+  "codeLensProvider": {
+    "resolveProvider": false
+  },
+  "executeCommandProvider": {
+    "commands": ["fluent-lsp.showSelectorCombinations"]
+  },
+  "textDocumentSync": {
+    "openClose": true,
+    "change": 1,
+    "save": true
+  }
+}
+```
 
 Not currently advertised:
 
 - rename
-- document symbols
 - semantic tokens
 - inlay hints
+- document symbols
 
-## Workspace and File Matching
+## `textDocument/definition`
 
-The tested workspace layout is a locale tree:
+Behavior:
 
-```text
-locales/
-  en/app.ftl
-  es/app.ftl
-  en/dialogs/menu.ftl
-  es/dialogs/menu.ftl
+- translation file -> matching origin entry or attribute
+- only file URIs are accepted
+
+Examples:
+
+| From | Cursor | Result |
+| --- | --- | --- |
+| `locales/es/app.ftl` | `welcome-title` | `locales/en/app.ftl:1:0` |
+| `locales/es/app.ftl` | `-brand-name =` | `locales/en/app.ftl:8:1` |
+| `locales/es/app.ftl` | `button-copy.label = Lanzar` | `locales/en/app.ftl:13:5` |
+| `locales/es/dialogs/menu.ftl` | `menu-save.label = Guardar` | `locales/en/dialogs/menu.ftl:4:5` |
+
+Error example:
+
+```json
+{
+  "code": -32602,
+  "message": "expected a file URI"
+}
 ```
 
-With `file_masks = ["locales/{lang}/{filepath}.ftl"]`:
+## `textDocument/references`
 
-- `locales/es/app.ftl` maps to origin counterpart `locales/en/app.ftl`
-- `locales/es/dialogs/menu.ftl` maps to origin counterpart `locales/en/dialogs/menu.ftl`
+Behavior:
 
-Only files that match a configured Fluent mask participate in navigation, completion, hover pairing, code actions, code lens, and indexed counterpart diagnostics.
-
-## Definition
-
-Current tested behavior is translation-to-origin definition.
+- origin file -> matching entries or attributes in translations
+- results come from the indexed workspace model
 
 Examples:
 
-- `locales/es/app.ftl`, cursor on `welcome-title`
-  - definition -> `locales/en/app.ftl:1:0`
-- `locales/es/app.ftl`, cursor on `-brand-name =`
-  - definition -> `locales/en/app.ftl:8:1`
-- `locales/es/app.ftl`, cursor on `button-copy.label = Lanzar`
-  - definition -> `locales/en/app.ftl:13:5`
-- `locales/es/dialogs/menu.ftl`, cursor on `menu-save.label = Guardar`
-  - definition -> `locales/en/dialogs/menu.ftl:4:5`
+| From | Cursor | Result locations |
+| --- | --- | --- |
+| `locales/en/app.ftl` | `welcome-title` | `locales/es/app.ftl:1:0`, `locales/fr/app.ftl:0:0` |
+| `locales/en/app.ftl` | `-brand-name =` | `locales/es/app.ftl:3:1`, `locales/fr/app.ftl:2:1` |
+| `locales/en/dialogs/menu.ftl` | `menu-save.label = Save` | `locales/es/dialogs/menu.ftl:1:5`, `locales/fr/dialogs/menu.ftl:1:5`, `locales/lv/dialogs/menu.ftl:1:5` |
 
-Error handling currently tested:
+Current indexed behavior:
 
-- non-file URIs are rejected with `-32602` and message `expected a file URI`
+- dirty in-memory translation edits update references immediately
+- `didClose` drops dirty overlay state and reverts to disk
+- background refresh picks up added translation files
+- background refresh removes deleted translation files
 
-## References
+## `textDocument/hover`
 
-Current tested behavior is origin-to-translation references.
+Hover has three current forms.
 
-Examples:
+### Key Hover
 
-- `locales/en/app.ftl`, cursor on `welcome-title`
-  - references include:
-    - `locales/es/app.ftl:1:0`
-    - `locales/fr/app.ftl:0:0`
-- `locales/en/app.ftl`, cursor on `-brand-name =`
-  - references include:
-    - `locales/es/app.ftl:3:1`
-    - `locales/fr/app.ftl:2:1`
-- `locales/en/dialogs/menu.ftl`, cursor on `menu-save.label = Save`
-  - references include:
-    - `locales/es/dialogs/menu.ftl:1:5`
-    - `locales/fr/dialogs/menu.ftl:1:5`
-    - `locales/lv/dialogs/menu.ftl:1:5`
+Key hover returns comment blocks when comments exist.
 
-Indexed references also currently track:
-
-- dirty in-memory translation edits
-- dirty-close reversion back to disk content
-- background discovery of newly added translation files
-- background removal of deleted translation files
-
-## Hover
-
-Hover currently has three important modes.
-
-### 1. Key Hover on Commented Entries
-
-When the cursor is on a message key or attribute key and comments exist, hover returns comment blocks, not rendered preview text.
-
-Origin example:
+Origin example, hover on `menu-save` key area in `locales/en/dialogs/menu.ftl`:
 
 ```ftl
 ### Shared menu copy
@@ -144,17 +146,7 @@ Origin example:
 # Primary action
 ```
 
-That comes from hovering the key area of:
-
-```ftl
-### Shared menu copy
-## File menu
-# Primary action
-menu-save =
-    .label = Save
-```
-
-Translation example:
+Translation example, hover on `commented-preview` key in `locales/es/app.ftl`:
 
 ~~~md
 ```ftl
@@ -170,17 +162,17 @@ Translation example:
 ```
 ~~~
 
-Current rule:
+Current rules:
 
-- origin file key hover shows only local comments
-- translation key hover shows origin comments first, current-language comments second
-- uncommented origin-language keys return no hover instead of falling back to body preview
+- origin key hover returns local comments only
+- translation key hover returns origin comments first, local comments second
+- uncommented origin keys return no hover
 
-### 2. Body Hover on Message or Attribute Values
+### Body Hover
 
-When the cursor is inside the value body, hover returns semantic preview text rendered from the Fluent entry.
+Body hover returns rendered preview text.
 
-Translation example:
+Translation example, hover in `welcome-body` in `locales/es/app.ftl`:
 
 ~~~md
 ```ftl
@@ -194,25 +186,13 @@ Abre la build mas reciente de { -brand-name } y sigue donde lo dejaste.
 ```
 ~~~
 
-Attribute example:
-
-~~~md
-`$gender=*`, `$count=*`
+Origin attribute example, hover in `menu-save.tooltip` in `locales/en/dialogs/menu.ftl`:
 
 ```ftl
-Install the recommended build for their account on { $count } devices now.
+Save changes before closing the window
 ```
 
----
-
-`$gender=*`, `$count=*`
-
-```ftl
-Instala la build recomendada para la cuenta de elle en { $count } dispositivos ahora.
-```
-~~~
-
-Empty-local example:
+Empty local value example, hover on `empty-preview = { "" }` in `locales/es/app.ftl`:
 
 ~~~md
 ```ftl
@@ -226,11 +206,11 @@ English empty preview fallback.
 ```
 ~~~
 
-### 3. Hover Inside Selectors
+### Selector Hover
 
-When the cursor is inside a selector branch, hover prefixes the preview with the resolved selector assignments.
+Selector hover prepends resolved selector values, then shows origin and local rendered preview blocks.
 
-Example from Spanish `install-hint` on the `[female]` branch:
+Example, hover on the `[female]` branch of `install-hint` in `locales/es/app.ftl`:
 
 ~~~md
 `$gender=female`, `$count=*`
@@ -248,16 +228,7 @@ Copia el enlace de descarga para la cuenta de ella en { $count } dispositivos ah
 ```
 ~~~
 
-Current selector behavior from tests:
-
-- origin preview is shown first
-- current-language preview is shown second
-- shared selector variables are matched by name across origin and current text
-- mismatched selector sets are tolerated
-- explicit numeric keys are preserved when possible
-- plural-category names like `zero` and `one` are preserved for locales that use them
-
-Mismatch example:
+Mismatch example, hover in `mismatch-rollout`:
 
 ~~~md
 `$platform=*`, `$count=0`
@@ -275,7 +246,7 @@ Resumen para elle misme con ningun paquete listo.
 ```
 ~~~
 
-Latvian zero-category example:
+Latvian zero-category example, hover on `[zero]` in `locales/lv/app.ftl`:
 
 ~~~md
 `$count=zero`
@@ -293,13 +264,25 @@ Kopsavilkums ar neviena pakotne nav gatava.
 ```
 ~~~
 
-## Completion
+Current rules:
 
-Completion is currently translation-oriented. It uses the origin counterpart as the source of keys and attributes.
+- origin block is first
+- local block is second
+- shared selector variables are matched by name
+- explicit numeric keys such as `0` and `1` are preserved
+- plural-category names such as `zero` and `one` are preserved
 
-### Top-Level Key Completion
+## `textDocument/completion`
 
-Example source:
+Behavior:
+
+- completion is translation-oriented
+- source of truth is the origin counterpart file
+- trigger character is `.`
+
+Top-level key example.
+
+Before:
 
 ```ftl
 welcome-title = Bienvenido
@@ -314,9 +297,9 @@ download-action
 download-count
 ```
 
-### Attribute Completion
+Attribute example.
 
-Example source:
+Before:
 
 ```ftl
 menu-save =
@@ -329,18 +312,23 @@ Completion labels:
 .label
 ```
 
-With a bare `.`:
+Bare-dot example.
+
+Before:
+
+```ftl
+menu-save =
+    .
+```
+
+Completion labels:
 
 ```text
 .label
 .tooltip
 ```
 
-### Completion Documentation
-
-Completion docs are Markdown and come from the origin entry, including comments and Fluent source.
-
-Example documentation for `commented-preview` contains:
+Documentation example for `commented-preview`:
 
 ```text
 # Completion doc coverage
@@ -348,7 +336,7 @@ Example documentation for `commented-preview` contains:
 commented-preview = Preview text for completion docs.
 ```
 
-Example documentation for `.tooltip` contains:
+Documentation example for `.tooltip`:
 
 ```text
 # Menu completion documentation
@@ -356,24 +344,22 @@ Example documentation for `.tooltip` contains:
 .tooltip = Save this file
 ```
 
-### Current Limits
+Current rules:
 
-Current tested behavior:
-
-- translation files get completions from origin counterparts
+- translation files receive completion from their origin counterpart
 - nested translation files use the nested origin counterpart
-- origin files do not offer these counterpart completions
+- origin files do not offer counterpart completion
 - unmatched prefixes return an empty result
-- files outside the configured workspace are rejected with an invalid-params error
+- files outside the configured workspace return invalid params
 
-## Code Actions
+## `textDocument/codeAction`
 
-There are two broad families of code actions:
+Two action families exist today:
 
-- source-sync quick fixes
-- selector generation and selector rewrite refactors
+- missing-entry quick fixes
+- selector-generation and selector-rewrite refactors
 
-### Add Missing Keys and Attributes From Source
+### Quick Fix: `Add missing keys and attributes from source`
 
 Title:
 
@@ -381,7 +367,7 @@ Title:
 Add missing keys and attributes from source
 ```
 
-Example before:
+Before:
 
 ```ftl
 hello = Hola Mundo
@@ -389,7 +375,7 @@ menu-save =
     .label = Guardar
 ```
 
-Example after:
+After:
 
 ```ftl
 hello = Hola Mundo
@@ -402,11 +388,11 @@ sync-status = { "" }
 
 Current behavior:
 
-- inserts empty parseable stubs
-- preserves already translated content
-- produces Fluent that still parses
+- inserts parseable empty stubs
+- preserves existing translated content
+- no `LSP-COPY` marker is added
 
-### Copy Missing Keys and Attributes From Source
+### Quick Fix: `Copy missing keys and attributes from source`
 
 Title:
 
@@ -414,7 +400,7 @@ Title:
 Copy missing keys and attributes from source
 ```
 
-Example before:
+Before:
 
 ```ftl
 hello = Hola Mundo
@@ -422,7 +408,7 @@ menu-save =
     .label = Guardar
 ```
 
-Example after:
+After:
 
 ```ftl
 hello = Hola Mundo
@@ -437,11 +423,10 @@ sync-status = Sync ready
 
 Current behavior:
 
-- copied whole messages get `# [LSP-COPY]`
-- copied missing attributes get a message-level marker like `# [LSP-COPY .tooltip]`
-- copied content is kept parseable
+- copied whole messages receive `# [LSP-COPY]`
+- copied missing attributes receive a message-level marker such as `# [LSP-COPY .tooltip]`
 
-### Copy a Single Stub Message From Source
+### Quick Fix: `Copy \`hello\` from source`
 
 Title:
 
@@ -449,7 +434,7 @@ Title:
 Copy `hello` from source
 ```
 
-Example before:
+Before:
 
 ```ftl
 hello = { "" }
@@ -459,7 +444,7 @@ download-action =
 sync-status = { "" }
 ```
 
-Example after:
+After:
 
 ```ftl
 # [LSP-COPY]
@@ -472,10 +457,10 @@ sync-status = { "" }
 
 Current behavior:
 
-- only the selected message is replaced
-- unrelated entries are left alone
+- replaces only the selected message
+- does not touch unrelated incomplete entries
 
-### Copy Missing Attributes for a Selected Message
+### Quick Fix: `Copy missing attributes for \`download-action\` from source`
 
 Title:
 
@@ -483,7 +468,7 @@ Title:
 Copy missing attributes for `download-action` from source
 ```
 
-Example before:
+Before:
 
 ```ftl
 hello = { "" }
@@ -493,7 +478,7 @@ download-action =
 sync-status = { "" }
 ```
 
-Example after:
+After:
 
 ```ftl
 hello = { "" }
@@ -507,14 +492,12 @@ sync-status = { "" }
 
 Current behavior:
 
-- only missing attributes for the selected message are inserted
-- the hover surface intentionally does not expose the `LSP-COPY` marker as translator comment content
+- inserts only missing attributes for the selected message
+- hover on the copied attribute does not surface the `LSP-COPY` marker as comment content
 
-### Generate Number Selector
+### Refactor: Selector Generation
 
-Generation actions are `refactor.rewrite`.
-
-Current generated titles include:
+Representative titles:
 
 ```text
 Generate number selector (prefix)
@@ -525,13 +508,15 @@ Generate number selector from NUMBER($downloads) (prefix)
 Generate number selector from WRAP(NUMBER($downloads)) (prefix)
 ```
 
-Default example from:
+Message-level example.
+
+Before:
 
 ```ftl
 coins-line = Tienes { $coins } monedas.
 ```
 
-Generated `prefix` text:
+After, `Generate number selector (prefix)`:
 
 ```ftl
 Tienes { $coins } { $coins ->
@@ -540,13 +525,15 @@ Tienes { $coins } { $coins ->
 }
 ```
 
-Whole-form generation when there is no existing variable:
+Whole-only example when no variable exists.
+
+Before:
 
 ```ftl
 plain-count = Monedas disponibles.
 ```
 
-becomes this snippet body when snippet edits are supported:
+Snippet body:
 
 ```ftl
 { \$${1:count} ->
@@ -555,13 +542,15 @@ becomes this snippet body when snippet edits are supported:
 }
 ```
 
-Function-anchor example:
+Function-anchor example.
+
+Before:
 
 ```ftl
 formatted-download = Descarga { NUMBER($downloads) } archivos.
 ```
 
-can generate:
+After, cursor on `$downloads`:
 
 ```ftl
 Descarga { NUMBER($downloads) } { $downloads ->
@@ -570,7 +559,7 @@ Descarga { NUMBER($downloads) } { $downloads ->
 }
 ```
 
-or, when the cursor is on the function expression itself:
+After, cursor on `NUMBER($downloads)`:
 
 ```ftl
 Descarga { NUMBER($downloads) } { NUMBER($downloads) ->
@@ -579,20 +568,36 @@ Descarga { NUMBER($downloads) } { NUMBER($downloads) ->
 }
 ```
 
-Current behavior from tests:
+Punctuation example.
 
-- message-level generation offers a preferred style first
-- the preferred style defaults to `prefix`
-- client `selector_style` can change the preferred style
-- file config `selector_style` overrides the client preference
-- attributes also participate
-- nested function placeables can be used as anchors
-- punctuation stays attached, for example `.` stays `.` instead of becoming ` .`
-- ambiguous messages like `range-summary` intentionally hide generation actions
+Before:
 
-### Selector Rewrite Actions
+```ftl
+coins-period = Tienes { $coins }.
+```
 
-Current rewrite titles include:
+After:
+
+```ftl
+Tienes { $coins } { $coins ->
+    [one].
+    *[other].
+}
+```
+
+Current rules:
+
+- default preferred style is `prefix`
+- client `selector_style` changes preferred style
+- file config `selector_style` overrides client preference
+- attributes participate
+- nested function placeables can be the anchor
+- punctuation remains attached
+- ambiguous messages such as `range-summary` hide generation actions
+
+### Refactor: Selector Rewrite
+
+Representative titles:
 
 ```text
 Convert selector to prefix form
@@ -600,7 +605,7 @@ Convert selector to suffix form
 Convert selector to whole form
 ```
 
-Whole -> prefix example:
+Whole -> prefix example.
 
 Before:
 
@@ -620,7 +625,7 @@ whole-coins = Tienes { $coins } { $coins ->
 }
 ```
 
-Whole -> suffix example:
+Whole -> suffix example.
 
 Before:
 
@@ -640,7 +645,7 @@ whole-coins = Tienes { $coins ->
 }
 ```
 
-Prefix -> whole example:
+Prefix -> whole example.
 
 Before:
 
@@ -660,21 +665,41 @@ prefix-coins = { $coins ->
 }
 ```
 
-Current rewrite behavior from tests:
+Attribute rewrite example.
+
+Before:
+
+```ftl
+commented-download =
+    .tooltip = { $files ->
+        [one] Descarga { $files } archivo.
+       *[other] Descarga { $files } archivos.
+    }
+```
+
+After, `Convert selector to prefix form`:
+
+```ftl
+commented-download =
+    .tooltip = Descarga { $files } { $files ->
+        [one] archivo.
+        *[other] archivos.
+    }
+```
+
+Current rules:
 
 - whole selectors can rewrite to prefix and suffix
 - prefix selectors can rewrite to whole
 - suffix selectors can rewrite to whole and prefix
-- suffix-like selectors with no distinct outer prefix only advertise the distinct `prefix` collapse
+- suffix-like selectors without distinct outer text only offer the distinct `prefix` collapse
 - nested selectors can be rewritten inside variants
-- attribute values can be rewritten
-- attribute rewrite ranges do not consume surrounding comments or the attribute key
-- local rewrites preserve nested selectors when rewriting only one selected selector inside a larger pattern
-- rewrites preserve `= {` spacing when replacing a whole message value immediately after `=`
+- attribute rewrite edits do not consume surrounding comments or the attribute key
+- rewrites preserve assignment spacing such as `= {`
 
-### Snippet Text Edit Behavior
+### Snippet Edit Form
 
-If the client advertises:
+When the client advertises:
 
 ```json
 {
@@ -687,35 +712,44 @@ If the client advertises:
 }
 ```
 
-then selector-generation code actions currently use `WorkspaceEdit.documentChanges` plus `SnippetTextEdit`.
+selector-generation actions currently use `WorkspaceEdit.documentChanges` with `SnippetTextEdit`.
 
-Otherwise they currently use plain `WorkspaceEdit.changes`.
+Without that capability they use plain `WorkspaceEdit.changes`.
 
-## Code Lens and `fluent-lsp.showSelectorCombinations`
+## `textDocument/codeLens`
 
-Code lenses are currently offered for entries that have selector expansions worth showing.
+Behavior:
 
-Example:
+- lenses are returned for entries with selector combinations worth expanding
+- `resolveProvider` is `false`
 
-- `install-hint` in Spanish produces a lens titled:
+Example lens on `install-hint`:
 
-```text
-Show all 6 selector combinations
+```json
+{
+  "title": "Show all 6 selector combinations",
+  "command": "fluent-lsp.showSelectorCombinations"
+}
 ```
 
-Executing the lens calls:
+## `workspace/executeCommand`
+
+Supported command:
 
 ```text
 fluent-lsp.showSelectorCombinations
 ```
 
-With `window/showDocument` support, the command currently opens a temp Markdown file whose name contains:
+Arguments:
 
-```text
-fluent-lsp-selector-combinations-...-install-hint.md
+```json
+[
+  "file:///.../locales/es/app.ftl",
+  "install-hint"
+]
 ```
 
-The generated document currently includes sections like:
+With `window/showDocument` support, the server opens a temp Markdown document containing sections such as:
 
 ```text
 Current language: `es`
@@ -726,7 +760,7 @@ Source language combinations:
 Current language combinations:
 ```
 
-The document includes rendered selector combinations such as:
+Combination example from that document:
 
 ~~~md
 `$gender=other`, `$count=other`
@@ -735,8 +769,6 @@ Copy the download link for their account on { $count } devices now.
 ```
 ~~~
 
-and:
-
 ~~~md
 `$gender=other`, `$count=other`
 ```ftl
@@ -744,29 +776,27 @@ Copia el enlace de descarga para la cuenta de elle en { $count } dispositivos ah
 ```
 ~~~
 
-Without `window/showDocument` support, the current implementation falls back to `window/showMessage` and truncates to a smaller selector-combination limit.
+Without `window/showDocument` support, the server falls back to `window/showMessage`.
 
 ## Diagnostics
 
-Diagnostics are currently save-oriented for document syntax and selector checks, plus index-driven for counterpart problems.
+Diagnostics are currently save-oriented for syntax and selector checks, plus index-driven for counterpart warnings.
 
-### Parse Errors
+### Parse Error
 
-Current behavior:
+Published on save.
 
-- opening an invalid file does not immediately publish parse errors
-- saving the file publishes parse diagnostics
-- fixing the file and saving again clears them
-
-Example message:
+Message example:
 
 ```text
 Fluent syntax error: Expected a token starting with "="
 ```
 
-### `LSP-COPY` Marker Warnings
+### `LSP-COPY` Marker Warning
 
-Current message:
+Published on save.
+
+Message:
 
 ```text
 Entry still contains an `# [LSP-COPY]` marker
@@ -774,12 +804,12 @@ Entry still contains an `# [LSP-COPY]` marker
 
 Current placement:
 
-- whole-message marker warns on the marker line itself
-- attribute-copy marker warns on the copied attribute key line, not the marker line
+- whole-message marker -> marker line
+- attribute-copy marker -> copied attribute key line
 
-### Translation File With No Origin Counterpart
+### Missing Origin Counterpart File
 
-Current message shape:
+Message:
 
 ```text
 Translation file has no origin-language counterpart for `only`
@@ -787,12 +817,12 @@ Translation file has no origin-language counterpart for `only`
 
 Current behavior:
 
-- saving the translation file publishes the warning
-- creating the origin counterpart on disk clears it during background refresh
+- warning appears after save
+- warning clears after background refresh sees the origin file
 
-### Translation-Only Entry or Attribute
+### Translation-Only Entry Or Attribute
 
-Current message shapes:
+Messages:
 
 ```text
 Translation entry `extra` has no origin-language counterpart
@@ -801,14 +831,26 @@ Translation attribute `menu.tooltip` has no origin-language counterpart
 
 Current behavior:
 
-- diagnostics point at the local translation key/attribute
-- adding the missing origin entry/attribute clears them on background refresh
+- range points at the local translation entry or attribute
+- warning clears after background refresh sees the origin counterpart
 
-### Unsupported or Missing Numeric Selector Categories
+### Unsupported Numeric Selector Key
 
-These are disabled by default.
+Message:
 
-When enabled through config or client settings, examples include:
+```text
+`admins` is not a supported numeric selector key for `en`; use exact numbers or plural categories
+```
+
+Current severity:
+
+- error
+
+### Unsupported And Missing Plural Categories
+
+Disabled by default.
+
+Example messages:
 
 ```text
 `few` is not a supported plural category for `lv`
@@ -816,30 +858,21 @@ Numeric selector for `lv` is missing category `zero`
 Numeric selector for `lv` is missing category `one`
 ```
 
-Current severity from tests:
+Current severities:
 
 - unsupported category -> error
 - missing category -> warning
 
-Unicode plural-rule data is currently used for locale-specific validation.
-For Ukrainian, tests confirm that `few` and `many` are accepted while a missing `one` still warns.
+Ukrainian example:
 
-### Invalid Numeric Selector Keys
-
-Current message:
-
-```text
-`admins` is not a supported numeric selector key for `en`; use exact numbers or plural categories
-```
-
-This check is only applied when the server decides the selector is numeric.
-A mixed non-numeric selector with only `[admins]` and default `*[other]` is currently left alone.
+- `few` and `many` are accepted
+- missing `one` still warns
 
 ### Selector Style Mismatch
 
-This is disabled by default.
+Disabled by default.
 
-When enabled, examples include:
+Example messages:
 
 ```text
 Selector style is `whole`, but workspace prefers `prefix`
@@ -850,83 +883,81 @@ Selector style is `prefix`, but workspace prefers `whole`
 Current behavior:
 
 - both top-level and local selector occurrences can warn
-- file config can override client style preference and mismatch policy
+- file config can override client style preference and style-warning enablement
 
 ### Diagnostic Clearing
 
-Current tested clearing behavior:
+Current behavior:
 
-- fixing parse errors clears diagnostics on save
-- removing `LSP-COPY` markers clears diagnostics on save
+- fixed parse errors clear on save
+- removed `LSP-COPY` markers clear on save
 - `didClose` clears document diagnostics immediately
-- background counterpart/index changes clear index-driven warnings
+- index-driven counterpart warnings clear after background refresh
 
-## Indexing, Refresh, and Trace
+## Index And Refresh Behavior
 
-### Initial Index Build
+Current indexed behavior:
 
-On `initialized`, if config loads successfully, the server currently:
+- initial workspace index build runs after `initialized`
+- if the client supports work-done progress, index build emits `$/progress`
+- open-document overlays update indexed requests immediately
+- background refresh picks up disk-only add, delete, and mtime changes
 
-- logs the loaded origin language and masks
-- starts a workspace index build
-
-If the client supports work-done progress, the server currently emits `$/progress` with token:
+Progress token:
 
 ```text
 fluent-lsp-index
 ```
 
-including:
+Current request paths covered by live-index tests:
 
-- `begin`
-- one or more `report`
-- `end`
+- definition
+- references
+- hover
+- completion
+- missing-origin diagnostics
 
-### Live Overlay Behavior
+## Trace Logging
 
-Open-document overlays currently affect indexed requests immediately.
+Supported through standard LSP trace settings:
 
-Tests cover:
+- `initialize.trace = "messages"`
+- `initialize.trace = "verbose"`
+- runtime `$/setTrace`
 
-- definition sees dirty origin changes
-- hover sees dirty origin changes
-- completion sees dirty origin changes
-- references see dirty translation changes
-- closing a dirty translation reverts indexed behavior to disk content
-
-### Background Disk Refresh
-
-Current implementation refreshes in the background and tests exercise a roughly one-second pickup window for:
-
-- newly added translation files
-- deleted translation files
-- newly added origin counterparts
-- newly added origin entries/attributes
-
-### Trace Logging
-
-If trace is enabled through `initialize.trace = "messages"` or `"verbose"`, or later via `$/setTrace`, the server currently emits `$/logTrace`.
-
-Examples:
+Message shape:
 
 ```text
-operation=workspace/index
-operation=textDocument/definition
+fluent-lsp timing operation=<operation> elapsed_ms=<milliseconds>
 ```
 
-Verbose request example:
+Verbose payload examples:
 
 ```text
+files=<count>
 hit=true
+count=<count>
+command=<command> ok=true
 ```
 
-## Notes on Where Tests Are Still Thin
+Current traced operations covered by tests:
 
-These are the places where the current suite does not push the behavior as hard as it probably should.
+- `workspace/index`
+- `textDocument/definition`
+- `textDocument/references`
+- `textDocument/hover`
+- `textDocument/completion`
+- `textDocument/codeAction`
+- `textDocument/codeLens`
+- `workspace/executeCommand`
 
-- The `window/showMessage` fallback for selector combinations is implemented, but current end-to-end coverage is centered on the `window/showDocument` path.
-- `workspace/executeCommand` error paths are light: bad argument shapes, rejected `showDocument`, and unavailable files/workspaces are not exercised deeply in smoke tests.
-- Completion is smoke-tested via raw Rust-side LSP requests because Neovim headless completion helpers are flaky here, so actual Neovim completion-menu insertion and acceptance behavior is not covered as hard as the request/response path.
-- Selector-generation snippets are well tested at the LSP payload level, but editor UX details like placeholder jump order and snippet-session behavior are not validated by a Neovim smoke.
-- Config loading paths are not stressed enough: multiple `file_masks`, alternate config filename `.fluent-lsp.toml`, and multi-workspace-folder initialization need stronger coverage.
-- Background index invalidation is covered for a handful of adds/edits/deletes, but not for heavier churn like many simultaneous file changes, rapid create-delete cycles, or large locale sets.
+## Weaker Guarantees
+
+These areas are less firmly nailed down than the rest of the reference:
+
+- `window/showMessage` fallback for selector combinations is much less exercised than the `window/showDocument` path
+- `workspace/executeCommand` error paths are thin, especially malformed arguments and client refusal cases
+- completion payloads are clearer than editor-side completion UX and insertion behavior
+- snippet placeholder behavior is clearer at the edit payload level than at the editor interaction level
+- config loading is less firm for multiple `file_masks`, alternate config filename `.fluent-lsp.toml`, and multi-root initialization
+- background refresh is less firmly characterized under heavy churn or large batches
