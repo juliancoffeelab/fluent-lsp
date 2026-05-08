@@ -2,27 +2,6 @@
 
 ## Configuration
 
-Examples below assume this workspace shape:
-
-```toml
-origin_language = "en"
-file_masks = ["locales/{lang}/{filepath}.ftl"]
-```
-
-Example file pairs:
-
-```text
-locales/en/app.ftl
-locales/es/app.ftl
-locales/en/dialogs/menu.ftl
-locales/es/dialogs/menu.ftl
-```
-
-Path mapping examples:
-
-- `locales/es/app.ftl` -> `locales/en/app.ftl`
-- `locales/es/dialogs/menu.ftl` -> `locales/en/dialogs/menu.ftl`
-
 ### `fluent-lsp.toml`
 
 Required keys:
@@ -32,7 +11,12 @@ origin_language = "en"
 file_masks = ["locales/{lang}/{filepath}.ftl"]
 ```
 
-Supported optional keys:
+Path examples:
+
+- `locales/es/app.ftl` -> `locales/en/app.ftl`
+- `locales/es/dialogs/menu.ftl` -> `locales/en/dialogs/menu.ftl`
+
+Optional keys:
 
 ```toml
 selector_style = "prefix" # "prefix" | "suffix" | "whole"
@@ -41,14 +25,14 @@ warn_on_missing_plural_categories = true
 warn_on_selector_style_mismatch = true
 ```
 
-Current precedence:
+Precedence:
 
 - file config overrides client `workspace/didChangeConfiguration`
 - client settings apply when file config does not override them
 
-## Advertised LSP Capabilities
+## Capabilities
 
-`initialize` currently returns these relevant capabilities:
+`initialize` returns these capabilities:
 
 ```json
 {
@@ -76,7 +60,7 @@ Current precedence:
 }
 ```
 
-Not currently advertised:
+Not provided:
 
 - rename
 - semantic tokens
@@ -113,7 +97,7 @@ Error example:
 Behavior:
 
 - origin file -> matching entries or attributes in translations
-- results come from the indexed workspace model
+- results use the indexed workspace model
 
 Examples:
 
@@ -123,7 +107,7 @@ Examples:
 | `locales/en/app.ftl` | `-brand-name =` | `locales/es/app.ftl:3:1`, `locales/fr/app.ftl:2:1` |
 | `locales/en/dialogs/menu.ftl` | `menu-save.label = Save` | `locales/es/dialogs/menu.ftl:1:5`, `locales/fr/dialogs/menu.ftl:1:5`, `locales/lv/dialogs/menu.ftl:1:5` |
 
-Current indexed behavior:
+Index-backed behavior:
 
 - dirty in-memory translation edits update references immediately
 - `didClose` drops dirty overlay state and reverts to disk
@@ -132,13 +116,13 @@ Current indexed behavior:
 
 ## `textDocument/hover`
 
-Hover has three current forms.
+Hover has three forms.
 
-### Key Hover
+### Key hover
 
 Key hover returns comment blocks when comments exist.
 
-Origin example, hover on `menu-save` key area in `locales/en/dialogs/menu.ftl`:
+Origin example, hover on the `menu-save` key area in `locales/en/dialogs/menu.ftl`:
 
 ```ftl
 ### Shared menu copy
@@ -146,9 +130,9 @@ Origin example, hover on `menu-save` key area in `locales/en/dialogs/menu.ftl`:
 # Primary action
 ```
 
-Translation example, hover on `commented-preview` key in `locales/es/app.ftl`:
+Translation example, hover on `commented-preview` in `locales/es/app.ftl`:
 
-~~~md
+````text
 ```ftl
 # Comment-only hover coverage
 # Keep this translator guidance visible on key hover
@@ -160,21 +144,21 @@ Translation example, hover on `commented-preview` key in `locales/es/app.ftl`:
 # Cobertura de hover con comentarios
 # Mantener visible esta nota para traduccion en el hover de clave
 ```
-~~~
+````
 
-Current rules:
+Rules:
 
 - origin key hover returns local comments only
 - translation key hover returns origin comments first, local comments second
 - uncommented origin keys return no hover
 
-### Body Hover
+### Body hover
 
 Body hover returns rendered preview text.
 
 Translation example, hover in `welcome-body` in `locales/es/app.ftl`:
 
-~~~md
+````text
 ```ftl
 Open the latest { -brand-name } build and pick up where you left off.
 ```
@@ -184,7 +168,7 @@ Open the latest { -brand-name } build and pick up where you left off.
 ```ftl
 Abre la build mas reciente de { -brand-name } y sigue donde lo dejaste.
 ```
-~~~
+````
 
 Origin attribute example, hover in `menu-save.tooltip` in `locales/en/dialogs/menu.ftl`:
 
@@ -194,7 +178,7 @@ Save changes before closing the window
 
 Empty local value example, hover on `empty-preview = { "" }` in `locales/es/app.ftl`:
 
-~~~md
+````text
 ```ftl
 English empty preview fallback.
 ```
@@ -204,15 +188,15 @@ English empty preview fallback.
 ```ftl
 <empty>
 ```
-~~~
+````
 
-### Selector Hover
+### Selector hover
 
 Selector hover prepends resolved selector values, then shows origin and local rendered preview blocks.
 
 Example, hover on the `[female]` branch of `install-hint` in `locales/es/app.ftl`:
 
-~~~md
+````text
 `$gender=female`, `$count=*`
 
 ```ftl
@@ -226,11 +210,11 @@ Copy the download link for her account on { $count } devices now.
 ```ftl
 Copia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.
 ```
-~~~
+````
 
 Mismatch example, hover in `mismatch-rollout`:
 
-~~~md
+````text
 `$platform=*`, `$count=0`
 
 ```ftl
@@ -244,27 +228,9 @@ Summary for mobile users with no packages ready.
 ```ftl
 Resumen para elle misme con ningun paquete listo.
 ```
-~~~
+````
 
-Latvian zero-category example, hover on `[zero]` in `locales/lv/app.ftl`:
-
-~~~md
-`$count=zero`
-
-```ftl
-Zero summary: no packages ready.
-```
-
----
-
-`$count=zero`
-
-```ftl
-Kopsavilkums ar neviena pakotne nav gatava.
-```
-~~~
-
-Current rules:
+Rules:
 
 - origin block is first
 - local block is second
@@ -277,7 +243,7 @@ Current rules:
 Behavior:
 
 - completion is translation-oriented
-- source of truth is the origin counterpart file
+- completion data comes from the origin counterpart file
 - trigger character is `.`
 
 Top-level key example.
@@ -330,21 +296,22 @@ Completion labels:
 
 Documentation example for `commented-preview`:
 
-```text
+```ftl
 # Completion doc coverage
 # Keep this note in completion hover
 commented-preview = Preview text for completion docs.
 ```
 
-Documentation example for `.tooltip`:
+Documentation example for `menu-save.tooltip`:
 
-```text
+```ftl
 # Menu completion documentation
 # Keep this entry visible in completion hover
-.tooltip = Save this file
+menu-save =
+    .tooltip = Save this file
 ```
 
-Current rules:
+Rules:
 
 - translation files receive completion from their origin counterpart
 - nested translation files use the nested origin counterpart
@@ -354,12 +321,12 @@ Current rules:
 
 ## `textDocument/codeAction`
 
-Two action families exist today:
+Two action families exist:
 
 - missing-entry quick fixes
 - selector-generation and selector-rewrite refactors
 
-### Quick Fix: `Add missing keys and attributes from source`
+### Quick Fix: add missing keys and attributes from English source
 
 Title:
 
@@ -386,18 +353,27 @@ menu-save =
 sync-status = { "" }
 ```
 
-Current behavior:
+Rules:
 
 - inserts parseable empty stubs
 - preserves existing translated content
-- no `LSP-COPY` marker is added
+- does not add an `LSP-COPY` marker
 
-### Quick Fix: `Copy missing keys and attributes from source`
+### Quick Fix: copy missing keys and attributes from English source
 
 Title:
 
 ```text
 Copy missing keys and attributes from source
+```
+
+English source:
+
+```ftl
+menu-save =
+    .tooltip = Save this file
+
+sync-status = Sync ready
 ```
 
 Before:
@@ -421,17 +397,23 @@ menu-save =
 sync-status = Sync ready
 ```
 
-Current behavior:
+Rules:
 
 - copied whole messages receive `# [LSP-COPY]`
 - copied missing attributes receive a message-level marker such as `# [LSP-COPY .tooltip]`
 
-### Quick Fix: `Copy \`hello\` from source`
+### Quick Fix: copy one message from English source
 
 Title:
 
 ```text
 Copy `hello` from source
+```
+
+English source:
+
+```ftl
+hello = Hello World
 ```
 
 Before:
@@ -455,17 +437,25 @@ download-action =
 sync-status = { "" }
 ```
 
-Current behavior:
+Rules:
 
 - replaces only the selected message
 - does not touch unrelated incomplete entries
 
-### Quick Fix: `Copy missing attributes for \`download-action\` from source`
+### Quick Fix: copy missing attributes for one message from English source
 
 Title:
 
 ```text
 Copy missing attributes for `download-action` from source
+```
+
+English source:
+
+```ftl
+download-action =
+    .label = Install build
+    .tooltip = Download this build
 ```
 
 Before:
@@ -490,12 +480,12 @@ download-action =
 sync-status = { "" }
 ```
 
-Current behavior:
+Rules:
 
 - inserts only missing attributes for the selected message
 - hover on the copied attribute does not surface the `LSP-COPY` marker as comment content
 
-### Refactor: Selector Generation
+### Refactor: selector generation
 
 Representative titles:
 
@@ -533,13 +523,10 @@ Before:
 plain-count = Monedas disponibles.
 ```
 
-Snippet body:
+Snippet payload:
 
-```ftl
-{ \$${1:count} ->
-    [one] Monedas disponibles.
-    *[other] Monedas disponibles.
-}
+```json
+"{ \\$${1:count} ->\n    [one] Monedas disponibles.\n    *[other] Monedas disponibles.\n}"
 ```
 
 Function-anchor example.
@@ -585,7 +572,7 @@ Tienes { $coins } { $coins ->
 }
 ```
 
-Current rules:
+Rules:
 
 - default preferred style is `prefix`
 - client `selector_style` changes preferred style
@@ -595,7 +582,7 @@ Current rules:
 - punctuation remains attached
 - ambiguous messages such as `range-summary` hide generation actions
 
-### Refactor: Selector Rewrite
+### Refactor: selector rewrite
 
 Representative titles:
 
@@ -687,7 +674,7 @@ commented-download =
     }
 ```
 
-Current rules:
+Rules:
 
 - whole selectors can rewrite to prefix and suffix
 - prefix selectors can rewrite to whole
@@ -697,9 +684,9 @@ Current rules:
 - attribute rewrite edits do not consume surrounding comments or the attribute key
 - rewrites preserve assignment spacing such as `= {`
 
-### Snippet Edit Form
+### Snippet edit form
 
-When the client advertises:
+When the client supports:
 
 ```json
 {
@@ -712,7 +699,7 @@ When the client advertises:
 }
 ```
 
-selector-generation actions currently use `WorkspaceEdit.documentChanges` with `SnippetTextEdit`.
+selector-generation actions use `WorkspaceEdit.documentChanges` with `SnippetTextEdit`.
 
 Without that capability they use plain `WorkspaceEdit.changes`.
 
@@ -752,151 +739,251 @@ Arguments:
 With `window/showDocument` support, the server opens a temp Markdown document containing sections such as:
 
 ```text
-Current language: `es`
+Language: `es`
 Source language: `en`
 Source text:
-Current text:
+Local text:
 Source language combinations:
-Current language combinations:
+Local language combinations:
 ```
 
 Combination example from that document:
 
-~~~md
+````text
 `$gender=other`, `$count=other`
 ```ftl
 Copy the download link for their account on { $count } devices now.
 ```
-~~~
+````
 
-~~~md
+````text
 `$gender=other`, `$count=other`
 ```ftl
 Copia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.
 ```
-~~~
+````
 
 Without `window/showDocument` support, the server falls back to `window/showMessage`.
 
 ## Diagnostics
 
-Diagnostics are currently save-oriented for syntax and selector checks, plus index-driven for counterpart warnings.
+### Parse error
 
-### Parse Error
+Example source:
 
-Published on save.
+```ftl
+welcome-title = Welcome
 
-Message example:
-
-```text
-Fluent syntax error: Expected a token starting with "="
+g@Rb@ge = broken
 ```
 
-### `LSP-COPY` Marker Warning
+Example diagnostic:
 
-Published on save.
-
-Message:
-
-```text
-Entry still contains an `# [LSP-COPY]` marker
+```json
+{
+  "severity": 1,
+  "message": "Fluent syntax error: Expected a token starting with \"=\""
+}
 ```
 
-Current placement:
+### `LSP-COPY` marker warning
+
+Example source:
+
+```ftl
+# [LSP-COPY]
+hello = Hello World
+
+# [LSP-COPY .tooltip]
+menu-save =
+    .label = Guardar
+    .tooltip = Save this file
+```
+
+Example diagnostics:
+
+```json
+[
+  {
+    "severity": 2,
+    "message": "Entry still contains an `# [LSP-COPY]` marker"
+  },
+  {
+    "severity": 2,
+    "message": "Entry still contains an `# [LSP-COPY]` marker"
+  }
+]
+```
+
+Placement:
 
 - whole-message marker -> marker line
 - attribute-copy marker -> copied attribute key line
 
-### Missing Origin Counterpart File
+### Missing origin counterpart file
 
-Message:
-
-```text
-Translation file has no origin-language counterpart for `only`
-```
-
-Current behavior:
-
-- warning appears after save
-- warning clears after background refresh sees the origin file
-
-### Translation-Only Entry Or Attribute
-
-Messages:
+Example source path:
 
 ```text
-Translation entry `extra` has no origin-language counterpart
-Translation attribute `menu.tooltip` has no origin-language counterpart
+locales/es/only.ftl
 ```
 
-Current behavior:
-
-- range points at the local translation entry or attribute
-- warning clears after background refresh sees the origin counterpart
-
-### Unsupported Numeric Selector Key
-
-Message:
+Without:
 
 ```text
-`admins` is not a supported numeric selector key for `en`; use exact numbers or plural categories
+locales/en/only.ftl
 ```
 
-Current severity:
+Example diagnostic:
 
-- error
+```json
+{
+  "severity": 2,
+  "message": "Translation file has no origin-language counterpart for `only`"
+}
+```
 
-### Unsupported And Missing Plural Categories
+### Translation-only entry or attribute
+
+Example translation:
+
+```ftl
+shared = Hola
+extra = Solo local
+menu =
+    .label = Guardar
+    .tooltip = Solo aqui
+```
+
+Example English source:
+
+```ftl
+shared = Hello
+menu =
+    .label = Save
+```
+
+Example diagnostics:
+
+```json
+[
+  {
+    "severity": 2,
+    "message": "Translation entry `extra` has no origin-language counterpart"
+  },
+  {
+    "severity": 2,
+    "message": "Translation attribute `menu.tooltip` has no origin-language counterpart"
+  }
+]
+```
+
+### Unsupported numeric selector key
+
+Example source:
+
+```ftl
+bad-key =
+    { $count ->
+        [admins] nope
+        [one] ok
+       *[other] ok
+    }
+```
+
+Example diagnostic:
+
+```json
+{
+  "severity": 1,
+  "message": "`admins` is not a supported numeric selector key for `en`; use exact numbers or plural categories"
+}
+```
+
+### Unsupported and missing plural categories
 
 Disabled by default.
 
-Example messages:
+Example Latvian source with an unsupported category:
 
-```text
-`few` is not a supported plural category for `lv`
-Numeric selector for `lv` is missing category `zero`
-Numeric selector for `lv` is missing category `one`
+```ftl
+bad-zero =
+    { $count ->
+        [few] slikti
+       *[other] labi
+    }
 ```
 
-Current severities:
+Example diagnostic:
 
-- unsupported category -> error
-- missing category -> warning
+```json
+{
+  "severity": 1,
+  "message": "`few` is not a supported plural category for `lv`"
+}
+```
 
-Ukrainian example:
+Example Latvian source with a missing category:
 
-- `few` and `many` are accepted
-- missing `one` still warns
+```ftl
+incomplete-zero =
+    { $count ->
+        [one] viena pakotne
+       *[other] pakotnes
+    }
+```
 
-### Selector Style Mismatch
+Example diagnostic:
+
+```json
+{
+  "severity": 2,
+  "message": "Numeric selector for `lv` is missing category `zero`"
+}
+```
+
+Locale note:
+
+- category validation is locale-specific
+- the origin file does not need to use the same category set
+
+### Selector style mismatch
 
 Disabled by default.
 
-Example messages:
+Example source:
 
-```text
-Selector style is `whole`, but workspace prefers `prefix`
-Selector style is `suffix`, but workspace prefers `prefix`
-Selector style is `prefix`, but workspace prefers `whole`
+```ftl
+whole-coins = { $coins ->
+    [one] Tienes { $coins } moneda.
+   *[other] Tienes { $coins } monedas.
+}
 ```
 
-Current behavior:
+With preference:
 
-- both top-level and local selector occurrences can warn
-- file config can override client style preference and style-warning enablement
+```toml
+selector_style = "prefix"
+warn_on_selector_style_mismatch = true
+```
 
-### Diagnostic Clearing
+Example diagnostic:
 
-Current behavior:
+```json
+{
+  "severity": 2,
+  "message": "Selector style is `whole`, but workspace prefers `prefix`"
+}
+```
+
+### Clearing
 
 - fixed parse errors clear on save
 - removed `LSP-COPY` markers clear on save
 - `didClose` clears document diagnostics immediately
 - index-driven counterpart warnings clear after background refresh
 
-## Index And Refresh Behavior
-
-Current indexed behavior:
+## Index And Refresh
 
 - initial workspace index build runs after `initialized`
 - if the client supports work-done progress, index build emits `$/progress`
@@ -909,7 +996,7 @@ Progress token:
 fluent-lsp-index
 ```
 
-Current request paths covered by live-index tests:
+Affected request paths:
 
 - definition
 - references
@@ -940,7 +1027,7 @@ count=<count>
 command=<command> ok=true
 ```
 
-Current traced operations covered by tests:
+Operations:
 
 - `workspace/index`
 - `textDocument/definition`
@@ -951,13 +1038,10 @@ Current traced operations covered by tests:
 - `textDocument/codeLens`
 - `workspace/executeCommand`
 
-## Weaker Guarantees
+## Underspecified Areas
 
-These areas are less firmly nailed down than the rest of the reference:
-
-- `window/showMessage` fallback for selector combinations is much less exercised than the `window/showDocument` path
-- `workspace/executeCommand` error paths are thin, especially malformed arguments and client refusal cases
-- completion payloads are clearer than editor-side completion UX and insertion behavior
-- snippet placeholder behavior is clearer at the edit payload level than at the editor interaction level
-- config loading is less firm for multiple `file_masks`, alternate config filename `.fluent-lsp.toml`, and multi-root initialization
-- background refresh is less firmly characterized under heavy churn or large batches
+- `window/showMessage` fallback for selector combinations is less clearly defined than the `window/showDocument` path
+- malformed `workspace/executeCommand` argument handling is less clearly defined than the success path
+- completion payload behavior is clearer than editor-side insertion behavior
+- snippet payload shape is clearer than placeholder navigation behavior
+- multi-mask config, alternate config filename `.fluent-lsp.toml`, and multi-root initialization are less clearly defined than the single-root locale-tree layout
