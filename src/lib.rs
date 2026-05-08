@@ -2657,9 +2657,7 @@ fn build_selector_code_action_context<'a>(
         return None;
     }
 
-    let key = current_key
-        .map(str::to_string)
-        .or_else(|| extract_definition_key(source, path, position))?;
+    let key = current_key?.to_string();
     let position_byte_index = position_to_byte_index(source, position)?;
     let resource = parse_fluent_resource(source);
     let definition_span = find_fluent_definition_span(&resource, &key)?;
