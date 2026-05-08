@@ -820,7 +820,8 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "ls-types"
-version = "0.0.3"
+version = "0.0.6"
+source = "git+https://github.com/juliancoffeelab/ls-types?branch=snippet-edit-support#97e6bf69fa8a48e1ffa1f834d2fc4311c55507eb"
 dependencies = [
  "bitflags",
  "fluent-uri",
