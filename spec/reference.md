@@ -66,8 +66,11 @@ Not provided:
 
 Behavior:
 
-- translation file -> matching origin entry or attribute
-- only file URIs are accepted
+- works only from translation files
+- resolves to the matching origin entry or attribute definition
+- opens one origin file location
+- non-file URIs are rejected
+- files outside the configured Fluent workspace are rejected
 
 Origin source:
 
@@ -159,7 +162,60 @@ menu-save =
     .label = Save
 ```
 
-Error example:
+Edge cases:
+
+Origin source:
+
+```ftl
+welcome-title = Welcome
+```
+
+Cursor on:
+
+```ftl
+welcome-title = Welcome
+```
+
+`Go to Definition` does nothing.
+
+Origin source:
+
+```ftl
+welcome-title = Welcome
+```
+
+Translation source:
+
+```ftl
+welcome-title = Bienvenido
+local-only = Solo local
+```
+
+Cursor on:
+
+```ftl
+local-only = Solo local
+```
+
+`Go to Definition` does nothing.
+
+Translation source:
+
+```ftl
+orphan-title = Huerfano
+```
+
+There is no matching origin counterpart file.
+
+Cursor on:
+
+```ftl
+orphan-title = Huerfano
+```
+
+`Go to Definition` does nothing.
+
+Error example for a non-file URI:
 
 ```json
 {
@@ -168,12 +224,23 @@ Error example:
 }
 ```
 
+Error example for a file outside the configured workspace:
+
+```json
+{
+  "code": -32602,
+  "message": "document is outside the configured Fluent workspace: /tmp/outside.ftl"
+}
+```
+
 ## `textDocument/references`
 
 Behavior:
 
-- origin file -> matching entries or attributes in translations
+- works only from origin files
+- returns translation entry or attribute definitions
 - results use the indexed workspace model
+- with `includeDeclaration = false`, the origin definition is not included
 
 Origin source:
 
@@ -261,6 +328,48 @@ menu-save =
     .label = Saglabat
 ```
 
+Edge cases:
+
+Origin source:
+
+```ftl
+orphan-title = Welcome
+```
+
+Translation sources:
+
+```ftl
+welcome-title = Bienvenido
+```
+
+```ftl
+welcome-title = Bienvenue
+```
+
+Cursor on:
+
+```ftl
+orphan-title = Welcome
+```
+
+`Find References` shows no locations.
+
+Translation source:
+
+```ftl
+welcome-title = Bienvenido
+```
+
+Cursor on:
+
+```ftl
+welcome-title = Bienvenido
+```
+
+`Find References` does nothing.
+
+The same invalid-params errors as `textDocument/definition` apply to non-file URIs and files outside the configured workspace.
+
 Index-backed behavior:
 
 - dirty in-memory translation edits update references immediately
@@ -274,7 +383,7 @@ Hover has three forms.
 
 ### Key hover
 
-Key hover returns comment blocks when comments exist.
+Key hover returns comment blocks when comments exist. Key hover does not fall back to body preview.
 
 Origin source:
 
@@ -310,9 +419,75 @@ Hover payload:
 
 Rules:
 
-- origin key hover returns local comments only
+- origin key hover returns origin comments only
 - translation key hover returns origin comments first, local comments second
-- uncommented origin keys return no hover
+- if only origin comments exist, hover shows one origin comment block
+- if only local comments exist, hover shows one local comment block
+- if neither side has comments, hover returns no hover
+
+Origin source:
+
+```ftl
+# Comment-only hover coverage
+# Keep this translator guidance visible on key hover
+commented-preview = Preview text for hover comments.
+```
+
+Local source:
+
+```ftl
+commented-preview = Texto de vista previa para comentarios de hover.
+```
+
+Hover payload:
+
+````text
+```ftl
+# Comment-only hover coverage
+# Keep this translator guidance visible on key hover
+```
+````
+
+Origin source:
+
+```ftl
+local-note = Preview text for hover comments.
+```
+
+Local source:
+
+```ftl
+# Cobertura de hover con comentarios
+# Mantener visible esta nota para traduccion en el hover de clave
+local-note = Texto de vista previa para comentarios de hover.
+```
+
+Hover payload:
+
+````text
+```ftl
+# Cobertura de hover con comentarios
+# Mantener visible esta nota para traduccion en el hover de clave
+```
+````
+
+Origin source:
+
+```ftl
+plain-note = Preview text for hover comments.
+```
+
+Local source:
+
+```ftl
+plain-note = Texto de vista previa para comentarios de hover.
+```
+
+Hover result:
+
+```text
+no hover
+```
 
 ### Body hover
 
@@ -351,6 +526,36 @@ menu-save =
     .tooltip = Save changes before closing the window
 ```
 
+Hover payload in an origin file:
+
+````text
+```ftl
+Save changes before closing the window
+```
+````
+
+Missing origin message example.
+
+Origin source:
+
+```ftl
+welcome-body = Open the latest { -brand-name } build and pick up where you left off.
+```
+
+Local source:
+
+```ftl
+local-only = Texto solo local.
+```
+
+Hover payload:
+
+````text
+```ftl
+Texto solo local.
+```
+````
+
 Empty local value example.
 
 Origin source:
@@ -378,6 +583,13 @@ English empty preview fallback.
 <empty>
 ```
 ````
+
+Rules:
+
+- origin-file body hover shows one origin preview block
+- translation-file body hover shows origin first and local second when both exist
+- if the local message exists but the origin message does not, hover shows one local preview block
+- if the local message renders to an empty string, hover shows `<empty>`
 
 ### Selector hover
 
@@ -478,11 +690,48 @@ Resumen para elle misme con ningun paquete listo.
 ```
 ````
 
+Origin without selectors example.
+
+Origin source:
+
+```ftl
+download-state = Download ready.
+```
+
+Local source:
+
+```ftl
+download-state =
+    { $count ->
+        [one] Descarga lista.
+       *[other] Descargas listas.
+    }
+```
+
+Hover payload for the `[one]` branch:
+
+````text
+```ftl
+Download ready.
+```
+
+---
+
+`$count=one`
+
+```ftl
+Descarga lista.
+```
+````
+
 Rules:
 
 - origin block is first
 - local block is second
 - shared selector variables are matched by name
+- local-only selectors do not change origin preview rendering
+- origin-only selectors fall back to their default branch and are shown as `*`
+- if the origin message has no selectors, the origin block has no selector assignment header
 - explicit numeric keys such as `0` and `1` are preserved
 - plural-category names such as `zero` and `one` are preserved
 
