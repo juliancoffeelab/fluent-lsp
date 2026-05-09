@@ -530,7 +530,7 @@ no hover
 
 ### Body hover
 
-Body hover returns rendered preview text.
+Body hover returns selected preview text.
 
 #### Two-block message hover
 
@@ -636,7 +636,7 @@ English empty preview fallback.
 
 ### Selector hover
 
-Selector hover prepends resolved selector values, then shows origin and local rendered preview blocks.
+Selector hover prepends resolved selector values, then shows origin and local selected preview blocks.
 
 #### Matching selector names
 
@@ -773,12 +773,14 @@ Descarga lista.
 
 - origin block is first
 - local block is second
+- body text in each block preserves unresolved terms, variables, and other inline Fluent references
 - shared selector variables are matched by name
 - local-only selectors do not change origin preview rendering
-- origin-only selectors fall back to their default branch and are shown as `*`
+- origin-only selectors use their default preview branch and are shown as `*`
 - if the origin message has no selectors, the origin block has no selector assignment header
 - explicit numeric keys such as `0` and `1` are preserved
 - plural-category names such as `zero` and `one` are preserved
+- selector headers preserve the chosen selector key
 
 ## `textDocument/completion`
 
@@ -1343,12 +1345,13 @@ fluent-lsp.showSelectorCombinations
 With `window/showDocument` support, the server opens a temp Markdown document containing sections such as:
 
 ```text
-Language: `es`
+Current language: `es`
 Source language: `en`
+Logical file: `app`
 Source text:
-Local text:
+Current text:
 Source language combinations:
-Local language combinations:
+Current language combinations:
 ```
 
 #### Document example
@@ -1384,10 +1387,11 @@ install-hint =
 #### Markdown payload excerpt
 
 ````text
-# Selector Combinations: `install-hint`
+# Selector combinations for `install-hint`
 
-Language: `es`
+Current language: `es`
 Source language: `en`
+Logical file: `app`
 
 ## Source language combinations
 
@@ -1396,17 +1400,13 @@ Source language: `en`
 Copy the download link for their account on { $count } devices now.
 ```
 
-## Local language combinations
+## Current language combinations
 
 `$gender=other`, `$count=other`
 ```ftl
 Copia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.
 ```
 ````
-
-### `window/showMessage` Fallback
-
-Without `window/showDocument` support, the server falls back to `window/showMessage`.
 
 ## Diagnostics
 
@@ -1683,7 +1683,6 @@ Operations:
 
 ## Underspecified Areas
 
-- `window/showMessage` fallback for selector combinations is less clearly defined than the `window/showDocument` path
 - malformed `workspace/executeCommand` argument handling is less clearly defined than the success path
 - completion payload behavior is clearer than editor-side insertion behavior
 - snippet payload shape is clearer than placeholder navigation behavior

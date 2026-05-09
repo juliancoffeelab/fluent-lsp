@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::cell::RefCell;
 use std::ops::Range as ByteRange;
 use std::path::{Path, PathBuf};
@@ -120,8 +120,10 @@ pub struct WorkspaceConfig {
     warn_on_selector_style_mismatch: Option<bool>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ClientConfig {
+    origin_language: Option<String>,
+    file_masks: Option<Vec<String>>,
     selector_style: Option<SelectorStyle>,
     error_on_unsupported_plural_categories: Option<bool>,
     warn_on_missing_plural_categories: Option<bool>,
@@ -151,11 +153,17 @@ struct FileMatch {
 
 impl WorkspaceConfig {
     pub fn load(root_dir: PathBuf) -> Result<Self> {
+        Self::load_with_client(root_dir, &ClientConfig::default())
+    }
+
+    fn load_with_client(root_dir: PathBuf, client_config: &ClientConfig) -> Result<Self> {
         let config_path = CONFIG_FILE_NAMES
             .iter()
             .map(|name| root_dir.join(name))
-            .find(|path| path.is_file())
-            .with_context(|| {
+            .find(|path| path.is_file());
+
+        let Some(config_path) = config_path else {
+            return Self::from_client_config(root_dir, client_config).with_context(|| {
                 format!(
                     "missing config file; tried {}",
                     CONFIG_FILE_NAMES
@@ -164,12 +172,17 @@ impl WorkspaceConfig {
                         .collect::<Vec<_>>()
                         .join(", ")
                 )
-            })?;
+            });
+        };
 
         let raw = std::fs::read_to_string(&config_path)
             .with_context(|| format!("failed to read {}", config_path.display()))?;
         let config: Config = toml::from_str(&raw)
             .with_context(|| format!("failed to parse {}", config_path.display()))?;
+        Self::from_config(root_dir, config)
+    }
+
+    fn from_config(root_dir: PathBuf, config: Config) -> Result<Self> {
         let origin_language = config.origin_language.trim().to_string();
         if origin_language.is_empty() {
             anyhow::bail!("origin_language must not be empty");
@@ -190,6 +203,37 @@ impl WorkspaceConfig {
             error_on_unsupported_plural_categories: config.error_on_unsupported_plural_categories,
             warn_on_missing_plural_categories: config.warn_on_missing_plural_categories,
             warn_on_selector_style_mismatch: config.warn_on_selector_style_mismatch,
+        })
+    }
+
+    fn from_client_config(root_dir: PathBuf, client_config: &ClientConfig) -> Result<Self> {
+        let origin_language = client_config
+            .origin_language
+            .as_deref()
+            .map(str::trim)
+            .filter(|language| !language.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("origin_language must not be empty"))?
+            .to_string();
+        let file_masks = compile_file_masks(
+            client_config
+                .file_masks
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("client settings must include file_masks"))?,
+        )?;
+        if file_masks.is_empty() {
+            anyhow::bail!(
+                "file_masks must include at least one template containing {{lang}} and {{filepath}}"
+            );
+        }
+
+        Ok(Self {
+            root_dir,
+            origin_language,
+            file_masks,
+            selector_style: None,
+            error_on_unsupported_plural_categories: None,
+            warn_on_missing_plural_categories: None,
+            warn_on_selector_style_mismatch: None,
         })
     }
 
@@ -1044,7 +1088,9 @@ impl IndexActor {
             .effective_diagnostic_config(self.client_config);
         let mut diagnostics =
             collect_document_diagnostics(&file.source, &file.file_match.language, settings);
-        diagnostics.extend(self.indexed_translation_diagnostics_for(path));
+        if diagnostics.is_empty() {
+            diagnostics.extend(self.indexed_translation_diagnostics_for(path));
+        }
         Some((uri, diagnostics))
     }
 
@@ -1184,19 +1230,17 @@ impl IndexActor {
         let source_preview = if !self.workspace.is_origin_file(path)
             && !range_contains_position(&hover_range, position)
         {
-            let origin_file = self
-                .index
+            self.index
                 .origin_for(&self.workspace, file)
-                .ok_or_else(|| {
-                    internal_error_with_message(format!(
-                        "failed to resolve origin counterpart for {}",
-                        path.display()
-                    ))
-                })?;
-            let origin_resource = parse_fluent_resource(&origin_file.source);
-            find_fluent_pattern(&origin_resource, key).map(|origin_pattern| {
-                render_message_preview(origin_pattern, Some(&selector_overrides))
-            })
+                .and_then(|origin_file| {
+                    origin_file.keys.contains(key).then_some(origin_file)
+                })
+                .map(|origin_file| {
+                    let origin_resource = parse_fluent_resource(&origin_file.source);
+                    let origin_pattern = find_fluent_pattern(&origin_resource, key)?;
+                    Some(render_message_preview(origin_pattern, Some(&selector_overrides)))
+                })
+                .flatten()
         } else {
             None
         };
@@ -1223,7 +1267,7 @@ impl IndexActor {
             return Ok(Some(CompletionResponse::Array(Vec::new())));
         };
         Ok(Some(CompletionResponse::Array(
-            indexed_completion_items_for_site(origin_file, &site),
+            indexed_completion_items_for_site(origin_file, file, &site),
         )))
     }
 
@@ -1553,7 +1597,7 @@ impl Backend {
                 workspace,
                 state.open_documents.clone(),
                 state.supports_work_done_progress,
-                state.client_config,
+                state.client_config.clone(),
             )
         };
 
@@ -1667,7 +1711,12 @@ impl Backend {
             let Some(file_match) = workspace.file_match(path.as_ref()) else {
                 return;
             };
-            (workspace, state.client_config, source, file_match.language)
+            (
+                workspace,
+                state.client_config.clone(),
+                source,
+                file_match.language,
+            )
         };
 
         let settings = workspace.effective_diagnostic_config(client_config);
@@ -1679,7 +1728,9 @@ impl Backend {
                 .unwrap_or_default(),
             None => Vec::new(),
         };
-        diagnostics.extend(indexed_translation);
+        if diagnostics.is_empty() {
+            diagnostics.extend(indexed_translation);
+        }
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, None)
             .await;
@@ -2018,11 +2069,7 @@ impl Backend {
             });
         }
 
-        if lenses.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(lenses))
-        }
+        Ok(Some(lenses))
     }
 
     async fn execute_selector_combinations_command(
@@ -2137,6 +2184,18 @@ impl Backend {
                 )
                 .await;
         };
+        let Some(file_match) = workspace.file_match(&path) else {
+            return self
+                .respond_to_clicked_command_with_error(
+                    internal_error_with_message(format!(
+                        "failed to resolve file metadata for {}",
+                        path.display()
+                    )),
+                    MessageType::ERROR,
+                    format!("Failed to resolve file metadata for {}", path.display()),
+                )
+                .await;
+        };
 
         let max_items = if supports_show_document {
             usize::MAX
@@ -2159,18 +2218,6 @@ impl Backend {
         };
 
         if supports_show_document {
-            let Some(file_match) = workspace.file_match(&path) else {
-                return self
-                    .respond_to_clicked_command_with_error(
-                        internal_error_with_message(format!(
-                            "failed to resolve file metadata for {}",
-                            path.display()
-                        )),
-                        MessageType::ERROR,
-                        format!("Failed to resolve file metadata for {}", path.display()),
-                    )
-                    .await;
-            };
             let origin_source = if workspace.is_origin_file(&path) {
                 source.clone()
             } else {
@@ -2267,14 +2314,16 @@ impl LanguageServer for Backend {
                     .and_then(|uri| uri.to_file_path().map(|path| path.into_owned()))
             });
 
+        let client_config = ClientConfig::default();
         let workspace = root_dir
             .as_ref()
-            .and_then(|root| WorkspaceConfig::load(root.clone()).ok());
+            .and_then(|root| WorkspaceConfig::load_with_client(root.clone(), &client_config).ok());
 
         {
             let mut state = self.state.write().await;
             state.root_dir = root_dir;
             state.workspace = workspace;
+            state.client_config = client_config;
             state.supports_show_document = params
                 .capabilities
                 .window
@@ -2434,9 +2483,9 @@ impl LanguageServer for Backend {
         };
         {
             let mut state = self.state.write().await;
-            state.client_config = client_config;
+            state.client_config = client_config.clone();
             if let Some(root_dir) = state.root_dir.clone() {
-                state.workspace = WorkspaceConfig::load(root_dir).ok();
+                state.workspace = WorkspaceConfig::load_with_client(root_dir, &client_config).ok();
                 state.index_tx = None;
                 if let Some(refresh_task) = state.refresh_task.take() {
                     refresh_task.abort();
@@ -3098,6 +3147,11 @@ fn code_lens_title(total_count: usize) -> String {
 fn parse_client_config(settings: &Value) -> ClientConfig {
     if let Some(object) = settings.as_object() {
         let direct = ClientConfig {
+            origin_language: object
+                .get("origin_language")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            file_masks: object.get("file_masks").and_then(string_array_from_json),
             selector_style: object
                 .get("selector_style")
                 .and_then(selector_style_from_json),
@@ -3118,6 +3172,11 @@ fn parse_client_config(settings: &Value) -> ClientConfig {
         for key in ["fluent-lsp", "fluent_lsp"] {
             if let Some(nested) = object.get(key).and_then(Value::as_object) {
                 let nested = ClientConfig {
+                    origin_language: nested
+                        .get("origin_language")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    file_masks: nested.get("file_masks").and_then(string_array_from_json),
                     selector_style: nested
                         .get("selector_style")
                         .and_then(selector_style_from_json),
@@ -3143,6 +3202,11 @@ fn parse_client_config(settings: &Value) -> ClientConfig {
 
 fn selector_style_from_json(value: &Value) -> Option<SelectorStyle> {
     serde_json::from_value(value.clone()).ok()
+}
+
+fn string_array_from_json(value: &Value) -> Option<Vec<String>> {
+    let items = value.as_array()?;
+    items.iter().map(|item| item.as_str().map(ToString::to_string)).collect()
 }
 
 fn collect_document_diagnostics(
@@ -3224,7 +3288,18 @@ fn collect_document_diagnostics(
             diagnostic.message.clone(),
         )
     });
+    dedupe_selector_style_diagnostics(&mut diagnostics);
     diagnostics
+}
+
+fn dedupe_selector_style_diagnostics(diagnostics: &mut Vec<Diagnostic>) {
+    let mut seen_messages = FastSet::default();
+    diagnostics.retain(|diagnostic| {
+        if !diagnostic.message.starts_with("Selector style is `") {
+            return true;
+        }
+        seen_messages.insert(diagnostic.message.clone())
+    });
 }
 
 fn local_only_file_diagnostic(file: &IndexedFile) -> Diagnostic {
@@ -3679,7 +3754,8 @@ fn find_generate_selector_target(
     path: &Path,
     position: Position,
 ) -> Option<GenerateSelectorTarget> {
-    let context = build_selector_code_action_context(source, path, position, None)?;
+    let current_key = indexed_fluent_key_at_position(source, position);
+    let context = build_selector_code_action_context(source, path, position, current_key.as_deref())?;
     find_generate_selector_target_in_context(source, &context)
 }
 
@@ -3923,7 +3999,8 @@ fn find_selector_rewrite_target(
     path: &Path,
     position: Position,
 ) -> Option<(ByteRange<usize>, Vec<SelectorRewriteAction>)> {
-    let context = build_selector_code_action_context(source, path, position, None)?;
+    let current_key = indexed_fluent_key_at_position(source, position);
+    let context = build_selector_code_action_context(source, path, position, current_key.as_deref())?;
     find_selector_rewrite_target_in_context(source, &context)
 }
 
@@ -5526,13 +5603,14 @@ fn completion_items_for_site(origin_source: &str, site: &CompletionSite) -> Vec<
 
 fn indexed_completion_items_for_site(
     origin_file: &IndexedFile,
+    local_file: &IndexedFile,
     site: &CompletionSite,
 ) -> Vec<CompletionItem> {
     match site {
         CompletionSite::MessageKey { prefix } => origin_file
             .ordered_message_keys
             .iter()
-            .filter(|key| key.starts_with(prefix))
+            .filter(|key| key.starts_with(prefix) && !local_file.keys.contains(key.as_str()))
             .enumerate()
             .map(|(index, key)| {
                 indexed_completion_item(
@@ -5553,7 +5631,12 @@ fn indexed_completion_items_for_site(
             .into_iter()
             .flatten()
             .map(|attribute| format!(".{attribute}"))
-            .filter(|attribute| attribute.starts_with(prefix))
+            .filter(|attribute| {
+                attribute.starts_with(prefix)
+                    && !local_file
+                        .keys
+                        .contains(format!("{message_key}{attribute}").as_str())
+            })
             .enumerate()
             .map(|(index, key)| {
                 indexed_completion_item(
@@ -5803,43 +5886,26 @@ fn build_missing_entries_workspace_edit(
     origin_source: Option<&str>,
     mode: MissingEntryRenderMode,
 ) -> Option<WorkspaceEdit> {
-    let mut insertions = BTreeMap::<usize, String>::new();
+    let mut edits = Vec::<TextEdit>::new();
     for patch in &missing.missing_attributes {
-        let insertion = render_missing_attribute_patch(origin_source.unwrap_or(""), patch, mode);
-        let offset = message_block_insert_offset(source, &patch.message_key)?;
-        insertions
-            .entry(offset)
-            .and_modify(|existing| existing.push_str(&insertion))
-            .or_insert(insertion);
-        if mode == MissingEntryRenderMode::CopySource {
-            let marker_insertion = render_missing_attribute_markers(patch);
-            let marker_offset = message_block_start_offset(source, &patch.message_key)?;
-            insertions
-                .entry(marker_offset)
-                .and_modify(|existing| existing.push_str(&marker_insertion))
-                .or_insert(marker_insertion);
-        }
+        edits.push(build_missing_attribute_patch_edit(
+            source,
+            patch,
+            origin_source.unwrap_or(""),
+            mode,
+        )?);
     }
 
     if !missing.missing_messages.is_empty() {
         let insertion =
             render_missing_messages_appendix(source, origin_source, &missing.missing_messages, mode);
-        insertions
-            .entry(source.len())
-            .and_modify(|existing| existing.push_str(&insertion))
-            .or_insert(insertion);
+        let range = byte_range_to_lsp_range(source, source.len()..source.len())?;
+        edits.push(TextEdit::new(range, insertion));
     }
 
-    if insertions.is_empty() {
+    if edits.is_empty() {
         return None;
     }
-    let edits = insertions
-        .into_iter()
-        .map(|(offset, insertion)| {
-            let range = byte_range_to_lsp_range(source, offset..offset)?;
-            Some(TextEdit::new(range, insertion))
-        })
-        .collect::<Option<Vec<_>>>()?;
     let mut changes = HashMap::new();
     changes.insert(uri.clone(), edits);
     Some(WorkspaceEdit {
@@ -5847,6 +5913,24 @@ fn build_missing_entries_workspace_edit(
         document_changes: None,
         change_annotations: None,
     })
+}
+
+fn build_missing_attribute_patch_edit(
+    source: &str,
+    patch: &MissingAttributePatch,
+    origin_source: &str,
+    mode: MissingEntryRenderMode,
+) -> Option<TextEdit> {
+    let replacement =
+        render_missing_attribute_patched_message(source, patch, origin_source, mode)?;
+    let existing = render_fluent_source(source, &patch.message_key)?.source;
+    let definition = find_fluent_definition(source, &patch.message_key)?;
+    let start_guess = line_start_offset(source, usize::try_from(definition.start.line).ok()?)?;
+    let relative_start = source.get(start_guess..)?.find(&existing)?;
+    let start = start_guess + relative_start;
+    let end = start + existing.len();
+    let range = byte_range_to_lsp_range(source, start..end)?;
+    Some(TextEdit::new(range, replacement))
 }
 
 fn build_single_message_copy_code_action(
@@ -6098,16 +6182,44 @@ fn render_missing_message(
             rendered
         }
         MissingEntryRenderMode::CopySource => {
-            let mut rendered = format!(
-                "{LSP_COPY_MARKER}\n{}",
-                &origin_source[message.source_span.clone()]
-            );
+            let mut rendered = String::new();
+            if message.attributes.is_empty() {
+                rendered.push_str(LSP_COPY_MARKER);
+                rendered.push('\n');
+            } else {
+                for attribute in &message.attributes {
+                    rendered.push_str(&render_attribute_copy_marker(&attribute.key));
+                    rendered.push('\n');
+                }
+            }
+            rendered.push_str(&origin_source[message.source_span.clone()]);
             if !rendered.ends_with('\n') {
                 rendered.push('\n');
             }
             rendered
         }
     }
+}
+
+fn render_missing_attribute_patched_message(
+    source: &str,
+    patch: &MissingAttributePatch,
+    origin_source: &str,
+    mode: MissingEntryRenderMode,
+) -> Option<String> {
+    let mut rendered = String::new();
+    if mode == MissingEntryRenderMode::CopySource {
+        rendered.push_str(&render_missing_attribute_markers(patch));
+    }
+    let existing = render_fluent_source(source, &patch.message_key)?.source;
+    let preserve_blank_separator = existing.ends_with("\n\n");
+    rendered.push_str(existing.trim_end_matches('\n'));
+    rendered.push('\n');
+    rendered.push_str(&render_missing_attribute_patch(origin_source, patch, mode));
+    if preserve_blank_separator {
+        rendered.push('\n');
+    }
+    Some(rendered)
 }
 
 fn render_missing_attribute_patch(
@@ -6126,7 +6238,10 @@ fn render_missing_attribute_patch(
             .iter()
             .map(|attribute| {
                 let mut rendered = String::new();
-                for line in origin_source[attribute.source_span.clone()].lines() {
+                let source = strip_attribute_container_indentation(
+                    &origin_source[attribute.source_span.clone()],
+                );
+                for line in source.trim_end_matches('\n').lines() {
                     rendered.push_str("    ");
                     rendered.push_str(line);
                     rendered.push('\n');
@@ -6320,18 +6435,21 @@ fn find_fluent_block_line_range_with_index(
 
 fn block_line_range_from_definition_with_index(
     source: &str,
-    source_index: &SourceLineIndex,
+    _source_index: &SourceLineIndex,
     definition: &Range,
     is_attribute: bool,
 ) -> Option<(usize, usize)> {
     let start_line = usize::try_from(definition.start.line).ok()?;
-    let start_indent = leading_spaces(source_index.line_text(source, start_line)?);
+    let lines = source.lines().collect::<Vec<_>>();
+    let start_line_text = *lines.get(start_line)?;
+    let start_indent = leading_spaces(start_line_text);
     let mut end_line = start_line;
 
-    for index in start_line + 1..source_index.line_count() {
-        let line = source_index.line_text(source, index)?;
+    for index in start_line + 1..lines.len() {
+        let line = *lines.get(index)?;
         let trimmed = line.trim_start();
         if trimmed.is_empty() {
+            end_line = index;
             continue;
         }
 
@@ -6720,15 +6838,12 @@ impl SourceLineIndex {
             return None;
         }
 
-        let line = self.line_starts.partition_point(|&start| start <= target) - 1;
-        let line_start = self.line_starts[line];
+        let prefix = source.get(..target)?;
+        let line = prefix.bytes().filter(|byte| *byte == b'\n').count();
+        let line_start = prefix.rfind('\n').map(|index| index + 1).unwrap_or(0);
         let mut character = 0u32;
         for ch in source.get(line_start..target)?.chars() {
-            if ch == '\n' {
-                character = 0;
-            } else {
-                character += ch.len_utf16() as u32;
-            }
+            character += ch.len_utf16() as u32;
         }
         Some(Position::new(u32::try_from(line).ok()?, character))
     }
@@ -7215,11 +7330,9 @@ mod tests {
             panic!("expected markdown completion documentation");
         };
         assert_eq!(markup.kind, MarkupKind::Markdown);
-        assert!(markup.value.contains("# Comment-only hover coverage"));
-        assert!(
-            markup
-                .value
-                .contains("commented-preview = Preview text for hover comments.")
+        assert_eq!(
+            markup.value,
+            "```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```\n\n---\n\n```ftl\ncommented-preview = Preview text for hover comments.\n```"
         );
     }
 
@@ -7432,7 +7545,13 @@ download-action =\n\
         .unwrap();
         assert_eq!(
             rendered,
-            "Current language combinations:\n`$gender=female`, `$count=one`\n```ftl\nCopy the download link for her account on { $count } device now.\n```\n`$gender=female`, `$count=other`\n```ftl\nCopy the download link for her account on { $count } devices now.\n```\n`$gender=male`, `$count=one`\n```ftl\nCopy the download link for his account on { $count } device now.\n```\n`...`\n3 more"
+            expected_selector_combinations_section(
+                "Current language combinations:",
+                source,
+                "en",
+                "install-hint",
+                3,
+            )
         );
     }
 
@@ -7447,14 +7566,16 @@ download-action =\n\
             usize::MAX,
         )
         .unwrap();
-        assert!(rendered.contains("`$gender=female`, `$count=one`"));
-        assert!(rendered.contains(
-            "```ftl\nInstall the recommended build for her account on { $count } device now.\n```"
-        ));
-        assert!(rendered.contains("`$gender=other`, `$count=other`"));
-        assert!(rendered.contains(
-            "```ftl\nInstall the recommended build for their account on { $count } devices now.\n```"
-        ));
+        assert_eq!(
+            rendered,
+            expected_selector_combinations_section(
+                "Current language combinations:",
+                source,
+                "en",
+                "download-action.tooltip",
+                usize::MAX,
+            )
+        );
     }
 
     #[test]
@@ -7468,11 +7589,15 @@ download-action =\n\
             10,
         )
         .unwrap();
-        assert_eq!(rendered.matches("\n```ftl\n").count(), 10);
-        assert!(rendered.contains("`...`\n2 more"));
-        assert!(
-            !rendered
-                .contains("```ftl\nSummary for other people on mobile with { $count } items.\n```")
+        assert_eq!(
+            rendered,
+            expected_selector_combinations_section(
+                "Current language combinations:",
+                source,
+                "en",
+                "audience-rollout",
+                10,
+            )
         );
     }
 
@@ -7623,6 +7748,11 @@ download-action =\n\
         let resource = FluentResource::try_new(source.to_string()).unwrap_or_else(|(_, errors)| {
             panic!("failed to build FluentResource with {errors:?}\n{source}")
         });
+        let parsed = parser::parse(source).unwrap_or_else(|(_, errors)| {
+            panic!("failed to parse Fluent source with {errors:?}\n{source}")
+        });
+        find_runtime_pattern(&parsed, key)
+            .unwrap_or_else(|| panic!("missing parsed pattern `{key}` in runtime source"));
         let locale: LanguageIdentifier = locale.parse().expect("valid language identifier");
         let mut bundle = FluentBundle::new(vec![locale]);
         bundle.set_use_isolating(false);
@@ -7656,6 +7786,39 @@ download-action =\n\
         rendered
     }
 
+    fn find_runtime_pattern<'a>(
+        resource: &'a fluent_syntax::ast::Resource<&'a str>,
+        key: &str,
+    ) -> Option<&'a fluent_syntax::ast::Pattern<&'a str>> {
+        let (entry_key, attribute_key) = split_runtime_key(key);
+        resource.body.iter().find_map(|entry| match entry {
+            fluent_syntax::ast::Entry::Message(message) if entry_key == message.id.name => {
+                if let Some(attribute_key) = attribute_key {
+                    message
+                        .attributes
+                        .iter()
+                        .find(|attribute| attribute.id.name == attribute_key)
+                        .map(|attribute| &attribute.value)
+                } else {
+                    message.value.as_ref()
+                }
+            }
+            fluent_syntax::ast::Entry::Term(term)
+                if entry_key == format!("-{}", term.id.name) =>
+            {
+                if let Some(attribute_key) = attribute_key {
+                    term.attributes
+                        .iter()
+                        .find(|attribute| attribute.id.name == attribute_key)
+                        .map(|attribute| &attribute.value)
+                } else {
+                    Some(&term.value)
+                }
+            }
+            _ => None,
+        })
+    }
+
     fn split_runtime_key(key: &str) -> (&str, Option<&str>) {
         match key.rsplit_once('.') {
             Some((message_key, attribute_key)) if !attribute_key.is_empty() => {
@@ -7663,6 +7826,50 @@ download-action =\n\
             }
             _ => (key, None),
         }
+    }
+
+    fn preview_message_text_with_overrides(
+        source: &str,
+        key: &str,
+        overrides: &[(&str, &str)],
+    ) -> String {
+        let override_map = overrides
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+            .collect::<HashMap<_, _>>();
+        render_fluent_preview_text(source, key, Some(&override_map))
+            .unwrap_or_else(|| panic!("missing preview for `{key}`"))
+    }
+
+    fn expected_selector_combinations_section(
+        heading: &str,
+        source: &str,
+        _locale: &str,
+        key: &str,
+        max_items: usize,
+    ) -> String {
+        let resource = parse_fluent_resource(source);
+        let pattern = find_fluent_pattern(&resource, key)
+            .unwrap_or_else(|| panic!("missing pattern `{key}` in selector source"));
+        let expansion = expand_pattern(pattern, max_items);
+        let rendered_count = expansion.items.len();
+        let mut lines = vec![heading.to_string()];
+        for item in expansion.items {
+            let overrides = item
+                .selectors
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str()))
+                .collect::<Vec<_>>();
+            lines.push(render_selector_assignments(&item.selectors));
+            lines.push(render_ftl_block(&preview_message_text_with_overrides(
+                source, key, &overrides,
+            )));
+        }
+        let omitted = expansion.total_count.saturating_sub(rendered_count);
+        if omitted > 0 {
+            lines.push(format!("`...`\n{omitted} more"));
+        }
+        lines.join("\n")
     }
 
     #[test]
@@ -7884,11 +8091,9 @@ download-action =\n\
             Some(&source_render),
             "Current language combinations:",
         );
-        assert!(!rendered.contains("Source language:"));
-        assert!(!rendered.contains("Source language combinations:"));
         assert_eq!(
-            rendered.matches("Current language combinations:").count(),
-            1
+            rendered,
+            "# Selector combinations for `install-hint`\n\nCurrent language: `en`\n\nLogical file: `app`\n\nCurrent text:\n\n```ftl\ninstall-hint = Example\n```\n\nCurrent language combinations:"
         );
     }
 
