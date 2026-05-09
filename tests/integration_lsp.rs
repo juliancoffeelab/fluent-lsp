@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use fluent_bundle::{FluentArgs, FluentBundle, FluentResource, FluentValue};
+use fluent_bundle::{FluentBundle, FluentResource};
+use fluent_lsp::render_fluent_preview_text;
 use fluent_syntax::parser;
 use serde_json::{Value, json};
 use std::convert::TryFrom;
@@ -39,7 +40,9 @@ impl LspProcess {
 
         Self {
             stdin: child.stdin.take().expect("missing stdin"),
-            stdout: BufReader::new(child.stdout.take().expect("missing stdout")),
+            stdout: BufReader::new(
+                child.stdout.take().expect("missing stdout"),
+            ),
             child,
             _serial_guard: serial_guard,
         }
@@ -59,7 +62,9 @@ impl LspProcess {
             let bytes_read = self.stdout.read_line(&mut line).unwrap();
             if bytes_read == 0 {
                 let status = self.child.try_wait().unwrap();
-                panic!("unexpected EOF from fluent-lsp; child status: {status:?}");
+                panic!(
+                    "unexpected EOF from fluent-lsp; child status: {status:?}"
+                );
             }
             if line == "\r\n" {
                 break;
@@ -126,7 +131,8 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
         Value::Bool(false)
     );
     assert_eq!(
-        initialize["result"]["capabilities"]["executeCommandProvider"]["commands"][0],
+        initialize["result"]["capabilities"]["executeCommandProvider"]["commands"]
+            [0],
         Value::String("fluent-lsp.showSelectorCombinations".to_string())
     );
     assert_eq!(
@@ -145,103 +151,183 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
 
     open_document(&mut lsp, source_path.as_path(), &source_text);
 
-    assert_definition(
-        &mut lsp,
-        2,
-        &source_path,
-        position_of(&source_text, "welcome-title"),
-        &root.join("locales/en/app.ftl"),
-        1,
-        0,
+    let welcome_title_position = position_of(&source_text, "welcome-title");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": welcome_title_position.0, "character": welcome_title_position.1 }
+        }
+    }));
+    let welcome_title_definition = recv_response(&mut lsp, 2);
+    assert_eq!(
+        welcome_title_definition["result"]["uri"],
+        Value::String(format!(
+            "file://{}",
+            root.join("locales/en/app.ftl").display()
+        ))
+    );
+    assert_eq!(
+        welcome_title_definition["result"]["range"]["start"]["line"],
+        Value::from(1)
+    );
+    assert_eq!(
+        welcome_title_definition["result"]["range"]["start"]["character"],
+        Value::from(0)
     );
 
-    assert_definition(
-        &mut lsp,
-        3,
-        &source_path,
-        position_of(&source_text, "brand-name ="),
-        &root.join("locales/en/app.ftl"),
-        8,
-        1,
+    let brand_name_position = position_of(&source_text, "brand-name =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": brand_name_position.0, "character": brand_name_position.1 }
+        }
+    }));
+    let brand_name_definition = recv_response(&mut lsp, 3);
+    assert_eq!(
+        brand_name_definition["result"]["uri"],
+        Value::String(format!(
+            "file://{}",
+            root.join("locales/en/app.ftl").display()
+        ))
+    );
+    assert_eq!(
+        brand_name_definition["result"]["range"]["start"]["line"],
+        Value::from(8)
+    );
+    assert_eq!(
+        brand_name_definition["result"]["range"]["start"]["character"],
+        Value::from(1)
     );
 
-    assert_definition(
-        &mut lsp,
-        4,
-        &source_path,
-        position_of(&source_text, "label = Lanzar"),
-        &root.join("locales/en/app.ftl"),
-        13,
-        5,
+    let launch_label_position = position_of(&source_text, "label = Lanzar");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": launch_label_position.0, "character": launch_label_position.1 }
+        }
+    }));
+    let launch_label_definition = recv_response(&mut lsp, 4);
+    assert_eq!(
+        launch_label_definition["result"]["uri"],
+        Value::String(format!(
+            "file://{}",
+            root.join("locales/en/app.ftl").display()
+        ))
+    );
+    assert_eq!(
+        launch_label_definition["result"]["range"]["start"]["line"],
+        Value::from(13)
+    );
+    assert_eq!(
+        launch_label_definition["result"]["range"]["start"]["character"],
+        Value::from(5)
     );
 
     let nested_path = root.join("locales/es/dialogs/menu.ftl");
     let nested_text = std::fs::read_to_string(&nested_path).unwrap();
     open_document(&mut lsp, &nested_path, &nested_text);
 
-    assert_definition(
-        &mut lsp,
-        5,
-        &nested_path,
-        position_of(&nested_text, "label = Guardar"),
-        &root.join("locales/en/dialogs/menu.ftl"),
-        4,
-        5,
+    let save_label_position = position_of(&nested_text, "label = Guardar");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_path.display()) },
+            "position": { "line": save_label_position.0, "character": save_label_position.1 }
+        }
+    }));
+    let save_label_definition = recv_response(&mut lsp, 5);
+    assert_eq!(
+        save_label_definition["result"]["uri"],
+        Value::String(format!(
+            "file://{}",
+            root.join("locales/en/dialogs/menu.ftl").display()
+        ))
+    );
+    assert_eq!(
+        save_label_definition["result"]["range"]["start"]["line"],
+        Value::from(4)
+    );
+    assert_eq!(
+        save_label_definition["result"]["range"]["start"]["character"],
+        Value::from(5)
     );
 }
 
-fn assert_definition(
-    lsp: &mut LspProcess,
-    request_id: i64,
-    source_path: &Path,
-    position: (u32, u32),
-    expected_target: &Path,
-    expected_line: u32,
-    expected_character: u32,
-) {
+#[test]
+fn initialize_returns_exact_capability_contract() {
+    let root = fixture_root();
+    let mut lsp = LspProcess::start();
+
     lsp.send(&json!({
         "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "textDocument/definition",
+        "id": 6_200,
+        "method": "initialize",
         "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "position": { "line": position.0, "character": position.1 }
+            "processId": null,
+            "rootUri": format!("file://{}", root.display()),
+            "capabilities": {}
         }
     }));
 
-    let definition = recv_response(lsp, request_id);
+    let initialize = lsp.recv();
+    assert_eq!(initialize["id"], 6_200);
     assert_eq!(
-        definition["result"]["uri"],
-        Value::String(format!("file://{}", expected_target.display()))
+        initialize["result"]["capabilities"],
+        json!({
+            "definitionProvider": true,
+            "referencesProvider": true,
+            "hoverProvider": true,
+            "completionProvider": {
+                "triggerCharacters": ["."]
+            },
+            "codeActionProvider": {
+                "codeActionKinds": ["quickfix", "refactor.rewrite"],
+                "resolveProvider": false
+            },
+            "codeLensProvider": {
+                "resolveProvider": false
+            },
+            "executeCommandProvider": {
+                "commands": ["fluent-lsp.showSelectorCombinations"]
+            },
+            "textDocumentSync": {
+                "openClose": true,
+                "change": 1,
+                "save": true
+            }
+        })
     );
-    assert_eq!(
-        definition["result"]["range"]["start"]["line"],
-        Value::from(expected_line),
+    assert!(
+        initialize["result"]["capabilities"]
+            .get("renameProvider")
+            .is_none()
     );
-    assert_eq!(
-        definition["result"]["range"]["start"]["character"],
-        Value::from(expected_character),
+    assert!(
+        initialize["result"]["capabilities"]
+            .get("semanticTokensProvider")
+            .is_none()
     );
-}
-
-fn assert_definition_is_absent(
-    lsp: &mut LspProcess,
-    request_id: i64,
-    source_path: &Path,
-    position: (u32, u32),
-) {
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "textDocument/definition",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "position": { "line": position.0, "character": position.1 }
-        }
-    }));
-
-    let definition = recv_response(lsp, request_id);
-    assert_eq!(definition["result"], Value::Null);
+    assert!(
+        initialize["result"]["capabilities"]
+            .get("inlayHintProvider")
+            .is_none()
+    );
+    assert!(
+        initialize["result"]["capabilities"]
+            .get("documentSymbolProvider")
+            .is_none()
+    );
 }
 
 #[test]
@@ -305,12 +391,18 @@ fn goto_definition_from_origin_file_returns_no_location() {
     let mut lsp = initialized_lsp(&root, 6_100);
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_definition_is_absent(
-        &mut lsp,
-        6_101,
-        &source_path,
-        position_of(&source_text, "welcome-title"),
-    );
+    let position = position_of(&source_text, "welcome-title");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_101,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let response = recv_response(&mut lsp, 6_101);
+    assert_eq!(response["result"], Value::Null);
 }
 
 #[test]
@@ -328,33 +420,48 @@ fn goto_definition_returns_no_location_for_translation_key_missing_in_origin() {
     let mut lsp = initialized_lsp(workspace.path(), 6_102);
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_definition_is_absent(
-        &mut lsp,
-        6_103,
-        &source_path,
-        position_of(&source_text, "local-only"),
-    );
+    let position = position_of(&source_text, "local-only");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_103,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let response = recv_response(&mut lsp, 6_103);
+    assert_eq!(response["result"], Value::Null);
 }
 
 #[test]
-fn goto_definition_returns_no_location_when_origin_counterpart_file_is_missing() {
-    let workspace = temp_workspace(&[("locales/es/only.ftl", "orphan-title = Huerfano\n")]);
+fn goto_definition_returns_no_location_when_origin_counterpart_file_is_missing()
+{
+    let workspace =
+        temp_workspace(&[("locales/es/only.ftl", "orphan-title = Huerfano\n")]);
     let source_path = workspace.path().join("locales/es/only.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = initialized_lsp(workspace.path(), 6_104);
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_definition_is_absent(
-        &mut lsp,
-        6_105,
-        &source_path,
-        position_of(&source_text, "orphan-title"),
-    );
+    let position = position_of(&source_text, "orphan-title");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_105,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let response = recv_response(&mut lsp, 6_105);
+    assert_eq!(response["result"], Value::Null);
 }
 
 #[test]
-fn goto_definition_returns_no_location_for_translation_attribute_missing_in_origin() {
+fn goto_definition_returns_no_location_for_translation_attribute_missing_in_origin()
+ {
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
@@ -371,12 +478,18 @@ fn goto_definition_returns_no_location_for_translation_attribute_missing_in_orig
     let mut lsp = initialized_lsp(workspace.path(), 6_130);
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_definition_is_absent(
-        &mut lsp,
-        6_131,
-        &source_path,
-        position_of(&source_text, ".tooltip ="),
-    );
+    let position = position_of(&source_text, ".tooltip =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_131,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let response = recv_response(&mut lsp, 6_131);
+    assert_eq!(response["result"], Value::Null);
 }
 
 #[test]
@@ -468,37 +581,100 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
 
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_references(
-        &mut lsp,
-        11,
-        &source_path,
-        position_of(&source_text, "welcome-title"),
-        &[
-            ReferenceExpectation::new("locales/es/app.ftl", 1, 0),
-            ReferenceExpectation::new("locales/fr/app.ftl", 0, 0),
-        ],
+    let welcome_title_position = position_of(&source_text, "welcome-title");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": welcome_title_position.0, "character": welcome_title_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let welcome_title_references = recv_response(&mut lsp, 11);
+    assert_eq!(
+        welcome_title_references["result"],
+        json!([
+            {
+                "uri": format!("file://{}", root.join("locales/es/app.ftl").display()),
+                "range": {
+                    "start": { "line": 1, "character": 0 },
+                    "end": { "line": 1, "character": 13 }
+                }
+            },
+            {
+                "uri": format!("file://{}", root.join("locales/fr/app.ftl").display()),
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 13 }
+                }
+            }
+        ])
     );
 
-    assert_references(
-        &mut lsp,
-        12,
-        &source_path,
-        position_of(&source_text, "brand-name ="),
-        &[
-            ReferenceExpectation::new("locales/es/app.ftl", 3, 1),
-            ReferenceExpectation::new("locales/fr/app.ftl", 2, 1),
-        ],
+    let brand_name_position = position_of(&source_text, "brand-name =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 12,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": brand_name_position.0, "character": brand_name_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let brand_name_references = recv_response(&mut lsp, 12);
+    assert_eq!(
+        brand_name_references["result"],
+        json!([
+            {
+                "uri": format!("file://{}", root.join("locales/es/app.ftl").display()),
+                "range": {
+                    "start": { "line": 3, "character": 1 },
+                    "end": { "line": 3, "character": 11 }
+                }
+            },
+            {
+                "uri": format!("file://{}", root.join("locales/fr/app.ftl").display()),
+                "range": {
+                    "start": { "line": 2, "character": 1 },
+                    "end": { "line": 2, "character": 11 }
+                }
+            }
+        ])
     );
 
-    assert_references(
-        &mut lsp,
-        13,
-        &source_path,
-        position_of(&source_text, "label = Launch"),
-        &[
-            ReferenceExpectation::new("locales/es/app.ftl", 5, 5),
-            ReferenceExpectation::new("locales/fr/app.ftl", 4, 5),
-        ],
+    let launch_label_position = position_of(&source_text, "label = Launch");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 13,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": launch_label_position.0, "character": launch_label_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let launch_label_references = recv_response(&mut lsp, 13);
+    assert_eq!(
+        launch_label_references["result"],
+        json!([
+            {
+                "uri": format!("file://{}", root.join("locales/es/app.ftl").display()),
+                "range": {
+                    "start": { "line": 5, "character": 5 },
+                    "end": { "line": 5, "character": 10 }
+                }
+            },
+            {
+                "uri": format!("file://{}", root.join("locales/fr/app.ftl").display()),
+                "range": {
+                    "start": { "line": 4, "character": 5 },
+                    "end": { "line": 4, "character": 10 }
+                }
+            }
+        ])
     );
 
     let nested_path = root.join("locales/en/dialogs/menu.ftl");
@@ -506,16 +682,43 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
 
     open_document(&mut lsp, &nested_path, &nested_text);
 
-    assert_references(
-        &mut lsp,
-        14,
-        &nested_path,
-        position_of(&nested_text, "label = Save"),
-        &[
-            ReferenceExpectation::new("locales/es/dialogs/menu.ftl", 1, 5),
-            ReferenceExpectation::new("locales/fr/dialogs/menu.ftl", 1, 5),
-            ReferenceExpectation::new("locales/lv/dialogs/menu.ftl", 1, 5),
-        ],
+    let save_label_position = position_of(&nested_text, "label = Save");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 14,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_path.display()) },
+            "position": { "line": save_label_position.0, "character": save_label_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let save_label_references = recv_response(&mut lsp, 14);
+    assert_eq!(
+        save_label_references["result"],
+        json!([
+            {
+                "uri": format!("file://{}", root.join("locales/es/dialogs/menu.ftl").display()),
+                "range": {
+                    "start": { "line": 1, "character": 5 },
+                    "end": { "line": 1, "character": 10 }
+                }
+            },
+            {
+                "uri": format!("file://{}", root.join("locales/fr/dialogs/menu.ftl").display()),
+                "range": {
+                    "start": { "line": 1, "character": 5 },
+                    "end": { "line": 1, "character": 10 }
+                }
+            },
+            {
+                "uri": format!("file://{}", root.join("locales/lv/dialogs/menu.ftl").display()),
+                "range": {
+                    "start": { "line": 1, "character": 5 },
+                    "end": { "line": 1, "character": 10 }
+                }
+            }
+        ])
     );
 }
 
@@ -532,16 +735,24 @@ fn references_from_origin_return_empty_list_when_no_translation_matches() {
     let mut lsp = initialized_lsp(workspace.path(), 6_106);
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_references_are_empty(
-        &mut lsp,
-        6_107,
-        &source_path,
-        position_of(&source_text, "orphan-title"),
-    );
+    let position = position_of(&source_text, "orphan-title");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_107,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let response = recv_response(&mut lsp, 6_107);
+    assert_eq!(response["result"], Value::Array(Vec::new()));
 }
 
 #[test]
-fn references_from_origin_attribute_return_empty_list_when_no_translation_matches() {
+fn references_from_origin_attribute_return_empty_list_when_no_translation_matches()
+ {
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
@@ -558,12 +769,19 @@ fn references_from_origin_attribute_return_empty_list_when_no_translation_matche
     let mut lsp = initialized_lsp(workspace.path(), 6_132);
     open_document(&mut lsp, &origin_path, &origin_text);
 
-    assert_references_are_empty(
-        &mut lsp,
-        6_133,
-        &origin_path,
-        position_of(&origin_text, ".tooltip ="),
-    );
+    let position = position_of(&origin_text, ".tooltip =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_133,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": { "line": position.0, "character": position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let response = recv_response(&mut lsp, 6_133);
+    assert_eq!(response["result"], Value::Array(Vec::new()));
 }
 
 #[test]
@@ -575,12 +793,19 @@ fn references_from_translation_file_return_no_result() {
     let mut lsp = initialized_lsp(&root, 6_108);
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_references_are_absent(
-        &mut lsp,
-        6_109,
-        &source_path,
-        position_of(&source_text, "welcome-title"),
-    );
+    let position = position_of(&source_text, "welcome-title");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_109,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let response = recv_response(&mut lsp, 6_109);
+    assert_eq!(response["result"], Value::Null);
 }
 
 #[test]
@@ -712,9 +937,13 @@ fn log_trace_reports_index_and_request_timings_when_enabled() {
         "method": "initialized",
         "params": {}
     }));
-    let _ = recv_notification(&mut lsp, "window/logMessage");
-    let index_trace = recv_notification(&mut lsp, "$/logTrace");
-    let index_trace_message = index_trace["params"]["message"].as_str().unwrap();
+    let init_notifications = recv_notifications_for_methods(
+        &mut lsp,
+        &["window/logMessage", "$/logTrace"],
+    );
+    let index_trace = init_notifications["$/logTrace"].clone();
+    let index_trace_message =
+        index_trace["params"]["message"].as_str().unwrap();
     let (index_prefix, index_elapsed_ms) = index_trace_message
         .split_once(" elapsed_ms=")
         .expect("workspace/index trace should include elapsed_ms");
@@ -738,9 +967,10 @@ fn log_trace_reports_index_and_request_timings_when_enabled() {
             }
         }
     }));
-    let request_trace = recv_notification(&mut lsp, "$/logTrace");
-    let _ = recv_response(&mut lsp, 154);
-    let request_trace_message = request_trace["params"]["message"].as_str().unwrap();
+    let (_, request_trace) =
+        recv_response_and_notification(&mut lsp, 154, "$/logTrace");
+    let request_trace_message =
+        request_trace["params"]["message"].as_str().unwrap();
     let (request_prefix, request_elapsed_ms) = request_trace_message
         .split_once(" elapsed_ms=")
         .expect("definition trace should include elapsed_ms");
@@ -779,8 +1009,11 @@ fn verbose_log_trace_includes_request_details() {
         "method": "initialized",
         "params": {}
     }));
-    let _ = recv_notification(&mut lsp, "window/logMessage");
-    let index_trace = recv_notification(&mut lsp, "$/logTrace");
+    let init_notifications = recv_notifications_for_methods(
+        &mut lsp,
+        &["window/logMessage", "$/logTrace"],
+    );
+    let index_trace = init_notifications["$/logTrace"].clone();
     assert!(
         index_trace["params"]["verbose"]
             .as_str()
@@ -801,8 +1034,8 @@ fn verbose_log_trace_includes_request_details() {
             }
         }
     }));
-    let request_trace = recv_notification(&mut lsp, "$/logTrace");
-    let _ = recv_response(&mut lsp, 156);
+    let (_, request_trace) =
+        recv_response_and_notification(&mut lsp, 156, "$/logTrace");
     assert_eq!(
         request_trace["params"]["verbose"],
         Value::String("hit=true".to_string())
@@ -863,9 +1096,10 @@ fn set_trace_enables_request_timings_after_initialize() {
             }
         }
     }));
-    let request_trace = recv_notification(&mut lsp, "$/logTrace");
-    let _ = recv_response(&mut lsp, 158);
-    let request_trace_message = request_trace["params"]["message"].as_str().unwrap();
+    let (_, request_trace) =
+        recv_response_and_notification(&mut lsp, 158, "$/logTrace");
+    let request_trace_message =
+        request_trace["params"]["message"].as_str().unwrap();
     let (request_prefix, request_elapsed_ms) = request_trace_message
         .split_once(" elapsed_ms=")
         .expect("definition trace should include elapsed_ms");
@@ -900,34 +1134,71 @@ fn indexed_requests_reflect_live_origin_changes_without_restart() {
     send_open_document(&mut lsp, &origin_path, updated_origin);
     send_open_document(&mut lsp, &translation_path, translation_text);
 
-    assert_definition(
-        &mut lsp,
-        142,
-        &translation_path,
-        position_of(translation_text, "fresh-key"),
-        &origin_path,
-        3,
-        0,
-    );
-    let hover = request_hover(
-        &mut lsp,
-        144,
-        &translation_path,
-        position_of(translation_text, "fresh-key"),
+    let fresh_key_position = position_of(translation_text, "fresh-key");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 142,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": { "line": fresh_key_position.0, "character": fresh_key_position.1 }
+        }
+    }));
+    let fresh_key_definition = recv_response(&mut lsp, 142);
+    assert_eq!(
+        fresh_key_definition["result"]["uri"],
+        Value::String(format!("file://{}", origin_path.display()))
     );
     assert_eq!(
-        extract_ftl_blocks(hover["result"]["contents"]["value"].as_str().unwrap()),
+        fresh_key_definition["result"]["range"]["start"]["line"],
+        Value::from(3)
+    );
+    assert_eq!(
+        fresh_key_definition["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 144,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": { "line": fresh_key_position.0, "character": fresh_key_position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 144);
+    assert_eq!(
+        extract_ftl_blocks(
+            hover["result"]["contents"]["value"].as_str().unwrap()
+        ),
         vec!["# Fresh origin docs".to_string()]
     );
 
     let completion_text = "fresh";
     send_change_document(&mut lsp, &translation_path, 2, completion_text);
-    let labels = request_completion_labels(
-        &mut lsp,
-        143,
-        &translation_path,
-        position_after(completion_text, "fresh"),
-    );
+    let completion_position = position_after(completion_text, "fresh");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 143,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": { "line": completion_position.0, "character": completion_position.1 }
+        }
+    }));
+    let completion = recv_response(&mut lsp, 143);
+    let labels = if completion["result"].is_array() {
+        completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
     assert_eq!(labels, vec!["fresh-key".to_string()]);
 }
 
@@ -943,35 +1214,60 @@ fn indexed_requests_reflect_live_translation_changes_and_dirty_close_reverts() {
     let mut lsp = initialized_lsp(workspace.path(), 145);
     open_document(&mut lsp, &origin_path, &origin_text);
 
-    assert_references(
-        &mut lsp,
-        146,
-        &origin_path,
-        position_of(&origin_text, "download-action"),
-        &[],
-    );
+    let download_action_position = position_of(&origin_text, "download-action");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 146,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": { "line": download_action_position.0, "character": download_action_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let references = recv_response(&mut lsp, 146);
+    assert_eq!(references["result"], Value::Array(Vec::new()));
 
     send_open_document(&mut lsp, &translation_path, disk_translation);
     let dirty_translation = "hello = Hola\n\ndownload-action = Descargar\n";
     send_change_document(&mut lsp, &translation_path, 2, dirty_translation);
 
-    assert_references(
-        &mut lsp,
-        147,
-        &origin_path,
-        position_of(&origin_text, "download-action"),
-        &[ReferenceExpectation::new("locales/es/app.ftl", 2, 0)],
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 147,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": { "line": download_action_position.0, "character": download_action_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let references = recv_response(&mut lsp, 147);
+    assert_eq!(
+        references["result"],
+        json!([{
+            "uri": format!("file://{}", translation_path.display()),
+            "range": {
+                "start": { "line": 2, "character": 0 },
+                "end": { "line": 2, "character": 15 }
+            }
+        }])
     );
 
     send_close_document(&mut lsp, &translation_path);
     let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
-    assert_references(
-        &mut lsp,
-        148,
-        &origin_path,
-        position_of(&origin_text, "download-action"),
-        &[],
-    );
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 148,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": { "line": download_action_position.0, "character": download_action_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let references = recv_response(&mut lsp, 148);
+    assert_eq!(references["result"], Value::Array(Vec::new()));
 }
 
 #[test]
@@ -983,34 +1279,59 @@ fn indexed_references_pick_up_disk_file_adds_and_deletes() {
 
     let mut lsp = initialized_lsp(workspace.path(), 149);
     open_document(&mut lsp, &origin_path, &origin_text);
-    assert_references(
-        &mut lsp,
-        150,
-        &origin_path,
-        position_of(&origin_text, "hello-world"),
-        &[],
-    );
+    let hello_world_position = position_of(&origin_text, "hello-world");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 150,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": { "line": hello_world_position.0, "character": hello_world_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let references = recv_response(&mut lsp, 150);
+    assert_eq!(references["result"], Value::Array(Vec::new()));
 
     std::fs::create_dir_all(new_translation.parent().unwrap()).unwrap();
     std::fs::write(&new_translation, "hello-world = Bonjour\n").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    assert_references(
-        &mut lsp,
-        151,
-        &origin_path,
-        position_of(&origin_text, "hello-world"),
-        &[ReferenceExpectation::new("locales/fr/app.ftl", 0, 0)],
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 151,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": { "line": hello_world_position.0, "character": hello_world_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let references = recv_response(&mut lsp, 151);
+    assert_eq!(
+        references["result"],
+        json!([{
+            "uri": format!("file://{}", new_translation.display()),
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 11 }
+            }
+        }])
     );
 
     std::fs::remove_file(&new_translation).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    assert_references(
-        &mut lsp,
-        152,
-        &origin_path,
-        position_of(&origin_text, "hello-world"),
-        &[],
-    );
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 152,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": { "line": hello_world_position.0, "character": hello_world_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let references = recv_response(&mut lsp, 152);
+    assert_eq!(references["result"], Value::Array(Vec::new()));
 }
 
 #[test]
@@ -1028,7 +1349,8 @@ fn local_only_file_warning_updates_when_origin_counterpart_appears() {
     std::fs::write(&local_path, local_text).unwrap();
     send_open_document(&mut lsp, &local_path, local_text);
     send_save_document(&mut lsp, &local_path, Some(local_text));
-    let warning = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let warning =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = warning["params"]["diagnostics"].as_array().unwrap();
     let counterpart_warning = diagnostics
         .iter()
@@ -1040,8 +1362,14 @@ fn local_only_file_warning_updates_when_origin_counterpart_appears() {
         })
         .expect("missing missing-origin-counterpart diagnostic");
     assert_eq!(counterpart_warning["severity"], Value::from(2));
-    assert_eq!(counterpart_warning["range"]["start"]["line"], Value::from(0));
-    assert_eq!(counterpart_warning["range"]["start"]["character"], Value::from(0));
+    assert_eq!(
+        counterpart_warning["range"]["start"]["line"],
+        Value::from(0)
+    );
+    assert_eq!(
+        counterpart_warning["range"]["start"]["character"],
+        Value::from(0)
+    );
 
     std::fs::create_dir_all(workspace.path().join("locales/en")).unwrap();
     std::fs::write(
@@ -1050,11 +1378,16 @@ fn local_only_file_warning_updates_when_origin_counterpart_appears() {
     )
     .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    let warning_text =
-        Value::String("Translation file has no origin-language counterpart for `only`".to_string());
+    let warning_text = Value::String(
+        "Translation file has no origin-language counterpart for `only`"
+            .to_string(),
+    );
     loop {
-        let cleared = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
-        if cleared["params"]["uri"] != Value::String(format!("file://{}", local_path.display())) {
+        let cleared =
+            recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+        if cleared["params"]["uri"]
+            != Value::String(format!("file://{}", local_path.display()))
+        {
             continue;
         }
         let diagnostics = cleared["params"]["diagnostics"].as_array().unwrap();
@@ -1089,12 +1422,14 @@ fn translation_only_keys_warn_and_clear_when_origin_adds_counterparts() {
     send_open_document(&mut lsp, &translation_path, translation_text);
     send_save_document(&mut lsp, &translation_path, Some(translation_text));
 
-    let warning = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let warning =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = warning["params"]["diagnostics"].as_array().unwrap();
     assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic["message"]
             == Value::String(
-                "Translation entry `extra` has no origin-language counterpart".to_string(),
+                "Translation entry `extra` has no origin-language counterpart"
+                    .to_string(),
             )
     }));
     assert!(diagnostics.iter().any(|diagnostic| {
@@ -1148,13 +1483,16 @@ fn translation_only_keys_warn_and_clear_when_origin_adds_counterparts() {
     )
     .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    let extra_text =
-        Value::String("Translation entry `extra` has no origin-language counterpart".to_string());
+    let extra_text = Value::String(
+        "Translation entry `extra` has no origin-language counterpart"
+            .to_string(),
+    );
     let tooltip_text = Value::String(
         "Translation attribute `menu.tooltip` has no origin-language counterpart".to_string(),
     );
     loop {
-        let cleared = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+        let cleared =
+            recv_notification(&mut lsp, "textDocument/publishDiagnostics");
         if cleared["params"]["uri"]
             != Value::String(format!("file://{}", translation_path.display()))
         {
@@ -1162,7 +1500,8 @@ fn translation_only_keys_warn_and_clear_when_origin_adds_counterparts() {
         }
         let diagnostics = cleared["params"]["diagnostics"].as_array().unwrap();
         if diagnostics.iter().all(|diagnostic| {
-            diagnostic["message"] != extra_text && diagnostic["message"] != tooltip_text
+            diagnostic["message"] != extra_text
+                && diagnostic["message"] != tooltip_text
         }) {
             break;
         }
@@ -1188,8 +1527,12 @@ fn translation_only_warnings_are_absent_for_matching_translation_files() {
     send_open_document(&mut lsp, &source_path, &source_text);
     send_save_document(&mut lsp, &source_path, Some(&source_text));
 
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
-    assert_eq!(notification["params"]["diagnostics"], Value::Array(Vec::new()));
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
 }
 
 #[test]
@@ -1202,12 +1545,29 @@ fn completion_from_translation_uses_origin_language_keys_and_attributes() {
 
     let top_level_text = "welcome-title = Bienvenido\n\ndown";
     send_open_document(&mut lsp, &app_path, top_level_text);
-    let labels = request_completion_labels(
-        &mut lsp,
-        15,
-        &app_path,
-        position_after(top_level_text, "down"),
-    );
+    let top_level_position = position_after(top_level_text, "down");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 15,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", app_path.display()) },
+            "position": { "line": top_level_position.0, "character": top_level_position.1 }
+        }
+    }));
+    let top_level_completion = recv_response(&mut lsp, 15);
+    let labels = if top_level_completion["result"].is_array() {
+        top_level_completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        top_level_completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
     assert_eq!(
         labels,
         vec!["download-action".to_string(), "download-count".to_string()]
@@ -1215,18 +1575,56 @@ fn completion_from_translation_uses_origin_language_keys_and_attributes() {
 
     let attribute_text = "menu-save =\n    .l\n";
     send_open_document(&mut lsp, &menu_path, attribute_text);
-    let attribute_labels = request_completion_labels(
-        &mut lsp,
-        16,
-        &menu_path,
-        position_after(attribute_text, ".l"),
-    );
+    let attribute_position = position_after(attribute_text, ".l");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 16,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", menu_path.display()) },
+            "position": { "line": attribute_position.0, "character": attribute_position.1 }
+        }
+    }));
+    let attribute_completion = recv_response(&mut lsp, 16);
+    let attribute_labels = if attribute_completion["result"].is_array() {
+        attribute_completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        attribute_completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
     assert_eq!(attribute_labels, vec![".label".to_string()]);
 
     let bare_dot_text = "menu-save =\n    .\n";
     send_open_document(&mut lsp, &menu_path, bare_dot_text);
-    let all_attribute_labels =
-        request_completion_labels(&mut lsp, 17, &menu_path, position_after(bare_dot_text, "."));
+    let bare_dot_position = position_after(bare_dot_text, ".");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 17,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", menu_path.display()) },
+            "position": { "line": bare_dot_position.0, "character": bare_dot_position.1 }
+        }
+    }));
+    let bare_dot_completion = recv_response(&mut lsp, 17);
+    let all_attribute_labels = if bare_dot_completion["result"].is_array() {
+        bare_dot_completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        bare_dot_completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
     assert_eq!(
         all_attribute_labels,
         vec![".label".to_string(), ".tooltip".to_string()]
@@ -1242,12 +1640,29 @@ fn completion_omits_already_present_top_level_keys() {
     let mut lsp = initialized_lsp(workspace.path(), 17_100);
     send_open_document(&mut lsp, &app_path, source);
 
-    let labels = request_completion_labels(
-        &mut lsp,
-        17_101,
-        &app_path,
-        position_after(source, "down"),
-    );
+    let position = position_after(source, "down");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 17_101,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", app_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let completion = recv_response(&mut lsp, 17_101);
+    let labels = if completion["result"].is_array() {
+        completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
     assert_eq!(labels, vec!["download-count".to_string()]);
 }
 
@@ -1260,39 +1675,92 @@ fn completion_omits_already_present_attributes() {
     let mut lsp = initialized_lsp(workspace.path(), 17_102);
     send_open_document(&mut lsp, &menu_path, source);
 
-    let labels = request_completion_labels(
-        &mut lsp,
-        17_103,
-        &menu_path,
-        position_after(source, "."),
-    );
+    let position = position_after(source, ".");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 17_103,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", menu_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let completion = recv_response(&mut lsp, 17_103);
+    let labels = if completion["result"].is_array() {
+        completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
     assert_eq!(labels, vec![".tooltip".to_string()]);
 }
 
 #[test]
 fn completion_uses_nested_origin_counterpart_and_skips_origin_files() {
     let workspace = completion_workspace();
-    let nested_translation = workspace.path().join("locales/es/dialogs/menu.ftl");
+    let nested_translation =
+        workspace.path().join("locales/es/dialogs/menu.ftl");
     let origin_app = workspace.path().join("locales/en/app.ftl");
     let nested_text = "menu-save =\n    .t\n";
 
     let mut lsp = initialized_lsp(workspace.path(), 18);
 
     send_open_document(&mut lsp, &nested_translation, nested_text);
-    let nested_labels = request_completion_labels(
-        &mut lsp,
-        19,
-        &nested_translation,
-        position_after(nested_text, ".t"),
-    );
+    let nested_position = position_after(nested_text, ".t");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 19,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_translation.display()) },
+            "position": { "line": nested_position.0, "character": nested_position.1 }
+        }
+    }));
+    let nested_completion = recv_response(&mut lsp, 19);
+    let nested_labels = if nested_completion["result"].is_array() {
+        nested_completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        nested_completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
     assert_eq!(nested_labels, vec![".tooltip".to_string()]);
 
-    let origin_labels = request_completion_labels(
-        &mut lsp,
-        20,
-        &origin_app,
-        position_after("download-action = Download\n", "download-action"),
-    );
+    let origin_position =
+        position_after("download-action = Download\n", "download-action");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 20,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_app.display()) },
+            "position": { "line": origin_position.0, "character": origin_position.1 }
+        }
+    }));
+    let origin_completion = recv_response(&mut lsp, 20);
+    let origin_labels = if origin_completion["result"].is_array() {
+        origin_completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        origin_completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
     assert!(origin_labels.is_empty());
 }
 
@@ -1304,12 +1772,29 @@ fn completion_returns_empty_results_for_nested_origin_files() {
 
     let mut lsp = initialized_lsp(workspace.path(), 20_100);
     send_open_document(&mut lsp, &origin_menu, source);
-    let labels = request_completion_labels(
-        &mut lsp,
-        20_101,
-        &origin_menu,
-        position_after(source, ".t"),
-    );
+    let position = position_after(source, ".t");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 20_101,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_menu.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let completion = recv_response(&mut lsp, 20_101);
+    let labels = if completion["result"].is_array() {
+        completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
     assert!(labels.is_empty());
 }
 
@@ -1322,7 +1807,29 @@ fn completion_returns_empty_results_for_unmatched_prefixes() {
     let mut lsp = initialized_lsp(workspace.path(), 21);
     send_open_document(&mut lsp, &app_path, source);
 
-    let labels = request_completion_labels(&mut lsp, 22, &app_path, position_after(source, "zzz"));
+    let position = position_after(source, "zzz");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 22,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", app_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let completion = recv_response(&mut lsp, 22);
+    let labels = if completion["result"].is_array() {
+        completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
     assert!(labels.is_empty());
 }
 
@@ -1335,13 +1842,18 @@ fn completion_returns_empty_results_inside_comments() {
     let mut lsp = initialized_lsp(workspace.path(), 22_102);
     send_open_document(&mut lsp, &app_path, source);
 
-    let labels = request_completion_labels(
-        &mut lsp,
-        22_103,
-        &app_path,
-        position_after(source, "down"),
-    );
-    assert!(labels.is_empty());
+    let position = position_after(source, "down");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 22_103,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", app_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let completion = recv_response(&mut lsp, 22_103);
+    assert_eq!(completion["result"], Value::Array(Vec::new()));
 }
 
 #[test]
@@ -1353,12 +1865,29 @@ fn completion_returns_empty_results_without_origin_counterpart_file() {
     let mut lsp = initialized_lsp(workspace.path(), 22_100);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let labels = request_completion_labels(
-        &mut lsp,
-        22_101,
-        &source_path,
-        position_after(&source_text, "fresh"),
-    );
+    let position = position_after(&source_text, "fresh");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 22_101,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let completion = recv_response(&mut lsp, 22_101);
+    let labels = if completion["result"].is_array() {
+        completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
     assert!(labels.is_empty());
 }
 
@@ -1372,15 +1901,33 @@ fn completion_items_include_origin_documentation_for_keys_and_attributes() {
 
     let commented_text = "welcome-title = Bienvenido\n\ncommented";
     send_open_document(&mut lsp, &app_path, commented_text);
-    let key_items = request_completion_items(
-        &mut lsp,
-        24,
-        &app_path,
-        position_after(commented_text, "commented"),
-    );
+    let key_position = position_after(commented_text, "commented");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 24,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", app_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let key_completion = recv_response(&mut lsp, 24);
+    let key_items = if key_completion["result"].is_array() {
+        key_completion["result"]
+            .as_array()
+            .cloned()
+            .expect("expected completion items")
+    } else {
+        key_completion["result"]["items"]
+            .as_array()
+            .cloned()
+            .expect("expected completion items")
+    };
     let key_item = key_items
         .iter()
-        .find(|item| item["label"] == Value::String("commented-preview".to_string()))
+        .find(|item| {
+            item["label"] == Value::String("commented-preview".to_string())
+        })
         .expect("missing completion item for commented-preview");
     assert_eq!(
         key_item["documentation"]["kind"],
@@ -1396,12 +1943,28 @@ fn completion_items_include_origin_documentation_for_keys_and_attributes() {
 
     let attribute_text = "menu-save =\n    .t\n";
     send_open_document(&mut lsp, &menu_path, attribute_text);
-    let attribute_items = request_completion_items(
-        &mut lsp,
-        25,
-        &menu_path,
-        position_after(attribute_text, ".t"),
-    );
+    let attribute_position = position_after(attribute_text, ".t");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 25,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", menu_path.display()) },
+            "position": { "line": attribute_position.0, "character": attribute_position.1 }
+        }
+    }));
+    let attribute_completion = recv_response(&mut lsp, 25);
+    let attribute_items = if attribute_completion["result"].is_array() {
+        attribute_completion["result"]
+            .as_array()
+            .cloned()
+            .expect("expected completion items")
+    } else {
+        attribute_completion["result"]["items"]
+            .as_array()
+            .cloned()
+            .expect("expected completion items")
+    };
     let attribute_item = attribute_items
         .iter()
         .find(|item| item["label"] == Value::String(".tooltip".to_string()))
@@ -1420,21 +1983,57 @@ fn completion_items_include_origin_documentation_for_keys_and_attributes() {
 }
 
 #[test]
-fn code_action_fills_missing_translation_entries_with_parseable_stubs() {
-    let workspace = missing_entry_workspace();
+fn code_action_file_wide_copy_uses_spec_title_for_whole_missing_string_example()
+{
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "menu-save =\n    .label = Save\n\nsync-status = Sync ready\n",
+        ),
+        ("locales/es/app.ftl", "menu-save =\n    .label = Guardar\n"),
+    ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = initialized_lsp(workspace.path(), 30);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        31,
-        &source_path,
-        position_of(&source_text, "hello = Hola Mundo"),
-    );
-    let action = find_code_action(&actions, "Add missing keys and attributes from source");
+    let position = position_of(&source_text, "menu-save =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 31,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 31)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let titles = actions
+        .iter()
+        .filter(|action| {
+            action["kind"] == Value::String("quickfix".to_string())
+        })
+        .map(|action| action["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(titles, vec!["Copy missing strings in file".to_string()]);
+
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Copy missing strings in file".to_string())
+        })
+        .expect("missing code action: Copy missing strings in file");
     assert_eq!(action["kind"], Value::String("quickfix".to_string()));
 
     let updated = apply_code_action_edit(
@@ -1446,65 +2045,90 @@ fn code_action_fills_missing_translation_entries_with_parseable_stubs() {
     assert_eq!(
         updated,
         concat!(
-            "hello = Hola Mundo\n",
             "menu-save =\n",
             "    .label = Guardar\n",
-            "    .tooltip = { \"\" }\n",
-            "\n",
-            "sync-status = { \"\" }\n",
-        )
-    );
-    assert_eq!(runtime_message_text(&updated, "es", "hello"), "Hola Mundo");
-}
-
-#[test]
-fn code_action_copies_missing_translation_entries_with_markers() {
-    let workspace = missing_entry_workspace();
-    let source_path = workspace.path().join("locales/es/app.ftl");
-    let origin_path = workspace.path().join("locales/en/app.ftl");
-    let source_text = std::fs::read_to_string(&source_path).unwrap();
-    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
-
-    let mut lsp = initialized_lsp(workspace.path(), 40);
-    open_document(&mut lsp, &source_path, &source_text);
-
-    let actions = request_code_actions(
-        &mut lsp,
-        41,
-        &source_path,
-        position_of(&source_text, "hello = Hola Mundo"),
-    );
-    let action = find_code_action(&actions, "Copy missing keys and attributes from source");
-    assert_eq!(action["kind"], Value::String("quickfix".to_string()));
-
-    let updated = apply_code_action_edit(
-        &source_text,
-        action,
-        &format!("file://{}", source_path.display()),
-    );
-    assert_fluent_parses(&updated);
-    assert_eq!(
-        updated,
-        concat!(
-            "hello = Hola Mundo\n",
-            "# [LSP-COPY .tooltip]\n",
-            "menu-save =\n",
-            "    .label = Guardar\n",
-            "    .tooltip = Save this file\n",
             "\n",
             "# [LSP-COPY]\n",
             "sync-status = Sync ready\n",
         )
     );
-    assert_eq!(runtime_message_text(&updated, "es", "hello"), "Hola Mundo");
-    assert_eq!(
-        runtime_message_text(&updated, "es", "menu-save.tooltip"),
-        runtime_message_text(&origin_text, "en", "menu-save.tooltip")
+}
+
+#[test]
+fn code_action_file_wide_copy_uses_spec_title_for_whole_missing_message_with_attributes()
+ {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "download-action =\n    .label = Install build\n    .accesskey = S\n    .tooltip = Download this build\n",
+        ),
+        ("locales/es/app.ftl", "hello = Hola Mundo\n"),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 40);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let position = position_of(&source_text, "hello = Hola Mundo");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 41,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 41)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let titles = actions
+        .iter()
+        .filter(|action| {
+            action["kind"] == Value::String("quickfix".to_string())
+        })
+        .map(|action| action["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(titles, vec!["Copy missing strings in file".to_string()]);
+
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Copy missing strings in file".to_string())
+        })
+        .expect("missing code action: Copy missing strings in file");
+    assert_eq!(action["kind"], Value::String("quickfix".to_string()));
+
+    let updated = apply_code_action_edit(
+        &source_text,
+        action,
+        &format!("file://{}", source_path.display()),
     );
+    assert_fluent_parses(&updated);
     assert_eq!(
-        runtime_message_text(&updated, "es", "sync-status"),
-        runtime_message_text(&origin_text, "en", "sync-status")
+        updated,
+        concat!(
+            "hello = Hola Mundo\n",
+            "\n",
+            "# [LSP-COPY .label]\n",
+            "# [LSP-COPY .accesskey]\n",
+            "# [LSP-COPY .tooltip]\n",
+            "download-action =\n",
+            "    .label = Install build\n",
+            "    .accesskey = S\n",
+            "    .tooltip = Download this build\n",
+        )
     );
+    assert_eq!(updated.lines().next(), Some("hello = Hola Mundo"));
 }
 
 #[test]
@@ -1524,43 +2148,77 @@ fn whole_file_missing_entry_actions_are_absent_when_translation_is_complete() {
     let mut lsp = initialized_lsp(workspace.path(), 50);
     open_document(&mut lsp, &source_path, source_text);
 
-    let actions = request_code_actions_allow_empty(
-        &mut lsp,
-        51,
-        &source_path,
-        position_of(source_text, "hello = Hola Mundo"),
-    );
+    let position = position_of(source_text, "hello = Hola Mundo");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 51,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 51)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let titles = actions
+        .iter()
+        .map(|action| action["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
     assert!(
-        actions.iter().all(|action| {
-            action["title"]
-                != Value::String("Add missing keys and attributes from source".to_string())
-                && action["title"]
-                    != Value::String("Copy missing keys and attributes from source".to_string())
-        }),
-        "unexpected whole-file missing-entry action(s): {actions:?}"
+        !titles
+            .iter()
+            .any(|title| title == "Copy missing strings in file")
     );
 }
 
 #[test]
-fn whole_file_missing_entry_actions_are_absent_without_origin_counterpart_file() {
-    let workspace = temp_workspace(&[("locales/es/only.ftl", "hello = Hola Mundo\n")]);
+fn whole_file_missing_entry_actions_are_absent_without_origin_counterpart_file()
+{
+    let workspace =
+        temp_workspace(&[("locales/es/only.ftl", "hello = Hola Mundo\n")]);
     let source_path = workspace.path().join("locales/es/only.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = initialized_lsp(workspace.path(), 5_200);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions_allow_empty(
-        &mut lsp,
-        5_201,
-        &source_path,
-        position_of(&source_text, "hello = Hola Mundo"),
-    );
-    assert!(actions.iter().all(|action| {
-        action["title"] != Value::String("Add missing keys and attributes from source".to_string())
-            && action["title"]
-                != Value::String("Copy missing keys and attributes from source".to_string())
+    let position = position_of(&source_text, "hello = Hola Mundo");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 5_201,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
     }));
+    let actions = recv_response(&mut lsp, 5_201)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let titles = actions
+        .iter()
+        .map(|action| action["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !titles
+            .iter()
+            .any(|title| title == "Copy missing strings in file")
+    );
 }
 
 #[test]
@@ -1580,7 +2238,8 @@ fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
     open_document(&mut lsp, &source_path, &source_text);
     send_save_document(&mut lsp, &source_path, Some(&source_text));
 
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
         .as_array()
         .expect("expected diagnostics array");
@@ -1588,14 +2247,18 @@ fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
         .iter()
         .filter(|diagnostic| {
             diagnostic["message"]
-                == Value::String("Entry still contains an `# [LSP-COPY]` marker".to_string())
+                == Value::String(
+                    "Entry still contains an `# [LSP-COPY]` marker".to_string(),
+                )
         })
         .collect::<Vec<_>>();
     assert_eq!(marker_diagnostics.len(), 2);
     assert_fluent_parses(&source_text);
     assert_eq!(
         marker_diagnostics[0]["message"],
-        Value::String("Entry still contains an `# [LSP-COPY]` marker".to_string())
+        Value::String(
+            "Entry still contains an `# [LSP-COPY]` marker".to_string()
+        )
     );
     assert_eq!(
         marker_diagnostics[0]["range"]["start"]["line"],
@@ -1616,13 +2279,37 @@ fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
 
     send_change_document(&mut lsp, &source_path, 2, cleaned);
     send_save_document(&mut lsp, &source_path, Some(cleaned));
-    let cleared = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let cleared =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     assert_eq!(cleared["params"]["diagnostics"], Value::Array(Vec::new()));
     assert_fluent_parses(cleaned);
-    assert_eq!(
-        runtime_message_text(cleaned, "es", "download-action.tooltip"),
-        "Download this build"
+    let resource = FluentResource::try_new(cleaned.to_string()).unwrap_or_else(
+        |(_, errors)| {
+            panic!("failed to build FluentResource with {errors:?}\n{cleaned}")
+        },
     );
+    let locale: LanguageIdentifier =
+        "es".parse().expect("valid language identifier");
+    let mut bundle = FluentBundle::new(vec![locale]);
+    bundle.set_use_isolating(false);
+    bundle.add_resource(resource).unwrap_or_else(|errors| {
+        panic!("failed to add Fluent resource to bundle: {errors:?}")
+    });
+    let pattern = bundle
+        .get_message("download-action")
+        .and_then(|message| {
+            message
+                .attributes()
+                .find(|attribute| attribute.id() == "tooltip")
+                .map(|attribute| attribute.value())
+        })
+        .expect("missing download-action.tooltip");
+    let mut errors = Vec::new();
+    let rendered = bundle
+        .format_pattern(pattern, None, &mut errors)
+        .into_owned();
+    assert!(errors.is_empty(), "runtime formatting errors: {errors:?}");
+    assert_eq!(rendered, "Download this build");
 }
 
 #[test]
@@ -1630,30 +2317,69 @@ fn hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments() {
     let workspace = copy_marker_workspace();
     let source_path = workspace.path().join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
-    let origin_text = std::fs::read_to_string(workspace.path().join("locales/en/app.ftl")).unwrap();
+    let origin_text =
+        std::fs::read_to_string(workspace.path().join("locales/en/app.ftl"))
+            .unwrap();
 
     let mut lsp = initialized_lsp(workspace.path(), 60_100);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let key_hover = request_hover(
-        &mut lsp,
-        60_101,
-        &source_path,
-        position_of(&source_text, ".tooltip = Download this build"),
-    );
+    let position = position_of(&source_text, ".tooltip = Download this build");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 60_101,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let key_hover = recv_response(&mut lsp, 60_101);
     let key_value = key_hover["result"]["contents"]["value"].as_str().unwrap();
-    assert_hover_block_matches(key_value, 0, &origin_text, "en", "download-action.tooltip", &[]);
-    assert_hover_block_matches(key_value, 1, &source_text, "es", "download-action.tooltip", &[]);
-
-    let body_hover = request_hover(
-        &mut lsp,
-        60_102,
-        &source_path,
-        position_of(&source_text, "Download this build"),
+    assert_eq!(
+        extract_ftl_blocks(key_value),
+        vec![
+            preview_message_text_with_overrides(
+                &origin_text,
+                "download-action.tooltip",
+                &[]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "download-action.tooltip",
+                &[]
+            ),
+        ]
     );
-    let body_value = body_hover["result"]["contents"]["value"].as_str().unwrap();
-    assert_hover_block_matches(body_value, 0, &origin_text, "en", "download-action.tooltip", &[]);
-    assert_hover_block_matches(body_value, 1, &source_text, "es", "download-action.tooltip", &[]);
+
+    let position = position_of(&source_text, "Download this build");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 60_102,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let body_hover = recv_response(&mut lsp, 60_102);
+    let body_value =
+        body_hover["result"]["contents"]["value"].as_str().unwrap();
+    assert_eq!(
+        extract_ftl_blocks(body_value),
+        vec![
+            preview_message_text_with_overrides(
+                &origin_text,
+                "download-action.tooltip",
+                &[]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "download-action.tooltip",
+                &[]
+            ),
+        ]
+    );
 }
 
 #[test]
@@ -1667,13 +2393,49 @@ fn code_action_copies_single_stub_message_without_touching_other_entries() {
     let mut lsp = initialized_lsp(workspace.path(), 70);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        71,
-        &source_path,
-        position_of(&source_text, "hello = { \"\" }"),
+    let position = position_of(&source_text, "hello = { \"\" }");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 71,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 71)["result"]
+        .as_array()
+        .expect("expected code action array")
+        .clone();
+    let mut quickfix_titles = actions
+        .iter()
+        .filter(|action| {
+            action["kind"] == Value::String("quickfix".to_string())
+        })
+        .map(|action| action["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    quickfix_titles.sort();
+    assert_eq!(
+        quickfix_titles,
+        vec![
+            "Copy missing string `hello`".to_string(),
+            "Copy missing strings in file".to_string(),
+        ]
     );
-    let action = find_code_action(&actions, "Copy `hello` from source");
+
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Copy missing string `hello`".to_string())
+        })
+        .expect("missing code action: Copy missing string `hello`");
     let updated = apply_code_action_edit(
         &source_text,
         action,
@@ -1692,10 +2454,65 @@ fn code_action_copies_single_stub_message_without_touching_other_entries() {
             "sync-status = { \"\" }\n",
         )
     );
-    assert_eq!(
-        runtime_message_text(&updated, "es", "hello"),
-        runtime_message_text(&origin_text, "en", "hello")
+    let updated_resource = FluentResource::try_new(updated.clone())
+        .unwrap_or_else(|(_, errors)| {
+            panic!("failed to build FluentResource with {errors:?}\n{updated}")
+        });
+    let origin_resource = FluentResource::try_new(origin_text.clone())
+        .unwrap_or_else(|(_, errors)| {
+            panic!(
+                "failed to build FluentResource with {errors:?}\n{origin_text}"
+            )
+        });
+    let updated_locale: LanguageIdentifier =
+        "es".parse().expect("valid language identifier");
+    let origin_locale: LanguageIdentifier =
+        "en".parse().expect("valid language identifier");
+    let mut updated_bundle = FluentBundle::new(vec![updated_locale]);
+    updated_bundle.set_use_isolating(false);
+    updated_bundle
+        .add_resource(updated_resource)
+        .unwrap_or_else(|errors| {
+            panic!("failed to add Fluent resource to bundle: {errors:?}")
+        });
+    let mut origin_bundle = FluentBundle::new(vec![origin_locale]);
+    origin_bundle.set_use_isolating(false);
+    origin_bundle
+        .add_resource(origin_resource)
+        .unwrap_or_else(|errors| {
+            panic!("failed to add Fluent resource to bundle: {errors:?}")
+        });
+    let mut updated_errors = Vec::new();
+    let updated_rendered = updated_bundle
+        .format_pattern(
+            updated_bundle
+                .get_message("hello")
+                .and_then(|message| message.value())
+                .expect("missing hello"),
+            None,
+            &mut updated_errors,
+        )
+        .into_owned();
+    assert!(
+        updated_errors.is_empty(),
+        "runtime formatting errors: {updated_errors:?}"
     );
+    let mut origin_errors = Vec::new();
+    let origin_rendered = origin_bundle
+        .format_pattern(
+            origin_bundle
+                .get_message("hello")
+                .and_then(|message| message.value())
+                .expect("missing hello"),
+            None,
+            &mut origin_errors,
+        )
+        .into_owned();
+    assert!(
+        origin_errors.is_empty(),
+        "runtime formatting errors: {origin_errors:?}"
+    );
+    assert_eq!(updated_rendered, origin_rendered);
 }
 
 #[test]
@@ -1709,16 +2526,48 @@ fn code_action_copies_missing_attributes_for_selected_message_only() {
     let mut lsp = initialized_lsp(workspace.path(), 80);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        81,
-        &source_path,
-        position_of(&source_text, "download-action ="),
+    let position = position_of(&source_text, "download-action =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 81,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 81)["result"]
+        .as_array()
+        .expect("expected code action array")
+        .clone();
+    let mut quickfix_titles = actions
+        .iter()
+        .filter(|action| {
+            action["kind"] == Value::String("quickfix".to_string())
+        })
+        .map(|action| action["title"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    quickfix_titles.sort();
+    assert_eq!(
+        quickfix_titles,
+        vec![
+            "Copy missing attribute `download-action.tooltip`".to_string(),
+            "Copy missing strings in file".to_string(),
+        ]
     );
-    let action = find_code_action(
-        &actions,
-        "Copy missing attributes for `download-action` from source",
-    );
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Copy missing attribute `download-action.tooltip`".to_string())
+        })
+        .expect("missing code action: Copy missing attribute `download-action.tooltip`");
     let updated = apply_code_action_edit(
         &source_text,
         action,
@@ -1738,10 +2587,69 @@ fn code_action_copies_missing_attributes_for_selected_message_only() {
             "sync-status = { \"\" }\n",
         )
     );
-    assert_eq!(
-        runtime_message_text(&updated, "es", "download-action.tooltip"),
-        runtime_message_text(&origin_text, "en", "download-action.tooltip")
+    let updated_resource = FluentResource::try_new(updated.clone())
+        .unwrap_or_else(|(_, errors)| {
+            panic!("failed to build FluentResource with {errors:?}\n{updated}")
+        });
+    let origin_resource = FluentResource::try_new(origin_text.clone())
+        .unwrap_or_else(|(_, errors)| {
+            panic!(
+                "failed to build FluentResource with {errors:?}\n{origin_text}"
+            )
+        });
+    let updated_locale: LanguageIdentifier =
+        "es".parse().expect("valid language identifier");
+    let origin_locale: LanguageIdentifier =
+        "en".parse().expect("valid language identifier");
+    let mut updated_bundle = FluentBundle::new(vec![updated_locale]);
+    updated_bundle.set_use_isolating(false);
+    updated_bundle
+        .add_resource(updated_resource)
+        .unwrap_or_else(|errors| {
+            panic!("failed to add Fluent resource to bundle: {errors:?}")
+        });
+    let mut origin_bundle = FluentBundle::new(vec![origin_locale]);
+    origin_bundle.set_use_isolating(false);
+    origin_bundle
+        .add_resource(origin_resource)
+        .unwrap_or_else(|errors| {
+            panic!("failed to add Fluent resource to bundle: {errors:?}")
+        });
+    let updated_pattern = updated_bundle
+        .get_message("download-action")
+        .and_then(|message| {
+            message
+                .attributes()
+                .find(|attribute| attribute.id() == "tooltip")
+                .map(|attribute| attribute.value())
+        })
+        .expect("missing updated download-action.tooltip");
+    let origin_pattern = origin_bundle
+        .get_message("download-action")
+        .and_then(|message| {
+            message
+                .attributes()
+                .find(|attribute| attribute.id() == "tooltip")
+                .map(|attribute| attribute.value())
+        })
+        .expect("missing origin download-action.tooltip");
+    let mut updated_errors = Vec::new();
+    let updated_rendered = updated_bundle
+        .format_pattern(updated_pattern, None, &mut updated_errors)
+        .into_owned();
+    assert!(
+        updated_errors.is_empty(),
+        "runtime formatting errors: {updated_errors:?}"
     );
+    let mut origin_errors = Vec::new();
+    let origin_rendered = origin_bundle
+        .format_pattern(origin_pattern, None, &mut origin_errors)
+        .into_owned();
+    assert!(
+        origin_errors.is_empty(),
+        "runtime formatting errors: {origin_errors:?}"
+    );
+    assert_eq!(updated_rendered, origin_rendered);
 }
 
 #[test]
@@ -1761,37 +2669,68 @@ fn single_message_copy_actions_are_absent_for_complete_entries() {
     let mut lsp = initialized_lsp(workspace.path(), 90);
     open_document(&mut lsp, &source_path, source_text);
 
-    let hello_actions = request_code_actions_allow_empty(
-        &mut lsp,
-        91,
-        &source_path,
-        position_of(source_text, "hello = Hola Mundo"),
-    );
-    assert!(
-        hello_actions
-            .iter()
-            .all(|action| action["title"] != Value::String("Copy `hello` from source".to_string()))
-    );
+    let position = position_of(source_text, "hello = Hola Mundo");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 91,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let hello_actions = recv_response(&mut lsp, 91)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(hello_actions.iter().all(|action| {
+        action["title"]
+            != Value::String("Copy missing string `hello`".to_string())
+    }));
 
-    let download_actions = request_code_actions_allow_empty(
-        &mut lsp,
-        92,
-        &source_path,
-        position_of(source_text, "download-action ="),
-    );
+    let position = position_of(source_text, "download-action =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 92,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let download_actions = recv_response(&mut lsp, 92)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(download_actions.iter().all(|action| {
         action["title"]
             != Value::String(
-                "Copy missing attributes for `download-action` from source".to_string(),
+                "Copy missing attribute `download-action.tooltip`".to_string(),
             )
     }));
 }
 
 #[test]
-fn single_message_copy_action_is_absent_when_selected_key_has_no_origin_counterpart() {
+fn single_message_copy_action_is_absent_when_selected_key_has_no_origin_counterpart()
+ {
     let workspace = temp_workspace(&[
         ("locales/en/app.ftl", "shared = Hello\n"),
-        ("locales/es/app.ftl", "shared = Hola\nlocal-only = { \"\" }\n"),
+        (
+            "locales/es/app.ftl",
+            "shared = Hola\nlocal-only = { \"\" }\n",
+        ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
@@ -1799,21 +2738,35 @@ fn single_message_copy_action_is_absent_when_selected_key_has_no_origin_counterp
     let mut lsp = initialized_lsp(workspace.path(), 5_202);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions_allow_empty(
-        &mut lsp,
-        5_203,
-        &source_path,
-        position_of(&source_text, "local-only = { \"\" }"),
-    );
-    assert!(
-        actions
-            .iter()
-            .all(|action| action["title"] != Value::String("Copy `local-only` from source".to_string()))
-    );
+    let position = position_of(&source_text, "local-only = { \"\" }");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 5_203,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 5_203)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(actions.iter().all(|action| {
+        action["title"]
+            != Value::String("Copy missing string `local-only`".to_string())
+    }));
 }
 
 #[test]
-fn missing_attribute_copy_action_is_absent_when_selected_message_has_no_origin_counterpart() {
+fn missing_attribute_copy_action_is_absent_when_selected_message_has_no_origin_counterpart()
+ {
     let workspace = temp_workspace(&[
         ("locales/en/app.ftl", "shared = Hello\n"),
         (
@@ -1827,15 +2780,31 @@ fn missing_attribute_copy_action_is_absent_when_selected_message_has_no_origin_c
     let mut lsp = initialized_lsp(workspace.path(), 5_204);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions_allow_empty(
-        &mut lsp,
-        5_205,
-        &source_path,
-        position_of(&source_text, "orphan ="),
-    );
+    let position = position_of(&source_text, "orphan =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 5_205,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 5_205)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(actions.iter().all(|action| {
         action["title"]
-            != Value::String("Copy missing attributes for `orphan` from source".to_string())
+            != Value::String(
+                "Copy missing attribute `orphan.label`".to_string(),
+            )
     }));
 }
 
@@ -1848,19 +2817,35 @@ fn origin_files_do_not_offer_translation_only_missing_entry_quick_fixes() {
     let mut lsp = initialized_lsp(workspace.path(), 9_300);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions_allow_empty(
-        &mut lsp,
-        9_301,
-        &source_path,
-        position_of(&source_text, "hello = Hello World"),
-    );
+    let position = position_of(&source_text, "hello = Hello World");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 9_301,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 9_301)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(actions.iter().all(|action| {
         action["title"]
             != Value::String("Copy missing strings in file".to_string())
-            && action["title"] != Value::String("Copy missing string `hello`".to_string())
+            && action["title"]
+                != Value::String("Copy missing string `hello`".to_string())
             && action["title"]
                 != Value::String(
-                    "Copy missing attribute `download-action.tooltip`".to_string(),
+                    "Copy missing attribute `download-action.tooltip`"
+                        .to_string(),
                 )
     }));
 }
@@ -1870,7 +2855,8 @@ fn hover_from_translation_shows_local_formatted_messages() {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
-    let origin_text = std::fs::read_to_string(root.join("locales/en/app.ftl")).unwrap();
+    let origin_text =
+        std::fs::read_to_string(root.join("locales/en/app.ftl")).unwrap();
 
     let mut lsp = LspProcess::start();
 
@@ -1903,117 +2889,366 @@ fn hover_from_translation_shows_local_formatted_messages() {
     open_document(&mut lsp, &source_path, &source_text);
 
     let key_position = position_of(&source_text, "commented-preview");
-    assert_hover(
-        &mut lsp,
-        21,
-        &source_path,
-        key_position,
-        "```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```\n\n---\n\n```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```",
-        key_position.0,
-        0,
-    );
-
-    let body_hover = assert_hover(
-        &mut lsp,
-        22,
-        &source_path,
-        position_of(&source_text, "Abre la build mas reciente de"),
-        "```ftl\nOpen the latest Nightly build and pick up where you left off.\n```\n\n---\n\n```ftl\nAbre la build mas reciente de Nightly y sigue donde lo dejaste.\n```",
-        2,
-        0,
-    );
-    assert_hover_block_matches(&body_hover, 0, &origin_text, "en", "welcome-body", &[]);
-    assert_hover_block_matches(&body_hover, 1, &source_text, "es", "welcome-body", &[]);
-
-    let empty_key_position = position_of(&source_text, "empty-preview");
-    let empty_hover = assert_hover(
-        &mut lsp,
-        221,
-        &source_path,
-        position_of(&source_text, "\"\""),
-        "```ftl\nEnglish empty preview fallback.\n```\n\n---\n\n```ftl\n<empty>\n```",
-        empty_key_position.0,
-        0,
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 21,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let key_hover = recv_response(&mut lsp, 21);
+    assert_eq!(
+        key_hover["result"]["contents"]["kind"],
+        Value::String("markdown".to_string())
     );
     assert_eq!(
-        extract_ftl_blocks(&empty_hover),
+        key_hover["result"]["contents"]["value"],
+        Value::String("```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```\n\n---\n\n```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```".to_string())
+    );
+    assert_eq!(
+        key_hover["result"]["range"]["start"]["line"],
+        Value::from(key_position.0)
+    );
+    assert_eq!(
+        key_hover["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+
+    let body_position =
+        position_of(&source_text, "Abre la build mas reciente de");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 22,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": body_position.0, "character": body_position.1 }
+        }
+    }));
+    let body_hover = recv_response(&mut lsp, 22);
+    let body_value = body_hover["result"]["contents"]["value"]
+        .as_str()
+        .expect("expected hover markdown");
+    assert_eq!(
+        body_value,
+        format!(
+            "```ftl\n{}\n```\n\n---\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "welcome-body",
+                &[]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "welcome-body",
+                &[]
+            ),
+        )
+    );
+    assert_eq!(
+        body_hover["result"]["range"]["start"]["line"],
+        Value::from(2)
+    );
+    assert_eq!(
+        body_hover["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+    assert_eq!(
+        extract_ftl_blocks(body_value),
+        vec![
+            preview_message_text_with_overrides(
+                &origin_text,
+                "welcome-body",
+                &[]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "welcome-body",
+                &[]
+            ),
+        ]
+    );
+
+    let empty_key_position = position_of(&source_text, "empty-preview");
+    let empty_position = position_of(&source_text, "\"\"");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 221,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": empty_position.0, "character": empty_position.1 }
+        }
+    }));
+    let empty_hover = recv_response(&mut lsp, 221);
+    let empty_hover_value = empty_hover["result"]["contents"]["value"]
+        .as_str()
+        .expect("expected hover markdown");
+    assert_eq!(
+        empty_hover_value,
+        format!(
+            "```ftl\n{}\n```\n\n---\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "empty-preview",
+                &[]
+            ),
+            "<empty>",
+        )
+    );
+    assert_eq!(
+        empty_hover["result"]["range"]["start"]["line"],
+        Value::from(empty_key_position.0)
+    );
+    assert_eq!(
+        empty_hover["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+    assert_eq!(
+        extract_ftl_blocks(empty_hover_value),
         vec![
             "English empty preview fallback.".to_string(),
             "<empty>".to_string()
         ]
     );
 
-    let selector_hover = assert_hover(
-        &mut lsp,
-        23,
-        &source_path,
-        position_of(&source_text, "[female] ella"),
-        "`$gender=female`, `$count=*`\n\n```ftl\nCopy the download link for her account on 2 devices now.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de ella en 2 dispositivos ahora.\n```",
-        8,
-        0,
+    let selector_position = position_of(&source_text, "[female] ella");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 23,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": selector_position.0, "character": selector_position.1 }
+        }
+    }));
+    let selector_hover = recv_response(&mut lsp, 23);
+    let selector_hover_value = selector_hover["result"]["contents"]["value"]
+        .as_str()
+        .expect("expected hover markdown");
+    assert_eq!(
+        selector_hover_value,
+        format!(
+            "`$gender=female`, `$count=*`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "install-hint",
+                &[("$gender", "female")]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "install-hint",
+                &[("$gender", "female")]
+            ),
+        )
     );
-    assert_hover_block_matches(&selector_hover, 0, &origin_text, "en", "install-hint", &[("$gender", "female")]);
-    assert_hover_block_matches(&selector_hover, 1, &source_text, "es", "install-hint", &[("$gender", "female")]);
+    assert_eq!(
+        selector_hover["result"]["range"]["start"]["line"],
+        Value::from(8)
+    );
+    assert_eq!(
+        selector_hover["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+    assert_eq!(
+        extract_ftl_blocks(selector_hover_value),
+        vec![
+            preview_message_text_with_overrides(
+                &origin_text,
+                "install-hint",
+                &[("$gender", "female")]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "install-hint",
+                &[("$gender", "female")]
+            ),
+        ]
+    );
 
-    let attribute_hover = assert_hover(
-        &mut lsp,
-        24,
-        &source_path,
-        position_of(
-            &source_text,
-            "Instala la build recomendada para la cuenta de",
-        ),
-        "`$gender=*`, `$count=*`\n\n```ftl\nInstall the recommended build for their account on 2 devices now.\n```\n\n---\n\n`$gender=*`, `$count=*`\n\n```ftl\nInstala la build recomendada para la cuenta de elle en 2 dispositivos ahora.\n```",
-        21,
-        5,
-    );
-    assert_hover_block_matches(&attribute_hover, 0, &origin_text, "en", "download-action.tooltip", &[]);
-    assert_hover_block_matches(&attribute_hover, 1, &source_text, "es", "download-action.tooltip", &[]);
-
-    let post_selector_hover = assert_hover(
-        &mut lsp,
-        25,
-        &source_path,
-        position_of(&source_text, "en { $count } { $count ->"),
-        "`$gender=other`, `$count=*`\n\n```ftl\nCopy the download link for their account on 2 devices now.\n```\n\n---\n\n`$gender=other`, `$count=*`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en 2 dispositivos ahora.\n```",
-        8,
-        0,
-    );
-    assert_hover_block_matches(&post_selector_hover, 0, &origin_text, "en", "install-hint", &[("$gender", "other")]);
-    assert_hover_block_matches(&post_selector_hover, 1, &source_text, "es", "install-hint", &[("$gender", "other")]);
-
-    let second_selector_hover = assert_hover(
-        &mut lsp,
-        26,
-        &source_path,
-        position_of(&source_text, "[one] dispositivo"),
-        "`$gender=other`, `$count=one`\n\n```ftl\nCopy the download link for their account on 1 device now.\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\nCopia el enlace de descarga para la cuenta de elle en 1 dispositivo ahora.\n```",
-        8,
-        0,
-    );
-    assert_hover_block_matches(
-        &second_selector_hover,
-        0,
-        &origin_text,
-        "en",
-        "install-hint",
-        &[("$gender", "other"), ("$count", "one")],
-    );
-    assert_hover_block_matches(
-        &second_selector_hover,
-        1,
+    let attribute_position = position_of(
         &source_text,
-        "es",
-        "install-hint",
-        &[("$gender", "other"), ("$count", "one")],
+        "Instala la build recomendada para la cuenta de",
+    );
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 24,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": attribute_position.0, "character": attribute_position.1 }
+        }
+    }));
+    let attribute_hover = recv_response(&mut lsp, 24);
+    let attribute_hover_value = attribute_hover["result"]["contents"]["value"]
+        .as_str()
+        .expect("expected hover markdown");
+    assert_eq!(
+        attribute_hover_value,
+        format!(
+            "`$gender=*`, `$count=*`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=*`, `$count=*`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "download-action.tooltip",
+                &[]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "download-action.tooltip",
+                &[]
+            ),
+        )
+    );
+    assert_eq!(
+        attribute_hover["result"]["range"]["start"]["line"],
+        Value::from(21)
+    );
+    assert_eq!(
+        attribute_hover["result"]["range"]["start"]["character"],
+        Value::from(5)
+    );
+    assert_eq!(
+        extract_ftl_blocks(attribute_hover_value),
+        vec![
+            preview_message_text_with_overrides(
+                &origin_text,
+                "download-action.tooltip",
+                &[]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "download-action.tooltip",
+                &[]
+            ),
+        ]
+    );
+
+    let post_selector_position =
+        position_of(&source_text, "en { $count } { $count ->");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 25,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": post_selector_position.0, "character": post_selector_position.1 }
+        }
+    }));
+    let post_selector_hover = recv_response(&mut lsp, 25);
+    let post_selector_hover_value =
+        post_selector_hover["result"]["contents"]["value"]
+            .as_str()
+            .expect("expected hover markdown");
+    assert_eq!(
+        post_selector_hover_value,
+        format!(
+            "`$gender=other`, `$count=*`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=other`, `$count=*`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "install-hint",
+                &[("$gender", "other")]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "install-hint",
+                &[("$gender", "other")]
+            ),
+        )
+    );
+    assert_eq!(
+        post_selector_hover["result"]["range"]["start"]["line"],
+        Value::from(8)
+    );
+    assert_eq!(
+        post_selector_hover["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+    assert_eq!(
+        extract_ftl_blocks(post_selector_hover_value),
+        vec![
+            preview_message_text_with_overrides(
+                &origin_text,
+                "install-hint",
+                &[("$gender", "other")]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "install-hint",
+                &[("$gender", "other")]
+            ),
+        ]
+    );
+
+    let second_selector_position =
+        position_of(&source_text, "[one] dispositivo");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 26,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": {
+                "line": second_selector_position.0,
+                "character": second_selector_position.1
+            }
+        }
+    }));
+    let second_selector_hover = recv_response(&mut lsp, 26);
+    let second_selector_hover_value =
+        second_selector_hover["result"]["contents"]["value"]
+            .as_str()
+            .expect("expected hover markdown");
+    assert_eq!(
+        second_selector_hover_value,
+        format!(
+            "`$gender=other`, `$count=one`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "install-hint",
+                &[("$gender", "other"), ("$count", "one")],
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "install-hint",
+                &[("$gender", "other"), ("$count", "one")],
+            ),
+        )
+    );
+    assert_eq!(
+        second_selector_hover["result"]["range"]["start"]["line"],
+        Value::from(8)
+    );
+    assert_eq!(
+        second_selector_hover["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+    assert_eq!(
+        extract_ftl_blocks(second_selector_hover_value),
+        vec![
+            preview_message_text_with_overrides(
+                &origin_text,
+                "install-hint",
+                &[("$gender", "other"), ("$count", "one")],
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "install-hint",
+                &[("$gender", "other"), ("$count", "one")],
+            ),
+        ]
     );
 }
 
 #[test]
-fn hover_from_translation_matches_available_selector_variables_across_source_and_local() {
+fn hover_from_translation_matches_available_selector_variables_across_source_and_local()
+ {
     let root = fixture_root();
     let source_path = root.join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_text =
+        std::fs::read_to_string(root.join("locales/en/app.ftl")).unwrap();
 
     let mut lsp = LspProcess::start();
 
@@ -2045,34 +3280,112 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
 
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_hover(
-        &mut lsp,
-        28,
-        &source_path,
-        position_of(&source_text, "[female] ella misma"),
-        "`$platform=*`, `$count=*`\n\n```ftl\nSummary for mobile users with 2 packages ready.\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\nResumen para ella misma con 2 paquetes listo.\n```",
-        50,
-        0,
+    let female_position = position_of(&source_text, "[female] ella misma");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 28,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": female_position.0, "character": female_position.1 }
+        }
+    }));
+    let female_hover = recv_response(&mut lsp, 28);
+    assert_eq!(
+        female_hover["result"]["contents"]["value"],
+        Value::String(format!(
+            "`$platform=*`, `$count=*`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "mismatch-rollout",
+                &[]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "mismatch-rollout",
+                &[("$gender", "female")]
+            ),
+        ))
+    );
+    assert_eq!(
+        female_hover["result"]["range"]["start"]["line"],
+        Value::from(50)
+    );
+    assert_eq!(
+        female_hover["result"]["range"]["start"]["character"],
+        Value::from(0)
     );
 
-    assert_hover(
-        &mut lsp,
-        29,
-        &source_path,
-        position_of(&source_text, "[0] ningun paquete"),
-        "`$platform=*`, `$count=0`\n\n```ftl\nSummary for mobile users with no packages ready.\n```\n\n---\n\n`$gender=other`, `$count=0`\n\n```ftl\nResumen para elle misme con ningun paquete listo.\n```",
-        50,
-        0,
+    let zero_position = position_of(&source_text, "[0] ningun paquete");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 29,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": zero_position.0, "character": zero_position.1 }
+        }
+    }));
+    let zero_hover = recv_response(&mut lsp, 29);
+    assert_eq!(
+        zero_hover["result"]["contents"]["value"],
+        Value::String(format!(
+            "`$platform=*`, `$count=0`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=other`, `$count=0`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "mismatch-rollout",
+                &[("$count", "0")]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "mismatch-rollout",
+                &[("$count", "0")]
+            ),
+        ))
+    );
+    assert_eq!(
+        zero_hover["result"]["range"]["start"]["line"],
+        Value::from(50)
+    );
+    assert_eq!(
+        zero_hover["result"]["range"]["start"]["character"],
+        Value::from(0)
     );
 
-    assert_hover(
-        &mut lsp,
-        30,
-        &source_path,
-        position_of(&source_text, "[1] un paquete"),
-        "`$platform=*`, `$count=1`\n\n```ftl\nSummary for mobile users with one package ready.\n```\n\n---\n\n`$gender=other`, `$count=1`\n\n```ftl\nResumen para elle misme con un paquete listo.\n```",
-        50,
-        0,
+    let one_position = position_of(&source_text, "[1] un paquete");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 30,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": one_position.0, "character": one_position.1 }
+        }
+    }));
+    let one_hover = recv_response(&mut lsp, 30);
+    assert_eq!(
+        one_hover["result"]["contents"]["value"],
+        Value::String(format!(
+            "`$platform=*`, `$count=1`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=other`, `$count=1`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "mismatch-rollout",
+                &[("$count", "1")]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "mismatch-rollout",
+                &[("$count", "1")]
+            ),
+        ))
+    );
+    assert_eq!(
+        one_hover["result"]["range"]["start"]["line"],
+        Value::from(50)
+    );
+    assert_eq!(
+        one_hover["result"]["range"]["start"]["character"],
+        Value::from(0)
     );
 }
 
@@ -2081,6 +3394,8 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
     let root = fixture_root();
     let source_path = root.join("locales/lv/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_text =
+        std::fs::read_to_string(root.join("locales/en/app.ftl")).unwrap();
 
     let mut lsp = LspProcess::start();
 
@@ -2112,24 +3427,78 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
 
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_hover(
-        &mut lsp,
-        32,
-        &source_path,
-        position_of(&source_text, "[zero] neviena pakotne nav gatava"),
-        "`$count=zero`\n\n```ftl\nZero summary: no packages ready.\n```\n\n---\n\n`$count=zero`\n\n```ftl\nKopsavilkums ar neviena pakotne nav gatava.\n```",
-        0,
-        0,
+    let zero_position =
+        position_of(&source_text, "[zero] neviena pakotne nav gatava");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 32,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": zero_position.0, "character": zero_position.1 }
+        }
+    }));
+    let zero_hover = recv_response(&mut lsp, 32);
+    assert_eq!(
+        zero_hover["result"]["contents"]["value"],
+        Value::String(format!(
+            "`$count=zero`\n\n```ftl\n{}\n```\n\n---\n\n`$count=zero`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "zero-rollout",
+                &[("$count", "zero")]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "zero-rollout",
+                &[("$count", "zero")]
+            ),
+        ))
+    );
+    assert_eq!(
+        zero_hover["result"]["range"]["start"]["line"],
+        Value::from(0)
+    );
+    assert_eq!(
+        zero_hover["result"]["range"]["start"]["character"],
+        Value::from(0)
     );
 
-    assert_hover(
-        &mut lsp,
-        33,
-        &source_path,
-        position_of(&source_text, "[one] viena pakotne ir gatava"),
-        "`$count=one`\n\n```ftl\nZero summary: one package ready.\n```\n\n---\n\n`$count=one`\n\n```ftl\nKopsavilkums ar viena pakotne ir gatava.\n```",
-        0,
-        0,
+    let one_position =
+        position_of(&source_text, "[one] viena pakotne ir gatava");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 33,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": one_position.0, "character": one_position.1 }
+        }
+    }));
+    let one_hover = recv_response(&mut lsp, 33);
+    assert_eq!(
+        one_hover["result"]["contents"]["value"],
+        Value::String(format!(
+            "`$count=one`\n\n```ftl\n{}\n```\n\n---\n\n`$count=one`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "zero-rollout",
+                &[("$count", "one")]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "zero-rollout",
+                &[("$count", "one")]
+            ),
+        ))
+    );
+    assert_eq!(
+        one_hover["result"]["range"]["start"]["line"],
+        Value::from(0)
+    );
+    assert_eq!(
+        one_hover["result"]["range"]["start"]["character"],
+        Value::from(0)
     );
 }
 
@@ -2165,28 +3534,61 @@ fn hover_from_origin_file_shows_formatted_attribute_text() {
 
     open_document(&mut lsp, &source_path, &source_text);
 
-    let key_hover = assert_hover(
-        &mut lsp,
-        31,
-        &source_path,
-        position_of(&source_text, "label = Save"),
-        "```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```",
-        4,
-        5,
+    let key_position = position_of(&source_text, "label = Save");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 31,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let key_hover = recv_response(&mut lsp, 31);
+    let key_hover_value = key_hover["result"]["contents"]["value"]
+        .as_str()
+        .expect("expected hover markdown");
+    assert_eq!(
+        key_hover_value,
+        "```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```"
     );
     assert_eq!(
-        extract_ftl_blocks(&key_hover),
-        vec!["### Shared menu copy\n## File menu\n# Primary action".to_string()]
+        key_hover["result"]["range"]["start"]["line"],
+        Value::from(4)
+    );
+    assert_eq!(
+        key_hover["result"]["range"]["start"]["character"],
+        Value::from(5)
+    );
+    assert_eq!(
+        extract_ftl_blocks(key_hover_value),
+        vec![
+            "### Shared menu copy\n## File menu\n# Primary action".to_string()
+        ]
     );
 
-    let body_hover = request_hover(
-        &mut lsp,
-        32,
-        &source_path,
-        position_of(&source_text, "Save changes before closing the window"),
+    let body_position =
+        position_of(&source_text, "Save changes before closing the window");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 32,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": body_position.0, "character": body_position.1 }
+        }
+    }));
+    let body_hover = recv_response(&mut lsp, 32);
+    let body_value =
+        body_hover["result"]["contents"]["value"].as_str().unwrap();
+    assert_eq!(
+        extract_ftl_blocks(body_value),
+        vec![preview_message_text_with_overrides(
+            &source_text,
+            "menu-save.tooltip",
+            &[],
+        )]
     );
-    let body_value = body_hover["result"]["contents"]["value"].as_str().unwrap();
-    assert_hover_block_matches(body_value, 0, &source_text, "en", "menu-save.tooltip", &[]);
 }
 
 #[test]
@@ -2198,12 +3600,18 @@ fn hover_from_origin_file_shows_one_body_preview_block_for_top_level_message() {
     let mut lsp = initialized_lsp(&root, 6_124);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let hover = request_hover(
-        &mut lsp,
-        6_125,
-        &source_path,
-        position_of(&source_text, "Preview text for hover comments."),
-    );
+    let position =
+        position_of(&source_text, "Preview text for hover comments.");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_125,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_125);
     let value = hover["result"]["contents"]["value"].as_str().unwrap();
     assert_eq!(
         extract_ftl_blocks(value),
@@ -2336,22 +3744,45 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
     let mut lsp = LspProcess::start();
     initialize_lsp(&mut lsp, &root, 34);
 
-    for (index, (relative_path, needle, expected_blocks)) in top_level_cases.iter().enumerate() {
+    for (index, (relative_path, needle, expected_blocks)) in
+        top_level_cases.iter().enumerate()
+    {
         let path = root.join(relative_path);
         let source = std::fs::read_to_string(&path).unwrap();
         open_document(&mut lsp, &path, &source);
-        let expected_hover = comment_hover_markdown(expected_blocks);
-        let hover = assert_hover(
-            &mut lsp,
-            35 + i64::try_from(index).unwrap(),
-            &path,
-            position_of(&source, needle),
-            &expected_hover,
-            position_of(&source, needle).0,
-            0,
+        let request_id = 35 + i64::try_from(index).unwrap();
+        let position = position_of(&source, needle);
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", path.display()) },
+                "position": { "line": position.0, "character": position.1 }
+            }
+        }));
+        let hover = recv_response(&mut lsp, request_id);
+        let hover_value = hover["result"]["contents"]["value"]
+            .as_str()
+            .expect("expected hover markdown");
+        assert_eq!(
+            hover_value,
+            expected_blocks
+                .iter()
+                .map(|block| format!("```ftl\n{block}\n```"))
+                .collect::<Vec<_>>()
+                .join("\n\n---\n\n")
         );
         assert_eq!(
-            extract_ftl_blocks(&hover),
+            hover["result"]["range"]["start"]["line"],
+            Value::from(position.0)
+        );
+        assert_eq!(
+            hover["result"]["range"]["start"]["character"],
+            Value::from(0)
+        );
+        assert_eq!(
+            extract_ftl_blocks(hover_value),
             expected_blocks
                 .iter()
                 .map(|block| (*block).to_string())
@@ -2359,22 +3790,45 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
         );
     }
 
-    for (index, (relative_path, needle, expected_blocks)) in nested_cases.iter().enumerate() {
+    for (index, (relative_path, needle, expected_blocks)) in
+        nested_cases.iter().enumerate()
+    {
         let path = root.join(relative_path);
         let source = std::fs::read_to_string(&path).unwrap();
         open_document(&mut lsp, &path, &source);
-        let expected_hover = comment_hover_markdown(expected_blocks);
-        let hover = assert_hover(
-            &mut lsp,
-            45 + i64::try_from(index).unwrap(),
-            &path,
-            position_of(&source, needle),
-            &expected_hover,
-            position_of(&source, needle).0,
-            0,
+        let request_id = 45 + i64::try_from(index).unwrap();
+        let position = position_of(&source, needle);
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", path.display()) },
+                "position": { "line": position.0, "character": position.1 }
+            }
+        }));
+        let hover = recv_response(&mut lsp, request_id);
+        let hover_value = hover["result"]["contents"]["value"]
+            .as_str()
+            .expect("expected hover markdown");
+        assert_eq!(
+            hover_value,
+            expected_blocks
+                .iter()
+                .map(|block| format!("```ftl\n{block}\n```"))
+                .collect::<Vec<_>>()
+                .join("\n\n---\n\n")
         );
         assert_eq!(
-            extract_ftl_blocks(&hover),
+            hover["result"]["range"]["start"]["line"],
+            Value::from(position.0)
+        );
+        assert_eq!(
+            hover["result"]["range"]["start"]["character"],
+            Value::from(0)
+        );
+        assert_eq!(
+            extract_ftl_blocks(hover_value),
             expected_blocks
                 .iter()
                 .map(|block| (*block).to_string())
@@ -2402,14 +3856,30 @@ fn hover_key_with_origin_comments_only_shows_one_origin_comment_block() {
     open_document(&mut lsp, &source_path, &source_text);
 
     let key_position = position_of(&source_text, "commented-preview");
-    assert_hover(
-        &mut lsp,
-        6_111,
-        &source_path,
-        key_position,
-        "```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```",
-        key_position.0,
-        0,
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_111,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_111);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(
+            "```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```"
+                .to_string()
+        )
+    );
+    assert_eq!(
+        hover["result"]["range"]["start"]["line"],
+        Value::from(key_position.0)
+    );
+    assert_eq!(
+        hover["result"]["range"]["start"]["character"],
+        Value::from(0)
     );
 }
 
@@ -2432,14 +3902,30 @@ fn hover_key_with_local_comments_only_shows_one_local_comment_block() {
     open_document(&mut lsp, &source_path, &source_text);
 
     let key_position = position_of(&source_text, "local-note");
-    assert_hover(
-        &mut lsp,
-        6_113,
-        &source_path,
-        key_position,
-        "```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```",
-        key_position.0,
-        0,
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_113,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_113);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(
+            "```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```"
+                .to_string()
+        )
+    );
+    assert_eq!(
+        hover["result"]["range"]["start"]["line"],
+        Value::from(key_position.0)
+    );
+    assert_eq!(
+        hover["result"]["range"]["start"]["character"],
+        Value::from(0)
     );
 }
 
@@ -2461,12 +3947,17 @@ fn hover_key_without_comments_returns_no_hover() {
     let mut lsp = initialized_lsp(workspace.path(), 6_114);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let hover = request_hover(
-        &mut lsp,
-        6_115,
-        &source_path,
-        position_of(&source_text, "plain-note"),
-    );
+    let position = position_of(&source_text, "plain-note");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_115,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_115);
     assert_eq!(hover["result"], Value::Null);
 }
 
@@ -2485,14 +3976,32 @@ fn hover_body_without_origin_message_shows_one_local_preview_block() {
     let mut lsp = initialized_lsp(workspace.path(), 6_116);
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_hover(
-        &mut lsp,
-        6_117,
-        &source_path,
-        position_of(&source_text, "Texto solo local."),
-        "```ftl\nTexto solo local.\n```",
-        0,
-        0,
+    let position = position_of(&source_text, "Texto solo local.");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_117,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_117);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(format!(
+            "```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &source_text,
+                "local-only",
+                &[]
+            )
+        ))
+    );
+    assert_eq!(hover["result"]["range"]["start"]["line"], Value::from(0));
+    assert_eq!(
+        hover["result"]["range"]["start"]["character"],
+        Value::from(0)
     );
 }
 
@@ -2511,14 +4020,37 @@ fn hover_selector_without_origin_selectors_leaves_origin_block_headerless() {
     let mut lsp = initialized_lsp(workspace.path(), 6_118);
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_hover(
-        &mut lsp,
-        6_119,
-        &source_path,
-        position_of(&source_text, "[one] Descarga lista."),
-        "```ftl\nDownload ready.\n```\n\n---\n\n`$count=one`\n\n```ftl\nDescarga lista.\n```",
-        0,
-        0,
+    let position = position_of(&source_text, "[one] Descarga lista.");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_119,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_119);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(format!(
+            "```ftl\n{}\n```\n\n---\n\n`$count=one`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                "download-state = Download ready.\n",
+                "download-state",
+                &[],
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "download-state",
+                &[("$count", "one")]
+            ),
+        ))
+    );
+    assert_eq!(hover["result"]["range"]["start"]["line"], Value::from(0));
+    assert_eq!(
+        hover["result"]["range"]["start"]["character"],
+        Value::from(0)
     );
 }
 
@@ -2537,14 +4069,168 @@ fn hover_selector_without_origin_message_shows_one_local_selector_block() {
     let mut lsp = initialized_lsp(workspace.path(), 6_134);
     open_document(&mut lsp, &source_path, &source_text);
 
-    assert_hover(
-        &mut lsp,
-        6_135,
-        &source_path,
-        position_of(&source_text, "[one] Descarga lista."),
-        "`$count=one`\n\n```ftl\nDescarga lista.\n```",
-        0,
-        0,
+    let position = position_of(&source_text, "[one] Descarga lista.");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_135,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_135);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(format!(
+            "`$count=one`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &source_text,
+                "download-state",
+                &[("$count", "one")]
+            ),
+        ))
+    );
+    assert_eq!(hover["result"]["range"]["start"]["line"], Value::from(0));
+    assert_eq!(
+        hover["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+}
+
+#[test]
+fn hover_selector_preserves_unresolved_term_references_inside_selected_branch()
+{
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "branch-note =\n    { $platform ->\n        [desktop] Open { -missing-brand } now.\n       *[mobile] Open later.\n    }\n",
+        ),
+        (
+            "locales/es/app.ftl",
+            "branch-note =\n    { $platform ->\n        [desktop] Abre { -missing-brand } ahora.\n       *[mobile] Abre despues.\n    }\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_text =
+        std::fs::read_to_string(workspace.path().join("locales/en/app.ftl"))
+            .unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_136);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let position =
+        position_of(&source_text, "[desktop] Abre { -missing-brand } ahora.");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_137,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_137);
+    let hover_value = hover["result"]["contents"]["value"]
+        .as_str()
+        .expect("expected hover markdown")
+        .to_string();
+    assert_eq!(
+        hover_value,
+        format!(
+            "`$platform=desktop`\n\n```ftl\n{}\n```\n\n---\n\n`$platform=desktop`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "branch-note",
+                &[("$platform", "desktop")]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "branch-note",
+                &[("$platform", "desktop")]
+            ),
+        )
+    );
+    assert_eq!(hover["result"]["range"]["start"]["line"], Value::from(0));
+    assert_eq!(
+        hover["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+    assert_eq!(
+        extract_ftl_blocks(&hover_value),
+        vec![
+            "Open { -missing-brand } now.".to_string(),
+            "Abre { -missing-brand } ahora.".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn hover_selector_preserves_unresolved_non_selector_inline_references_inside_selected_branch()
+ {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "selector-copy =\n    { $count ->\n        [one] Show { missing-copy } now.\n       *[other] Show later.\n    }\n",
+        ),
+        (
+            "locales/es/app.ftl",
+            "selector-copy =\n    { $count ->\n        [one] Muestra { missing-copy } ahora.\n       *[other] Muestra despues.\n    }\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_text =
+        std::fs::read_to_string(workspace.path().join("locales/en/app.ftl"))
+            .unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_138);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let position =
+        position_of(&source_text, "[one] Muestra { missing-copy } ahora.");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_139,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_139);
+    let hover_value = hover["result"]["contents"]["value"]
+        .as_str()
+        .expect("expected hover markdown")
+        .to_string();
+    assert_eq!(
+        hover_value,
+        format!(
+            "`$count=one`\n\n```ftl\n{}\n```\n\n---\n\n`$count=one`\n\n```ftl\n{}\n```",
+            preview_message_text_with_overrides(
+                &origin_text,
+                "selector-copy",
+                &[("$count", "one")]
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "selector-copy",
+                &[("$count", "one")]
+            ),
+        )
+    );
+    assert_eq!(hover["result"]["range"]["start"]["line"], Value::from(0));
+    assert_eq!(
+        hover["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+    assert_eq!(
+        extract_ftl_blocks(&hover_value),
+        vec![
+            "Show { missing-copy } now.".to_string(),
+            "Muestra { missing-copy } ahora.".to_string(),
+        ]
     );
 }
 
@@ -2572,19 +4258,40 @@ fn hover_body_preview_stays_semantic_across_translation_locales() {
     let mut lsp = LspProcess::start();
     initialize_lsp(&mut lsp, &root, 60);
 
-    for (index, (relative_path, body_needle)) in translation_cases.iter().enumerate() {
+    for (index, (relative_path, body_needle)) in
+        translation_cases.iter().enumerate()
+    {
         let path = root.join(relative_path);
         let source = std::fs::read_to_string(&path).unwrap();
         open_document(&mut lsp, &path, &source);
-        let hover = request_hover(
-            &mut lsp,
-            61 + i64::try_from(index).unwrap(),
-            &path,
-            position_of(&source, body_needle),
-        );
+        let request_id = 61 + i64::try_from(index).unwrap();
+        let position = position_of(&source, body_needle);
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", path.display()) },
+                "position": { "line": position.0, "character": position.1 }
+            }
+        }));
+        let hover = recv_response(&mut lsp, request_id);
         let value = hover["result"]["contents"]["value"].as_str().unwrap();
-        assert_hover_block_matches(value, 0, &origin_text, "en", "commented-preview", &[]);
-        assert_hover_block_matches(value, 1, &source, &relative_path[8..10], "commented-preview", &[]);
+        assert_eq!(
+            extract_ftl_blocks(value),
+            vec![
+                preview_message_text_with_overrides(
+                    &origin_text,
+                    "commented-preview",
+                    &[]
+                ),
+                preview_message_text_with_overrides(
+                    &source,
+                    "commented-preview",
+                    &[]
+                ),
+            ]
+        );
     }
 }
 
@@ -2598,26 +4305,44 @@ fn hover_on_uncommented_key_does_not_fall_back_to_body_preview() {
     initialize_lsp(&mut lsp, &root, 62);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let key_hover = request_hover(
-        &mut lsp,
-        63,
-        &source_path,
-        position_of(&source_text, "zero-rollout"),
-    );
+    let key_position = position_of(&source_text, "zero-rollout");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 63,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let key_hover = recv_response(&mut lsp, 63);
     assert_eq!(
         key_hover["result"],
         Value::Null,
         "key hover should not degrade into body preview: {key_hover:?}"
     );
 
-    let body_hover = request_hover(
-        &mut lsp,
-        64,
-        &source_path,
-        position_of(&source_text, "Zero summary"),
+    let body_position = position_of(&source_text, "Zero summary");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 64,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": body_position.0, "character": body_position.1 }
+        }
+    }));
+    let body_hover = recv_response(&mut lsp, 64);
+    let body_value =
+        body_hover["result"]["contents"]["value"].as_str().unwrap();
+    assert_eq!(
+        extract_ftl_blocks(body_value),
+        vec![preview_message_text_with_overrides(
+            &source_text,
+            "zero-rollout",
+            &[],
+        )]
     );
-    let body_value = body_hover["result"]["contents"]["value"].as_str().unwrap();
-    assert_hover_block_matches(body_value, 0, &source_text, "en", "zero-rollout", &[]);
 }
 
 #[test]
@@ -2652,7 +4377,8 @@ fn code_lens_opens_full_selector_combinations_document() {
         Value::Bool(false)
     );
     assert_eq!(
-        initialize["result"]["capabilities"]["executeCommandProvider"]["commands"][0],
+        initialize["result"]["capabilities"]["executeCommandProvider"]["commands"]
+            [0],
         Value::String("fluent-lsp.showSelectorCombinations".to_string())
     );
 
@@ -2741,7 +4467,8 @@ fn code_lens_opens_full_selector_combinations_document() {
     let document_path = document_uri
         .strip_prefix("file://")
         .expect("expected file uri for temp document");
-    let document_text = std::fs::read_to_string(document_path).expect("read temp document");
+    let document_text =
+        std::fs::read_to_string(document_path).expect("read temp document");
     let expected_document = concat!(
         "# Selector combinations for `install-hint`\n\n",
         "Current language: `es`\n\n",
@@ -2761,6 +4488,7 @@ fn code_lens_opens_full_selector_combinations_document() {
         "        [one] device\n",
         "       *[other] devices\n",
         "    } now.\n",
+        "\n",
         "```\n\n",
         "Source language combinations:\n",
         "`$gender=female`, `$count=one`\n",
@@ -2943,15 +4671,37 @@ fn code_action_generates_prefix_selector_by_default() {
     let mut lsp = initialized_lsp(&root, 70);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        71,
-        &source_path,
-        position_of(&source_text, "coins-line"),
-    );
+    let position = position_of(&source_text, "coins-line");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 71,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 71)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let actions = rewrite_actions_only(actions);
     assert_eq!(actions.len(), 3);
-    let action = find_code_action(&actions, "Generate number selector (prefix)");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String(
+                    "Generate number selector (prefix)".to_string(),
+                )
+        })
+        .expect("missing code action: Generate number selector (prefix)");
     assert_eq!(
         action["title"],
         Value::String("Generate number selector (prefix)".to_string())
@@ -2978,20 +4728,40 @@ fn code_action_returns_all_styles_for_variable_occurrence() {
     let mut lsp = initialized_lsp(&root, 72);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        73,
-        &source_path,
-        position_of(&source_text, "{ $coins }"),
-    );
+    let position = position_of(&source_text, "{ $coins }");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 73,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 73)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let actions = rewrite_actions_only(actions);
     assert_eq!(actions.len(), 3);
     assert!(actions.iter().any(|action| action["title"]
-        == Value::String("Generate number selector from $coins (prefix)".to_string())));
+        == Value::String(
+            "Generate number selector from $coins (prefix)".to_string()
+        )));
     assert!(actions.iter().any(|action| action["title"]
-        == Value::String("Generate number selector from $coins (whole)".to_string())));
+        == Value::String(
+            "Generate number selector from $coins (whole)".to_string()
+        )));
     assert!(actions.iter().any(|action| action["title"]
-        == Value::String("Generate number selector from $coins (suffix)".to_string())));
+        == Value::String(
+            "Generate number selector from $coins (suffix)".to_string()
+        )));
 }
 
 #[test]
@@ -3014,17 +4784,33 @@ fn code_action_uses_client_selector_style_setting() {
     }));
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        75,
-        &source_path,
-        position_of(&source_text, "{ $coins }"),
-    );
+    let position = position_of(&source_text, "{ $coins }");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 75,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 75)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let actions = rewrite_actions_only(actions);
     let action = &actions[0];
     assert_eq!(
         action["title"],
-        Value::String("Generate number selector from $coins (whole)".to_string())
+        Value::String(
+            "Generate number selector from $coins (whole)".to_string()
+        )
     );
     assert_eq!(
         action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
@@ -3032,6 +4818,235 @@ fn code_action_uses_client_selector_style_setting() {
             "{ $coins ->\n    [one] Tienes { $coins } monedas.\n    *[other] Tienes { $coins } monedas.\n}"
                 .to_string()
         )
+    );
+}
+
+#[test]
+fn documented_config_contract_resolves_counterparts_from_exact_file_shape() {
+    let workspace = tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/en/dialogs"))
+        .unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/es/dialogs"))
+        .unwrap();
+    std::fs::write(
+        workspace.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("locales/en/app.ftl"),
+        "welcome-title = Welcome\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("locales/es/app.ftl"),
+        "welcome-title = Bienvenido\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("locales/en/dialogs/menu.ftl"),
+        "button-copy =\n    .label = Launch\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("locales/es/dialogs/menu.ftl"),
+        "button-copy =\n    .label = Abrir\n",
+    )
+    .unwrap();
+
+    let app_path = workspace.path().join("locales/es/app.ftl");
+    let app_text = std::fs::read_to_string(&app_path).unwrap();
+    let nested_path = workspace.path().join("locales/es/dialogs/menu.ftl");
+    let nested_text = std::fs::read_to_string(&nested_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 75_100);
+    open_document(&mut lsp, &app_path, &app_text);
+    let app_position = position_of(&app_text, "welcome-title = Bienvenido");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 75_101,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", app_path.display()) },
+            "position": { "line": app_position.0, "character": app_position.1 }
+        }
+    }));
+    let app_definition = recv_response(&mut lsp, 75_101);
+    assert_eq!(
+        app_definition["result"]["uri"],
+        Value::String(format!(
+            "file://{}",
+            workspace.path().join("locales/en/app.ftl").display()
+        ))
+    );
+    assert_eq!(
+        app_definition["result"]["range"]["start"]["line"],
+        Value::from(0)
+    );
+    assert_eq!(
+        app_definition["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+
+    open_document(&mut lsp, &nested_path, &nested_text);
+    let nested_position = position_of(&nested_text, "label = Abrir");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 75_102,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_path.display()) },
+            "position": { "line": nested_position.0, "character": nested_position.1 }
+        }
+    }));
+    let nested_definition = recv_response(&mut lsp, 75_102);
+    assert_eq!(
+        nested_definition["result"]["uri"],
+        Value::String(format!(
+            "file://{}",
+            workspace
+                .path()
+                .join("locales/en/dialogs/menu.ftl")
+                .display()
+        ))
+    );
+    assert_eq!(
+        nested_definition["result"]["range"]["start"]["line"],
+        Value::from(1)
+    );
+    assert_eq!(
+        nested_definition["result"]["range"]["start"]["character"],
+        Value::from(5)
+    );
+}
+
+#[test]
+fn client_configuration_applies_origin_language_and_file_masks_without_file_config()
+ {
+    let workspace = tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join("messages/fr")).unwrap();
+    std::fs::create_dir_all(workspace.path().join("messages/es")).unwrap();
+    std::fs::write(
+        workspace.path().join("messages/fr/app.ftl"),
+        "welcome-title = Bonjour\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("messages/es/app.ftl"),
+        "welcome-title = Hola\n",
+    )
+    .unwrap();
+
+    let source_path = workspace.path().join("messages/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 75_110);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "origin_language": "fr",
+                "file_masks": ["messages/{lang}/{filepath}.ftl"]
+            }
+        }),
+    );
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let position = position_of(&source_text, "welcome-title = Hola");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 75_111,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let response = recv_response(&mut lsp, 75_111);
+    assert_eq!(
+        response["result"]["uri"],
+        Value::String(format!(
+            "file://{}",
+            workspace.path().join("messages/fr/app.ftl").display()
+        ))
+    );
+    assert_eq!(response["result"]["range"]["start"]["line"], Value::from(0));
+    assert_eq!(
+        response["result"]["range"]["start"]["character"],
+        Value::from(0)
+    );
+}
+
+#[test]
+fn file_config_overrides_client_origin_language_and_file_masks() {
+    let workspace = tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/en")).unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/es")).unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/fr")).unwrap();
+    std::fs::create_dir_all(workspace.path().join("messages/fr")).unwrap();
+    std::fs::write(
+        workspace.path().join("fluent-lsp.toml"),
+        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("locales/en/app.ftl"),
+        "welcome-title = Welcome\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("locales/fr/app.ftl"),
+        "welcome-title = Bonjour\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("locales/es/app.ftl"),
+        "welcome-title = Bienvenido\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("messages/fr/app.ftl"),
+        "welcome-title = Salut\n",
+    )
+    .unwrap();
+
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 75_120);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "origin_language": "fr",
+                "file_masks": ["messages/{lang}/{filepath}.ftl"]
+            }
+        }),
+    );
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let position = position_of(&source_text, "welcome-title = Bienvenido");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 75_121,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": position.0, "character": position.1 }
+        }
+    }));
+    let response = recv_response(&mut lsp, 75_121);
+    assert_eq!(
+        response["result"]["uri"],
+        Value::String(format!(
+            "file://{}",
+            workspace.path().join("locales/en/app.ftl").display()
+        ))
+    );
+    assert_eq!(response["result"]["range"]["start"]["line"], Value::from(0));
+    assert_eq!(
+        response["result"]["range"]["start"]["character"],
+        Value::from(0)
     );
 }
 
@@ -3063,12 +5078,26 @@ fn file_config_selector_style_overrides_client_setting() {
     }));
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        77,
-        &source_path,
-        position_of(&source_text, "coins-line"),
-    );
+    let position = position_of(&source_text, "coins-line");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 77,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 77)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let actions = rewrite_actions_only(actions);
     let action = &actions[0];
     assert_eq!(
@@ -3097,13 +5126,35 @@ fn code_action_uses_snippet_text_edit_when_supported() {
     );
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        79,
-        &source_path,
-        position_of(&source_text, "coins-line"),
-    );
-    let action = find_code_action(&actions, "Generate number selector (prefix)");
+    let position = position_of(&source_text, "coins-line");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 79,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 79)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String(
+                    "Generate number selector (prefix)".to_string(),
+                )
+        })
+        .expect("missing code action: Generate number selector (prefix)");
     assert_eq!(
         action["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
@@ -3134,12 +5185,26 @@ fn code_action_generates_whole_snippet_when_no_variable_exists() {
     );
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        81,
-        &source_path,
-        position_of(&source_text, "plain-count"),
-    );
+    let position = position_of(&source_text, "plain-count");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 81,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 81)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let actions = rewrite_actions_only(actions);
     assert_eq!(actions.len(), 1);
     assert_eq!(
@@ -3175,14 +5240,30 @@ fn code_action_supports_attributes() {
     );
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        83,
-        &source_path,
-        position_of(&source_text, "$files"),
-    );
+    let position = position_of(&source_text, "$files");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 83,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 83)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(actions.iter().any(|action| action["title"]
-        == Value::String("Generate number selector from $files (prefix)".to_string())));
+        == Value::String(
+            "Generate number selector from $files (prefix)".to_string()
+        )));
 }
 
 #[test]
@@ -3205,15 +5286,37 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
     );
     open_document(&mut lsp, &source_path, &source_text);
 
-    let key_actions = request_code_actions(
-        &mut lsp,
-        85,
-        &source_path,
-        position_of(&source_text, "formatted-download"),
-    );
+    let key_position = position_of(&source_text, "formatted-download");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 85,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": key_position.0, "character": key_position.1 },
+                "end": { "line": key_position.0, "character": key_position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let key_actions = recv_response(&mut lsp, 85)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let key_actions = rewrite_actions_only(key_actions);
     assert_eq!(key_actions.len(), 3);
-    let key_prefix = find_code_action(&key_actions, "Generate number selector (prefix)");
+    let key_prefix = key_actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String(
+                    "Generate number selector (prefix)".to_string(),
+                )
+        })
+        .expect("missing code action: Generate number selector (prefix)");
     assert_eq!(
         key_prefix["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
@@ -3222,48 +5325,118 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
         )
     );
 
-    let variable_actions = request_code_actions(
-        &mut lsp,
-        91,
-        &source_path,
-        position_of(&source_text, "$downloads"),
-    );
+    let variable_position = position_of(&source_text, "$downloads");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 91,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": variable_position.0, "character": variable_position.1 },
+                "end": { "line": variable_position.0, "character": variable_position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let variable_actions = recv_response(&mut lsp, 91)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let variable_actions = rewrite_actions_only(variable_actions);
     assert_eq!(variable_actions.len(), 3);
+    let variable_prefix = variable_actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Generate number selector from $downloads (prefix)".to_string())
+        })
+        .expect("missing code action: Generate number selector from $downloads (prefix)");
     assert_eq!(
-        find_code_action(&variable_actions, "Generate number selector from $downloads (prefix)")["edit"]["documentChanges"][0]["edits"][0]["snippet"],
+        variable_prefix["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
             "Descarga { NUMBER($downloads) } { $downloads ->\n    [one] archivos.\n    *[other] archivos.\n}"
                 .to_string()
         )
     );
 
-    let function_actions = request_code_actions(
-        &mut lsp,
-        104,
-        &source_path,
-        position_of(&source_text, "NUMBER($downloads)"),
-    );
+    let function_position = position_of(&source_text, "NUMBER($downloads)");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 104,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": function_position.0, "character": function_position.1 },
+                "end": { "line": function_position.0, "character": function_position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let function_actions = recv_response(&mut lsp, 104)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let function_actions = rewrite_actions_only(function_actions);
     assert_eq!(function_actions.len(), 3);
+    let function_prefix = function_actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String(
+                    "Generate number selector from NUMBER($downloads) (prefix)".to_string(),
+                )
+        })
+        .expect("missing code action: Generate number selector from NUMBER($downloads) (prefix)");
     assert_eq!(
-        find_code_action(&function_actions, "Generate number selector from NUMBER($downloads) (prefix)")["edit"]["documentChanges"][0]["edits"][0]["snippet"],
+        function_prefix["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
             "Descarga { NUMBER($downloads) } { NUMBER($downloads) ->\n    [one] archivos.\n    *[other] archivos.\n}"
                 .to_string()
         )
     );
 
-    let deep_variable_actions = request_code_actions(
-        &mut lsp,
-        105,
-        &source_path,
-        position_of(&source_text, "WRAP(NUMBER($downloads))"),
-    );
+    let deep_variable_position =
+        position_of(&source_text, "WRAP(NUMBER($downloads))");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 105,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": deep_variable_position.0, "character": deep_variable_position.1 },
+                "end": { "line": deep_variable_position.0, "character": deep_variable_position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let deep_variable_actions = recv_response(&mut lsp, 105)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let deep_variable_actions = rewrite_actions_only(deep_variable_actions);
     assert_eq!(deep_variable_actions.len(), 3);
+    let deep_variable_prefix = deep_variable_actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String(
+                    "Generate number selector from WRAP(NUMBER($downloads)) (prefix)".to_string(),
+                )
+        })
+        .expect(
+            "missing code action: Generate number selector from WRAP(NUMBER($downloads)) (prefix)",
+        );
     assert_eq!(
-        find_code_action(&deep_variable_actions, "Generate number selector from WRAP(NUMBER($downloads)) (prefix)")["edit"]["documentChanges"][0]["edits"][0]["snippet"],
+        deep_variable_prefix["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
             "Descarga { WRAP(NUMBER($downloads)) } { WRAP(NUMBER($downloads)) ->\n    [one] archivos.\n    *[other] archivos.\n}"
                 .to_string()
@@ -3280,16 +5453,42 @@ fn code_action_keeps_punctuation_attached_in_prefix_generation() {
     let mut lsp = initialized_lsp(&root, 92);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        93,
-        &source_path,
-        position_of(&source_text, "coins-period"),
-    );
-    let action = find_code_action(&actions, "Generate number selector (prefix)");
+    let position = position_of(&source_text, "coins-period");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 93,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 93)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String(
+                    "Generate number selector (prefix)".to_string(),
+                )
+        })
+        .expect("missing code action: Generate number selector (prefix)");
     assert_eq!(
-        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
-        Value::String("Tienes { $coins } { $coins ->\n    [one].\n    *[other].\n}".to_string())
+        action["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
+        Value::String(
+            "Tienes { $coins } { $coins ->\n    [one].\n    *[other].\n}"
+                .to_string()
+        )
     );
 }
 
@@ -3302,12 +5501,26 @@ fn code_action_generation_is_absent_when_message_already_has_selector() {
     let mut lsp = initialized_lsp(&root, 116);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        117,
-        &source_path,
-        position_of(&source_text, "whole-coins"),
-    );
+    let position = position_of(&source_text, "whole-coins");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 117,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 117)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let mut titles = rewrite_actions_only(actions)
         .into_iter()
         .map(|action| action["title"].as_str().unwrap().to_string())
@@ -3332,12 +5545,26 @@ fn code_action_generation_is_absent_when_attribute_already_has_selector() {
     let mut lsp = initialized_lsp(&root, 118);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        119,
-        &source_path,
-        position_of(&source_text, "{ $files ->"),
-    );
+    let position = position_of(&source_text, "{ $files ->");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 119,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 119)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let mut titles = rewrite_actions_only(actions)
         .into_iter()
         .map(|action| action["title"].as_str().unwrap().to_string())
@@ -3362,22 +5589,38 @@ fn code_action_rewrites_whole_selector_to_prefix_and_suffix() {
     let mut lsp = initialized_lsp(&root, 94);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        95,
-        &source_path,
-        position_of(&source_text, "whole-coins"),
-    );
-    assert!(
-        actions.iter().any(|action| action["title"]
-            == Value::String("Convert selector to prefix form".to_string()))
-    );
-    assert!(
-        actions.iter().any(|action| action["title"]
-            == Value::String("Convert selector to suffix form".to_string()))
-    );
+    let position = position_of(&source_text, "whole-coins");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 95,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 95)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(actions.iter().any(|action| action["title"]
+        == Value::String("Convert selector to prefix form".to_string())));
+    assert!(actions.iter().any(|action| action["title"]
+        == Value::String("Convert selector to suffix form".to_string())));
 
-    let prefix = find_code_action(&actions, "Convert selector to prefix form");
+    let prefix = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Convert selector to prefix form".to_string())
+        })
+        .expect("missing code action: Convert selector to prefix form");
     assert_eq!(
         prefix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
         Value::String(
@@ -3386,7 +5629,13 @@ fn code_action_rewrites_whole_selector_to_prefix_and_suffix() {
         )
     );
 
-    let suffix = find_code_action(&actions, "Convert selector to suffix form");
+    let suffix = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Convert selector to suffix form".to_string())
+        })
+        .expect("missing code action: Convert selector to suffix form");
     assert_eq!(
         suffix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
         Value::String(
@@ -3405,19 +5654,93 @@ fn code_action_rewrites_prefix_selector_to_whole() {
     let mut lsp = initialized_lsp(&root, 96);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        97,
-        &source_path,
-        position_of(&source_text, "prefix-coins"),
-    );
-    let action = find_code_action(&actions, "Convert selector to whole form");
+    let position = position_of(&source_text, "prefix-coins");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 97,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 97)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Convert selector to whole form".to_string())
+        })
+        .expect("missing code action: Convert selector to whole form");
     assert_eq!(
         action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
         Value::String(
             "{ $coins ->\n    [one] Tienes { $coins } moneda.\n    *[other] Tienes { $coins } monedas.\n}"
                 .to_string()
         )
+    );
+}
+
+#[test]
+fn code_action_selector_rewrite_preserves_assignment_spacing() {
+    let workspace = temp_workspace(&[
+        ("locales/en/app.ftl", "placeholder = Hello\n"),
+        (
+            "locales/es/app.ftl",
+            "prefix-coins = Tienes { $coins } { $coins ->\n    [one] moneda.\n    *[other] monedas.\n}\n",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 97_100);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let position = position_of(&source_text, "prefix-coins");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 97_101,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 97_101)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Convert selector to whole form".to_string())
+        })
+        .expect("missing code action: Convert selector to whole form");
+    let updated = apply_code_action_edit(
+        &source_text,
+        action,
+        &format!("file://{}", source_path.display()),
+    );
+
+    assert_eq!(
+        updated,
+        "prefix-coins = { $coins ->\n    [one] Tienes { $coins } moneda.\n    *[other] Tienes { $coins } monedas.\n}\n"
     );
 }
 
@@ -3430,19 +5753,30 @@ fn code_action_rewrites_suffix_selector_to_whole_and_prefix() {
     let mut lsp = initialized_lsp(&root, 98);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        99,
-        &source_path,
-        position_of(&source_text, "suffix-coins"),
-    );
-    assert!(actions.iter().any(
-        |action| action["title"] == Value::String("Convert selector to whole form".to_string())
-    ));
-    assert!(
-        actions.iter().any(|action| action["title"]
-            == Value::String("Convert selector to prefix form".to_string()))
-    );
+    let position = position_of(&source_text, "suffix-coins");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 99,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 99)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(actions.iter().any(|action| action["title"]
+        == Value::String("Convert selector to whole form".to_string())));
+    assert!(actions.iter().any(|action| action["title"]
+        == Value::String("Convert selector to prefix form".to_string())));
 }
 
 #[test]
@@ -3454,15 +5788,35 @@ fn code_action_bare_suffix_like_selector_only_offers_prefix() {
     let mut lsp = initialized_lsp(&root, 100);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        101,
-        &source_path,
-        position_of(&source_text, "bare-suffix-coins"),
-    );
+    let position = position_of(&source_text, "bare-suffix-coins");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 101,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 101)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let actions = rewrite_actions_only(actions);
     assert_eq!(actions.len(), 1);
-    let action = find_code_action(&actions, "Convert selector to prefix form");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Convert selector to prefix form".to_string())
+        })
+        .expect("missing code action: Convert selector to prefix form");
     assert_eq!(
         action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
         Value::String(
@@ -3480,13 +5834,33 @@ fn code_action_rewrites_nested_whole_selector_inside_variant() {
     let mut lsp = initialized_lsp(&root, 102);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        103,
-        &source_path,
-        position_of_nth(&source_text, "Ella tiene", 2),
-    );
-    let action = find_code_action(&actions, "Convert selector to prefix form");
+    let position = position_of_nth(&source_text, "Ella tiene", 2);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 103,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 103)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Convert selector to prefix form".to_string())
+        })
+        .expect("missing code action: Convert selector to prefix form");
     assert_eq!(
         action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
         Value::String(
@@ -3507,12 +5881,26 @@ fn code_action_rewrite_is_absent_when_message_has_no_selector() {
     let mut lsp = initialized_lsp(&root, 120);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        121,
-        &source_path,
-        position_of(&source_text, "coins-line"),
-    );
+    let position = position_of(&source_text, "coins-line");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 121,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 121)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let mut titles = rewrite_actions_only(actions)
         .into_iter()
         .map(|action| action["title"].as_str().unwrap().to_string())
@@ -3538,12 +5926,26 @@ fn code_action_rewrite_is_absent_when_attribute_has_no_selector() {
     let mut lsp = initialized_lsp(&root, 122);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        123,
-        &source_path,
-        position_of(&source_text, "$files"),
-    );
+    let position = position_of(&source_text, "$files");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 123,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 123)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let mut titles = rewrite_actions_only(actions)
         .into_iter()
         .map(|action| action["title"].as_str().unwrap().to_string())
@@ -3569,13 +5971,33 @@ fn code_action_rewrites_selector_inside_attribute_value() {
     let mut lsp = initialized_lsp(&root, 110);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        111,
-        &source_path,
-        position_of(&source_text, "{ $files ->"),
-    );
-    let prefix = find_code_action(&actions, "Convert selector to prefix form");
+    let position = position_of(&source_text, "{ $files ->");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 111,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 111)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let prefix = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Convert selector to prefix form".to_string())
+        })
+        .expect("missing code action: Convert selector to prefix form");
     assert_eq!(
         prefix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
         Value::String(
@@ -3583,7 +6005,13 @@ fn code_action_rewrites_selector_inside_attribute_value() {
                 .to_string()
         )
     );
-    let suffix = find_code_action(&actions, "Convert selector to suffix form");
+    let suffix = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Convert selector to suffix form".to_string())
+        })
+        .expect("missing code action: Convert selector to suffix form");
     assert_eq!(
         suffix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
         Value::String(
@@ -3602,14 +6030,35 @@ fn attribute_rewrite_range_does_not_consume_comments_or_attribute_key() {
     let mut lsp = initialized_lsp(&root, 112);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        113,
-        &source_path,
-        position_of(&source_text, "{ $files ->"),
-    );
-    let prefix = find_code_action(&actions, "Convert selector to prefix form");
-    let edit = &prefix["edit"]["changes"][format!("file://{}", source_path.display())][0];
+    let position = position_of(&source_text, "{ $files ->");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 113,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 113)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let prefix = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Convert selector to prefix form".to_string())
+        })
+        .expect("missing code action: Convert selector to prefix form");
+    let edit = &prefix["edit"]["changes"]
+        [format!("file://{}", source_path.display())][0];
     assert_eq!(edit["range"]["start"]["line"], Value::from(73));
     assert_eq!(edit["range"]["start"]["character"], Value::from(15));
 }
@@ -3623,16 +6072,35 @@ fn code_action_rewrites_selected_count_selector_with_trailing_suffix_text() {
     let mut lsp = initialized_lsp(&root, 106);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        107,
-        &source_path,
-        position_of(&source_text, "{ $count ->"),
-    );
-    assert!(actions.iter().any(
-        |action| action["title"] == Value::String("Convert selector to whole form".to_string())
-    ));
-    let suffix = find_code_action(&actions, "Convert selector to suffix form");
+    let position = position_of(&source_text, "{ $count ->");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 107,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 107)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(actions.iter().any(|action| action["title"]
+        == Value::String("Convert selector to whole form".to_string())));
+    let suffix = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Convert selector to suffix form".to_string())
+        })
+        .expect("missing code action: Convert selector to suffix form");
     assert_eq!(
         suffix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
         Value::String(
@@ -3643,7 +6111,8 @@ fn code_action_rewrites_selected_count_selector_with_trailing_suffix_text() {
 }
 
 #[test]
-fn code_action_rewrites_selected_gender_selector_to_whole_with_nested_count_preserved() {
+fn code_action_rewrites_selected_gender_selector_to_whole_with_nested_count_preserved()
+ {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
@@ -3651,14 +6120,34 @@ fn code_action_rewrites_selected_gender_selector_to_whole_with_nested_count_pres
     let mut lsp = initialized_lsp(&root, 108);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        109,
-        &source_path,
-        position_of(&source_text, "{ $gender ->"),
-    );
+    let position = position_of(&source_text, "{ $gender ->");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 109,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 109)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert_eq!(actions.len(), 1);
-    let whole = find_code_action(&actions, "Convert selector to whole form");
+    let whole = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Convert selector to whole form".to_string())
+        })
+        .expect("missing code action: Convert selector to whole form");
     assert_eq!(
         whole["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
         Value::String(
@@ -3677,21 +6166,49 @@ fn code_action_is_hidden_for_ambiguous_message_keys() {
     let mut lsp = initialized_lsp(&root, 86);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions_allow_empty(
-        &mut lsp,
-        87,
-        &source_path,
-        position_of(&source_text, "range-summary"),
-    );
+    let position = position_of(&source_text, "range-summary");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 87,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 87)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let actions = rewrite_actions_only(actions);
     assert!(actions.is_empty());
 
-    let nested_actions = request_code_actions_allow_empty(
-        &mut lsp,
-        88,
-        &source_path,
-        position_of(&source_text, "nested-coins"),
-    );
+    let position = position_of(&source_text, "nested-coins");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 88,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let nested_actions = recv_response(&mut lsp, 88)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let nested_actions = rewrite_actions_only(nested_actions);
     assert!(nested_actions.is_empty());
 }
@@ -3725,7 +6242,8 @@ fn diagnostics_report_unsupported_and_missing_categories_when_enabled() {
     send_open_document(&mut lsp, &source_path, &source_text);
     send_save_document(&mut lsp, &source_path, Some(&source_text));
 
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
         .as_array()
         .expect("expected diagnostics array");
@@ -3749,7 +6267,8 @@ fn diagnostics_report_unsupported_and_missing_categories_when_enabled() {
     assert_eq!(
         messages
             .iter()
-            .filter(|message| *message == "Numeric selector for `lv` is missing category `zero`")
+            .filter(|message| *message
+                == "Numeric selector for `lv` is missing category `zero`")
             .count(),
         2
     );
@@ -3758,7 +6277,10 @@ fn diagnostics_report_unsupported_and_missing_categories_when_enabled() {
         .iter()
         .find(|diagnostic| {
             diagnostic["message"]
-                == Value::String("`few` is not a supported plural category for `lv`".to_string())
+                == Value::String(
+                    "`few` is not a supported plural category for `lv`"
+                        .to_string(),
+                )
         })
         .unwrap();
     assert_eq!(unsupported["severity"], Value::from(1));
@@ -3791,7 +6313,8 @@ fn diagnostics_report_selector_style_mismatches_when_enabled() {
     send_open_document(&mut lsp, &source_path, &source_text);
     send_save_document(&mut lsp, &source_path, Some(&source_text));
 
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
         .as_array()
         .expect("expected diagnostics array");
@@ -3805,8 +6328,10 @@ fn diagnostics_report_selector_style_mismatches_when_enabled() {
     assert_eq!(
         sorted_messages,
         vec![
-            "Selector style is `suffix`, but workspace prefers `prefix`".to_string(),
-            "Selector style is `whole`, but workspace prefers `prefix`".to_string(),
+            "Selector style is `suffix`, but workspace prefers `prefix`"
+                .to_string(),
+            "Selector style is `whole`, but workspace prefers `prefix`"
+                .to_string(),
         ]
     );
 }
@@ -3837,7 +6362,8 @@ fn file_config_overrides_client_style_diagnostic_settings() {
     send_open_document(&mut lsp, &source_path, &source_text);
     send_save_document(&mut lsp, &source_path, Some(&source_text));
 
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
         .as_array()
         .expect("expected diagnostics array");
@@ -3851,8 +6377,10 @@ fn file_config_overrides_client_style_diagnostic_settings() {
     assert_eq!(
         sorted_messages,
         vec![
-            "Selector style is `prefix`, but workspace prefers `whole`".to_string(),
-            "Selector style is `suffix`, but workspace prefers `whole`".to_string(),
+            "Selector style is `prefix`, but workspace prefers `whole`"
+                .to_string(),
+            "Selector style is `suffix`, but workspace prefers `whole`"
+                .to_string(),
         ]
     );
 }
@@ -3875,7 +6403,8 @@ fn diagnostics_report_invalid_numeric_identifier_keys_when_enabled() {
     send_open_document(&mut lsp, &source_path, source_text);
     send_save_document(&mut lsp, &source_path, Some(source_text));
 
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
         .as_array()
         .expect("expected diagnostics array");
@@ -3895,8 +6424,7 @@ fn diagnostics_report_invalid_numeric_identifier_keys_when_enabled() {
 fn diagnostics_ignore_non_numeric_admin_other_selector() {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");
-    let source_text =
-        "bad-key =\n    { $count ->\n        [admins] nope\n       *[other] ok\n    }\n";
+    let source_text = "bad-key =\n    { $count ->\n        [admins] nope\n       *[other] ok\n    }\n";
 
     let mut lsp = initialized_lsp(&root, 122);
     change_configuration(
@@ -3911,7 +6439,8 @@ fn diagnostics_ignore_non_numeric_admin_other_selector() {
     send_open_document(&mut lsp, &source_path, source_text);
     send_save_document(&mut lsp, &source_path, Some(source_text));
 
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     assert_eq!(
         notification["params"]["diagnostics"],
         Value::Array(Vec::new())
@@ -3940,7 +6469,8 @@ fn diagnostics_do_not_warn_for_complete_numeric_selectors_or_matching_style() {
     send_open_document(&mut lsp, &source_path, &source_text);
     send_save_document(&mut lsp, &source_path, Some(&source_text));
 
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     assert_eq!(
         notification["params"]["diagnostics"],
         Value::Array(Vec::new())
@@ -3965,14 +6495,18 @@ fn parse_error_diagnostics_publish_on_save_and_clear_after_fix() {
     send_open_document(&mut lsp, &source_path, invalid_source);
     send_save_document(&mut lsp, &source_path, None);
 
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
         .as_array()
         .expect("expected diagnostics array");
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(
         diagnostics[0]["message"],
-        Value::String("Fluent syntax error: Expected a token starting with \"=\"".to_string())
+        Value::String(
+            "Fluent syntax error: Expected a token starting with \"=\""
+                .to_string()
+        )
     );
     assert_eq!(diagnostics[0]["severity"], Value::from(1));
     assert_eq!(
@@ -3988,7 +6522,8 @@ fn parse_error_diagnostics_publish_on_save_and_clear_after_fix() {
     send_change_document(&mut lsp, &source_path, 2, valid_source);
     send_save_document(&mut lsp, &source_path, None);
 
-    let cleared = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let cleared =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     assert_eq!(cleared["params"]["diagnostics"], Value::Array(Vec::new()));
 }
 
@@ -4011,7 +6546,8 @@ fn diagnostics_report_local_selector_style_mismatches_when_enabled() {
     send_open_document(&mut lsp, &source_path, source_text);
     send_save_document(&mut lsp, &source_path, Some(source_text));
 
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
         .as_array()
         .expect("expected diagnostics array");
@@ -4019,7 +6555,10 @@ fn diagnostics_report_local_selector_style_mismatches_when_enabled() {
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(
         diagnostics[0]["message"],
-        Value::String("Selector style is `whole`, but workspace prefers `prefix`".to_string())
+        Value::String(
+            "Selector style is `whole`, but workspace prefers `prefix`"
+                .to_string()
+        )
     );
 }
 
@@ -4042,7 +6581,8 @@ fn diagnostics_use_unicode_plural_categories_for_ukrainian() {
     send_open_document(&mut lsp, &source_path, &source_text);
     send_save_document(&mut lsp, &source_path, Some(&source_text));
 
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     let diagnostics = notification["params"]["diagnostics"]
         .as_array()
         .expect("expected diagnostics array");
@@ -4079,7 +6619,8 @@ fn did_close_clears_document_diagnostics() {
     let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
 
     send_close_document(&mut lsp, &source_path);
-    let notification = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     assert_eq!(
         notification["params"]["uri"],
         Value::String(format!("file://{}", source_path.display()))
@@ -4099,13 +6640,33 @@ fn code_action_preserves_nested_selector_when_generating_inside_variant() {
     let mut lsp = initialized_lsp(&root, 89);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let actions = request_code_actions(
-        &mut lsp,
-        90,
-        &source_path,
-        position_of_nth(&source_text, "$coins", 2),
-    );
-    let action = find_code_action(&actions, "Generate number selector from $coins (prefix)");
+    let position = position_of_nth(&source_text, "$coins", 2);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 90,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": { "line": position.0, "character": position.1 },
+                "end": { "line": position.0, "character": position.1 }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let actions = recv_response(&mut lsp, 90)["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let action = actions
+        .iter()
+        .find(|action| {
+            action["title"]
+                == Value::String("Generate number selector from $coins (prefix)".to_string())
+        })
+        .expect("missing code action: Generate number selector from $coins (prefix)");
     assert_eq!(
         action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
         Value::String(
@@ -4113,22 +6674,6 @@ fn code_action_preserves_nested_selector_when_generating_inside_variant() {
                 .to_string()
         )
     );
-}
-
-struct ReferenceExpectation<'a> {
-    relative_path: &'a str,
-    line: u32,
-    character: u32,
-}
-
-impl<'a> ReferenceExpectation<'a> {
-    fn new(relative_path: &'a str, line: u32, character: u32) -> Self {
-        Self {
-            relative_path,
-            line,
-            character,
-        }
-    }
 }
 
 fn initialized_lsp(root: &Path, request_id: i64) -> LspProcess {
@@ -4211,7 +6756,12 @@ fn send_save_document(lsp: &mut LspProcess, path: &Path, text: Option<&str>) {
     }));
 }
 
-fn send_change_document(lsp: &mut LspProcess, path: &Path, version: i32, text: &str) {
+fn send_change_document(
+    lsp: &mut LspProcess,
+    path: &Path,
+    version: i32,
+    text: &str,
+) {
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "method": "textDocument/didChange",
@@ -4245,8 +6795,11 @@ fn open_document(lsp: &mut LspProcess, path: &Path, text: &str) {
     send_open_document(lsp, path, text);
     send_save_document(lsp, path, Some(text));
     loop {
-        let notification = recv_notification(lsp, "textDocument/publishDiagnostics");
-        if notification["params"]["uri"] == Value::String(format!("file://{}", path.display())) {
+        let notification =
+            recv_notification(lsp, "textDocument/publishDiagnostics");
+        if notification["params"]["uri"]
+            == Value::String(format!("file://{}", path.display()))
+        {
             break;
         }
     }
@@ -4259,6 +6812,52 @@ fn recv_notification(lsp: &mut LspProcess, method: &str) -> Value {
             return message;
         }
     }
+}
+
+fn recv_notifications_for_methods(
+    lsp: &mut LspProcess,
+    methods: &[&str],
+) -> HashMap<String, Value> {
+    let wanted = methods
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    let mut found = HashMap::new();
+    while found.len() < wanted.len() {
+        let message = lsp.recv();
+        let Some(method) = message["method"].as_str() else {
+            continue;
+        };
+        if wanted.contains(method) && !found.contains_key(method) {
+            found.insert(method.to_string(), message);
+        }
+    }
+    found
+}
+
+fn recv_response_and_notification(
+    lsp: &mut LspProcess,
+    request_id: i64,
+    method: &str,
+) -> (Value, Value) {
+    let mut response = None;
+    let mut notification = None;
+    while response.is_none() || notification.is_none() {
+        let message = lsp.recv();
+        if notification.is_none()
+            && message["method"] == Value::String(method.to_string())
+        {
+            notification = Some(message);
+            continue;
+        }
+        if response.is_none() && message["id"] == Value::from(request_id) {
+            response = Some(message);
+        }
+    }
+    (
+        response.expect("missing response"),
+        notification.expect("missing notification"),
+    )
 }
 
 fn recv_response(lsp: &mut LspProcess, request_id: i64) -> Value {
@@ -4278,107 +6877,6 @@ fn change_configuration(lsp: &mut LspProcess, settings: Value) {
             "settings": settings
         }
     }));
-}
-
-fn request_completion_labels(
-    lsp: &mut LspProcess,
-    request_id: i64,
-    source_path: &Path,
-    position: (u32, u32),
-) -> Vec<String> {
-    request_completion_items(lsp, request_id, source_path, position)
-        .into_iter()
-        .filter_map(|item| item["label"].as_str().map(ToString::to_string))
-        .collect()
-}
-
-fn request_completion_items(
-    lsp: &mut LspProcess,
-    request_id: i64,
-    source_path: &Path,
-    position: (u32, u32),
-) -> Vec<Value> {
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "textDocument/completion",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "position": { "line": position.0, "character": position.1 }
-        }
-    }));
-
-    let response = recv_response(lsp, request_id);
-    if response["result"].is_array() {
-        response["result"].as_array().cloned().unwrap_or_default()
-    } else {
-        response["result"]["items"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-    }
-}
-
-fn request_code_actions(
-    lsp: &mut LspProcess,
-    request_id: i64,
-    source_path: &Path,
-    position: (u32, u32),
-) -> Vec<Value> {
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "textDocument/codeAction",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "range": {
-                "start": { "line": position.0, "character": position.1 },
-                "end": { "line": position.0, "character": position.1 }
-            },
-            "context": {
-                "diagnostics": []
-            }
-        }
-    }));
-
-    let response = recv_response(lsp, request_id);
-    response["result"]
-        .as_array()
-        .expect("expected code action array")
-        .clone()
-}
-
-fn request_code_actions_allow_empty(
-    lsp: &mut LspProcess,
-    request_id: i64,
-    source_path: &Path,
-    position: (u32, u32),
-) -> Vec<Value> {
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "textDocument/codeAction",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "range": {
-                "start": { "line": position.0, "character": position.1 },
-                "end": { "line": position.0, "character": position.1 }
-            },
-            "context": {
-                "diagnostics": []
-            }
-        }
-    }));
-
-    let response = recv_response(lsp, request_id);
-    response["result"].as_array().cloned().unwrap_or_default()
-}
-
-fn find_code_action<'a>(actions: &'a [Value], title: &str) -> &'a Value {
-    actions
-        .iter()
-        .find(|action| action["title"] == Value::String(title.to_string()))
-        .unwrap_or_else(|| panic!("missing code action: {title}"))
 }
 
 fn copy_dir(source: &Path, dest: &Path) {
@@ -4414,310 +6912,9 @@ fn temp_workspace(files: &[(&str, &str)]) -> TempDir {
     temp
 }
 
-fn assert_references(
-    lsp: &mut LspProcess,
-    request_id: i64,
-    source_path: &Path,
-    position: (u32, u32),
-    expected: &[ReferenceExpectation<'_>],
-) {
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "textDocument/references",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "position": { "line": position.0, "character": position.1 },
-            "context": { "includeDeclaration": false }
-        }
-    }));
-
-    let references = recv_response(lsp, request_id);
-    let items = references["result"]
-        .as_array()
-        .expect("expected references array");
-    assert_eq!(items.len(), expected.len());
-
-    for (item, expected) in items.iter().zip(expected.iter()) {
-        let uri = item["uri"].as_str().unwrap();
-        assert!(
-            uri.ends_with(expected.relative_path),
-            "unexpected reference uri: {uri}"
-        );
-        assert_eq!(item["range"]["start"]["line"], Value::from(expected.line));
-        assert_eq!(
-            item["range"]["start"]["character"],
-            Value::from(expected.character)
-        );
-    }
-}
-
-fn assert_references_are_empty(
-    lsp: &mut LspProcess,
-    request_id: i64,
-    source_path: &Path,
-    position: (u32, u32),
-) {
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "textDocument/references",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "position": { "line": position.0, "character": position.1 },
-            "context": { "includeDeclaration": false }
-        }
-    }));
-
-    let references = recv_response(lsp, request_id);
-    assert_eq!(references["result"], Value::Array(Vec::new()));
-}
-
-fn assert_references_are_absent(
-    lsp: &mut LspProcess,
-    request_id: i64,
-    source_path: &Path,
-    position: (u32, u32),
-) {
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "textDocument/references",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "position": { "line": position.0, "character": position.1 },
-            "context": { "includeDeclaration": false }
-        }
-    }));
-
-    let references = recv_response(lsp, request_id);
-    assert_eq!(references["result"], Value::Null);
-}
-
-fn assert_hover(
-    lsp: &mut LspProcess,
-    request_id: i64,
-    source_path: &Path,
-    position: (u32, u32),
-    expected_value: &str,
-    expected_line: u32,
-    expected_character: u32,
-) -> String {
-    let hover = request_hover(lsp, request_id, source_path, position);
-    assert_eq!(
-        hover["result"]["contents"]["kind"],
-        Value::String("markdown".to_string())
-    );
-    assert_eq!(
-        hover["result"]["contents"]["value"],
-        Value::String(expected_value.to_string())
-    );
-    assert_eq!(
-        hover["result"]["range"]["start"]["line"],
-        Value::from(expected_line),
-    );
-    assert_eq!(
-        hover["result"]["range"]["start"]["character"],
-        Value::from(expected_character),
-    );
-    hover["result"]["contents"]["value"]
-        .as_str()
-        .unwrap()
-        .to_string()
-}
-
-fn request_hover(
-    lsp: &mut LspProcess,
-    request_id: i64,
-    source_path: &Path,
-    position: (u32, u32),
-) -> Value {
-    lsp.send(&json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "textDocument/hover",
-        "params": {
-            "textDocument": { "uri": format!("file://{}", source_path.display()) },
-            "position": { "line": position.0, "character": position.1 }
-        }
-    }));
-
-    recv_response(lsp, request_id)
-}
-
 fn assert_fluent_parses(source: &str) {
     if let Err((_, errors)) = parser::parse(source) {
         panic!("failed to parse Fluent source with {errors:?}\n{source}");
-    }
-}
-
-fn runtime_message_text(source: &str, locale: &str, key: &str) -> String {
-    runtime_message_text_with_overrides(source, locale, key, &[])
-}
-
-fn runtime_message_text_with_overrides(
-    source: &str,
-    locale: &str,
-    key: &str,
-    overrides: &[(&str, &str)],
-) -> String {
-    let resource = FluentResource::try_new(source.to_string()).unwrap_or_else(|(_, errors)| {
-        panic!("failed to build FluentResource with {errors:?}\n{source}")
-    });
-    let parsed = parser::parse(source)
-        .unwrap_or_else(|(_, errors)| panic!("failed to parse Fluent source with {errors:?}\n{source}"))
-        ;
-    let parsed_pattern = find_runtime_pattern(&parsed, key)
-        .unwrap_or_else(|| panic!("missing parsed pattern `{key}` in runtime source"));
-    let locale: LanguageIdentifier = locale.parse().expect("valid language identifier");
-    let mut bundle = FluentBundle::new(vec![locale]);
-    bundle.set_use_isolating(false);
-    bundle
-        .add_resource(resource)
-        .unwrap_or_else(|errors| panic!("failed to add Fluent resource to bundle: {errors:?}"));
-
-    let (message_key, attribute_key) = split_runtime_key(key);
-    let message = bundle
-        .get_message(message_key)
-        .unwrap_or_else(|| panic!("missing message `{message_key}` in runtime bundle"));
-    let pattern = if let Some(attribute_key) = attribute_key {
-        message
-            .attributes()
-            .find(|attribute| attribute.id() == attribute_key)
-            .unwrap_or_else(|| panic!("missing attribute `{attribute_key}` on `{message_key}`"))
-            .value()
-    } else {
-        message
-            .value()
-            .unwrap_or_else(|| panic!("message `{message_key}` has no value"))
-    };
-    let override_map = overrides
-        .iter()
-        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-        .collect::<HashMap<_, _>>();
-    let mut args = FluentArgs::new();
-    collect_runtime_selector_args(parsed_pattern, &override_map, &mut args);
-    let mut errors = Vec::new();
-    let rendered = bundle
-        .format_pattern(pattern, Some(&args), &mut errors)
-        .into_owned();
-    assert!(
-        errors.is_empty(),
-        "runtime formatting errors for `{key}`: {errors:?}"
-    );
-    rendered
-}
-
-fn find_runtime_pattern<'a>(
-    resource: &'a fluent_syntax::ast::Resource<&'a str>,
-    key: &str,
-) -> Option<&'a fluent_syntax::ast::Pattern<&'a str>> {
-    let (entry_key, attribute_key) = split_runtime_key(key);
-    resource.body.iter().find_map(|entry| match entry {
-        fluent_syntax::ast::Entry::Message(message) if entry_key == message.id.name => {
-            if let Some(attribute_key) = attribute_key {
-                message
-                    .attributes
-                    .iter()
-                    .find(|attribute| attribute.id.name == attribute_key)
-                    .map(|attribute| &attribute.value)
-            } else {
-                message.value.as_ref()
-            }
-        }
-        fluent_syntax::ast::Entry::Term(term) if entry_key == format!("-{}", term.id.name) => {
-            if let Some(attribute_key) = attribute_key {
-                term.attributes
-                    .iter()
-                    .find(|attribute| attribute.id.name == attribute_key)
-                    .map(|attribute| &attribute.value)
-            } else {
-                Some(&term.value)
-            }
-        }
-        _ => None,
-    })
-}
-
-fn collect_runtime_selector_args(
-    pattern: &fluent_syntax::ast::Pattern<&str>,
-    overrides: &HashMap<String, String>,
-    args: &mut FluentArgs<'_>,
-) {
-    for element in &pattern.elements {
-        let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = element else {
-            continue;
-        };
-        collect_runtime_selector_args_from_expression(expression, overrides, args);
-    }
-}
-
-fn collect_runtime_selector_args_from_expression(
-    expression: &fluent_syntax::ast::Expression<&str>,
-    overrides: &HashMap<String, String>,
-    args: &mut FluentArgs<'_>,
-) {
-    let fluent_syntax::ast::Expression::Select {
-        selector, variants, ..
-    } = expression
-    else {
-        return;
-    };
-    let fluent_syntax::ast::InlineExpression::VariableReference { id, .. } = selector else {
-        return;
-    };
-
-    let selector_name = format!("${}", id.name);
-    let selected_key = overrides
-        .get(&selector_name)
-        .cloned()
-        .or_else(|| {
-            variants
-                .iter()
-                .find(|variant| variant.default)
-                .or_else(|| variants.first())
-                .map(|variant| runtime_variant_key(&variant.key))
-        })
-        .unwrap_or_else(|| panic!("missing selectable variant for `{selector_name}`"));
-    args.set(id.name.to_string(), runtime_selector_value(&selected_key));
-
-    let selected_variant = variants
-        .iter()
-        .find(|variant| runtime_variant_key(&variant.key) == selected_key)
-        .or_else(|| variants.iter().find(|variant| variant.default))
-        .or_else(|| variants.first())
-        .unwrap_or_else(|| panic!("missing selected variant `{selected_key}` for `{selector_name}`"));
-    collect_runtime_selector_args(&selected_variant.value, overrides, args);
-}
-
-fn runtime_variant_key(key: &fluent_syntax::ast::VariantKey<&str>) -> String {
-    match key {
-        fluent_syntax::ast::VariantKey::Identifier { name, .. } => (*name).to_string(),
-        fluent_syntax::ast::VariantKey::NumberLiteral { value, .. } => (*value).to_string(),
-    }
-}
-
-fn runtime_selector_value(selected_key: &str) -> FluentValue<'static> {
-    match selected_key {
-        "zero" => 0i64.into(),
-        "one" => 1i64.into(),
-        "two" => 2i64.into(),
-        "few" => 3i64.into(),
-        "many" => 5i64.into(),
-        "other" => 2i64.into(),
-        _ => selected_key
-            .parse::<i64>()
-            .map(FluentValue::from)
-            .unwrap_or_else(|_| selected_key.to_string().into()),
-    }
-}
-
-fn split_runtime_key(key: &str) -> (&str, Option<&str>) {
-    match key.rsplit_once('.') {
-        Some((message_key, attribute_key)) if !attribute_key.is_empty() => {
-            (message_key, Some(attribute_key))
-        }
-        _ => (key, None),
     }
 }
 
@@ -4736,29 +6933,17 @@ fn extract_ftl_blocks(markdown: &str) -> Vec<String> {
     blocks
 }
 
-fn assert_hover_block_matches(
-    markdown: &str,
-    block_index: usize,
+fn preview_message_text_with_overrides(
     source: &str,
-    locale: &str,
     key: &str,
     overrides: &[(&str, &str)],
-) {
-    assert_fluent_parses(source);
-    let expected = runtime_message_text_with_overrides(source, locale, key, overrides);
-    let blocks = extract_ftl_blocks(markdown);
-    let actual = blocks
-        .get(block_index)
-        .unwrap_or_else(|| panic!("missing hover block {block_index} in {markdown}"));
-    assert_eq!(actual, &expected);
-}
-
-fn comment_hover_markdown(blocks: &[&str]) -> String {
-    blocks
-        .into_iter()
-        .map(|block| format!("```ftl\n{block}\n```"))
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n")
+) -> String {
+    let override_map = overrides
+        .iter()
+        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+        .collect::<HashMap<_, _>>();
+    render_fluent_preview_text(source, key, Some(&override_map))
+        .unwrap_or_else(|| panic!("missing preview for `{key}`"))
 }
 
 fn initialize_lsp(lsp: &mut LspProcess, root: &Path, request_id: i64) {
@@ -4929,7 +7114,11 @@ fn single_key_copy_workspace() -> TempDir {
     temp
 }
 
-fn apply_code_action_edit(source: &str, action: &Value, target_uri: &str) -> String {
+fn apply_code_action_edit(
+    source: &str,
+    action: &Value,
+    target_uri: &str,
+) -> String {
     let mut updated = source.to_string();
     let mut edits = action["edit"]["changes"][target_uri]
         .as_array()
@@ -4937,10 +7126,18 @@ fn apply_code_action_edit(source: &str, action: &Value, target_uri: &str) -> Str
         .expect("expected workspace edit changes");
     edits.sort_by_key(|text_edit| {
         (
-            std::cmp::Reverse(text_edit["range"]["start"]["line"].as_u64().unwrap()),
-            std::cmp::Reverse(text_edit["range"]["start"]["character"].as_u64().unwrap()),
-            std::cmp::Reverse(text_edit["range"]["end"]["line"].as_u64().unwrap()),
-            std::cmp::Reverse(text_edit["range"]["end"]["character"].as_u64().unwrap()),
+            std::cmp::Reverse(
+                text_edit["range"]["start"]["line"].as_u64().unwrap(),
+            ),
+            std::cmp::Reverse(
+                text_edit["range"]["start"]["character"].as_u64().unwrap(),
+            ),
+            std::cmp::Reverse(
+                text_edit["range"]["end"]["line"].as_u64().unwrap(),
+            ),
+            std::cmp::Reverse(
+                text_edit["range"]["end"]["character"].as_u64().unwrap(),
+            ),
         )
     });
 
@@ -4949,7 +7146,8 @@ fn apply_code_action_edit(source: &str, action: &Value, target_uri: &str) -> Str
             &updated,
             (
                 text_edit["range"]["start"]["line"].as_u64().unwrap() as u32,
-                text_edit["range"]["start"]["character"].as_u64().unwrap() as u32,
+                text_edit["range"]["start"]["character"].as_u64().unwrap()
+                    as u32,
             ),
         );
         let end = position_to_offset(
@@ -4959,7 +7157,8 @@ fn apply_code_action_edit(source: &str, action: &Value, target_uri: &str) -> Str
                 text_edit["range"]["end"]["character"].as_u64().unwrap() as u32,
             ),
         );
-        updated.replace_range(start..end, text_edit["newText"].as_str().unwrap());
+        updated
+            .replace_range(start..end, text_edit["newText"].as_str().unwrap());
     }
 
     updated
@@ -4968,7 +7167,9 @@ fn apply_code_action_edit(source: &str, action: &Value, target_uri: &str) -> Str
 fn rewrite_actions_only(actions: Vec<Value>) -> Vec<Value> {
     actions
         .into_iter()
-        .filter(|action| action["kind"] == Value::String("refactor.rewrite".to_string()))
+        .filter(|action| {
+            action["kind"] == Value::String("refactor.rewrite".to_string())
+        })
         .collect()
 }
 
@@ -5020,8 +7221,11 @@ fn position_of_nth(source: &str, needle: &str, instance: usize) -> (u32, u32) {
     }
     let offset = found_offset.expect("expected at least one match");
     let prefix = &source[..offset];
-    let line = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count()).unwrap();
+    let line =
+        u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count())
+            .unwrap();
     let line_start = prefix.rfind('\n').map(|idx| idx + 1).unwrap_or(0);
-    let character = u32::try_from(source[line_start..offset].chars().count()).unwrap();
+    let character =
+        u32::try_from(source[line_start..offset].chars().count()).unwrap();
     (line, character)
 }

@@ -1,253 +1,96 @@
-# Global Index, Benchmarks, and Validation Plan
+# Missing Spec Tests
 
-- Create and keep a top-level `STAGES.md` updated during implementation with the usual notes on problems encountered, how they were solved, and any architectural decisions made while building the benchmark harness and global index.
+This checklist tracks test gaps against [spec/reference.md](/Users/illiadenysenko/Workspace/lab/fluent-lsp/spec/reference.md) after removing items already covered by `tests/integration_lsp.rs`.
 
-## 1. Baseline Current Behaviour First
+## Test Helper Policy
 
-- Benchmark the current on-demand implementation before any index work lands.
-- Cover both cold requests on freshly opened files and warm consecutive requests against the same workspace.
-- Measure at least:
-  - `textDocument/definition`
-  - `textDocument/references`
-  - `textDocument/hover`
-  - `textDocument/completion`
-  - `textDocument/codeAction` for missing-entry actions
-  - startup-to-ready time for the server without an index
-- Record:
-  - wall-clock latency per request
-  - p50, p95, and max latency across repeated runs
-  - total startup/index time
-  - peak and steady-state memory if practical
-  - number of files scanned/read per operation if we can expose that cheaply in benchmark-only instrumentation
+Do not add new test helpers or helper layers beyond the existing `LspProcess` struct helpers already present in `tests/integration_lsp.rs`.
+Remove all existing ones, and make tests assert real data, not helpers.
+Do not make tests looser to accommodate incorrect behavior.
+If a test fails because the implementation does not match the spec, say that to the user and fix the code instead of weakening the test.
 
-## 2. Benchmark Fixtures
+## Configuration
 
-- Keep two benchmark flavours:
-  - a relatively small realistic workspace
-  - a synthetic large workspace
-- The synthetic workspace should model scale explicitly:
-  - 30+ languages
-  - around 50 logical files per language
-  - up to 2000 messages per file
-- The synthetic workspace generator must be deterministic so regressions are comparable across runs.
-- The generator should vary structure, not only size:
-  - plain values
-  - attributes
-  - comments
-  - terms
-  - selector-heavy messages
-  - partially translated files
-  - some local-only files
-  - some origin-only files
-- Keep the benchmark fixtures separate from normal integration and smoke fixtures so test runtime does not explode.
+- [x] Add one end-to-end config-contract integration test that uses the documented `fluent-lsp.toml` shape exactly.
+- [x] In that config-contract test, assert `origin_language = "en"` and `file_masks = ["locales/{lang}/{filepath}.ftl"]` drive counterpart resolution exactly as documented.
+- [x] Add precedence coverage that client `workspace/didChangeConfiguration` applies core path-mapping settings when file config does not override them.
+- [x] Add precedence coverage that file config overrides client-provided `origin_language` and `file_masks`.
 
-## 3. Benchmark Harness
+## Capabilities
 
-- Add a repeatable benchmark harness in-repo rather than relying on manual editor profiling.
-- The harness should support:
-  - cold start runs from a fresh process
-  - warm repeated requests against the same process
-  - scripted request sequences that mirror editor usage
-  - machine-readable output so before/after comparisons can be committed or attached to PRs
-- Request sequences should include:
-  - repeated goto-definition across different translation files
-  - references from an origin file with many translations
-  - hover on keys, message bodies, and attributes
-  - completion for message keys and attribute names
-  - mixed navigation patterns, not just the same request in a tight loop
-- Benchmark output should clearly distinguish:
-  - no-index baseline
-  - indexed startup cost
-  - indexed warm-request cost
+- [x] Add one exact `initialize` contract test that asserts the documented capability surface as a whole.
+- [x] In that `initialize` contract test, assert exact `textDocumentSync`, `completionProvider`, `codeActionProvider`, `codeLensProvider`, and `executeCommandProvider` shapes.
+- [x] In that `initialize` contract test, assert unsupported capabilities remain absent, including `rename`, `semanticTokens`, `inlayHint`, and `documentSymbol`.
 
-## 4. Introduce a Global Index
+## `textDocument/hover`
 
-- Introduce a global eagerly built workspace index for Fluent files.
-- Build the index at LSP startup.
-- The index should support at least:
-  - key -> definition lookup
-  - origin file -> translation counterparts
-  - translation file -> origin counterpart
-  - per-file key/attribute existence
-  - comment/source metadata needed by hover and completion
-  - lookup of local-only files and origin-only files
-- Keep index structures per file so invalidation can replace one file entry at a time instead of forcing full rebuilds.
-- Preserve open-buffer text as the source of truth over on-disk content for files that are currently modified in the editor.
+### Selector hover
 
-## 5. Index Build Progress Reporting
+- [x] Add an integration test that proves selector hover preserves unresolved term references inside the selected branch instead of substituting them.
+- [x] Add an integration test that proves selector hover preserves unresolved non-selector inline Fluent references inside the selected branch, not just `$variable` references.
 
-- Indexing should report its work to the client per file.
-- Use standard LSP progress/reporting rather than custom client integration.
-- Report:
-  - index start
-  - current file being processed
-  - counts of processed files vs total if available
-  - index complete
-- Make sure progress reporting degrades safely on clients that do not surface it well.
+## `textDocument/codeAction`
 
-## 6. Request Migration Plan
+### Missing-entry quick-fix titles
 
-- Migrate requests to the index incrementally rather than all at once.
-- First move:
-  - `textDocument/definition`
-  - `textDocument/references`
-- Then move:
-  - `textDocument/hover`
-  - `textDocument/completion`
-  - missing-entry code actions
-- Keep a temporary fallback path while the index work is still being stabilized so request behaviour can be compared during development.
-- Remove the fallback once benchmarks and tests prove the index is correct.
+- [x] Add an integration test that asserts the spec title exactly: `Copy missing strings in file`.
+- [x] Add an integration test that asserts the old file-wide copy title is absent: `Copy missing keys and attributes from source`.
+- [x] Add an integration test that asserts the old stub title is absent: `Add missing keys and attributes from source`.
+- [x] Add an integration test that asserts the spec title exactly: `Copy missing string \`hello\``.
+- [x] Add an integration test that asserts the old single-message copy title is absent: `Copy \`hello\` from source`.
+- [x] Add an integration test that asserts the spec title exactly: `Copy missing attribute \`download-action.tooltip\``.
+- [x] Add an integration test that asserts the old single-attribute copy title is absent: `Copy missing attributes for \`download-action\` from source`.
 
-## 7. Index Invalidation Rules
+### File-wide copy examples from the spec
 
-- Index invalidation needs an explicit design before implementation, because this is likely the largest bug source.
-- Invalidation must handle:
-  - `didOpen`
-  - `didChange`
-  - `didSave`
-  - `didClose`
-  - new files appearing on disk
-  - files being deleted on disk
-  - config changes that affect file masks or origin language
-- Treat unsaved open buffers as overlays on top of the disk index.
-- Replacing one file in the index must also update all derived cross-file mappings that depend on it.
-- If a file becomes invalid Fluent after an edit, the index must fail softly:
-  - keep diagnostics correct
-  - avoid poisoning unrelated files
-  - decide explicitly whether requests fall back to best-effort partial data or to “no result”
-- `didClose` is especially important:
-  - if the file had unsaved in-memory changes, the overlay must be dropped
-  - the index must revert to on-disk state
-  - follow-up requests must reflect that reversion immediately
+- [x] Add an integration test for the spec example where a whole missing string is added by the file-wide copy action.
+- [x] In that whole-missing-string test, assert exact `Before` -> `After` source comparison.
+- [x] Add an integration test for the spec example where a whole missing message with attributes is added by the file-wide copy action.
+- [x] In that whole-missing-message-with-attributes test, assert exact `Before` -> `After` source comparison.
+- [x] In that whole-missing-message-with-attributes test, assert exact resulting source including one `# [LSP-COPY .<attribute>]` marker per copied attribute.
+- [x] In that same test, assert unrelated existing local entries remain unchanged.
 
-## 8. Invalidation Test Matrix
+### Selector rewrite formatting
 
-- Add focused automated tests for every invalidation path.
-- Required cases:
-  - editing a translation file updates definition/hover/completion/results without restarting the server
-  - editing an origin file updates translation-side definition/reference/hover/completion results without restarting the server
-  - adding a new message to origin updates missing-entry actions in translations
-  - deleting a message from origin removes indexed definition/reference targets cleanly
-  - adding a new translation file makes it appear in references
-  - deleting a translation file removes it from references
-  - changing a message key invalidates old lookups and enables new lookups
-  - adding/removing attributes updates attribute completion and hover
-  - changing comments updates key-hover and completion documentation
-  - unsaved buffer edits override disk-backed index content
-  - closing a dirty buffer reverts back to disk-backed index content
-  - parse-broken in-memory content does not permanently corrupt subsequent indexed results after the content is fixed
-  - config reload with changed file masks or origin language triggers a safe rebuild
-- Add specific regression tests for stale data:
-  - old origin preview still shown after source changed
-  - deleted translation still returned by references
-  - renamed key still returned by completion
-  - hover/comments taken from pre-edit content after `didChange`
+- [x] Add an integration test that proves selector rewrite preserves assignment spacing such as `= {`.
 
-## 9. Unit Tests for Index Internals
+## `textDocument/codeLens`
 
-- Add unit tests for:
-  - per-file parse/index extraction
-  - merging file entries into global maps
-  - replacing one indexed file entry
-  - removing one indexed file entry
-  - overlay precedence between open-buffer text and disk text
-  - marker/error handling for parse-invalid files
-  - local-only and origin-only file detection
-- Unit tests should assert both direct file data and derived reverse mappings, because invalidation bugs often hide in the reverse maps.
+- [ ] Add one selector-focused contract test that proves `Show all N selector combinations` is derived from the actual combination count, not just the current 6-combination fixture.
+- [ ] Add one negative integration test that a message with selectors but no meaningful expansion opportunity does not produce a code lens.
 
-## 10. Integration Tests
+## `workspace/executeCommand`
 
-- Add integration tests for indexed request correctness over JSON-RPC.
-- Integration tests should cover:
-  - initial eager index build
-  - live invalidation through open/change/save/close
-  - cross-file updates propagating without restart
-  - progress notifications during index build if observable through standard LSP messages
-  - warnings for files that exist only in a local language and not in the origin language
-- Add targeted integration tests for the local-only-file warning:
-  - warning appears for local-only file
-  - warning disappears when the origin counterpart is created
-  - warning updates correctly when config or file masks change
+- [ ] Add a test that enforces the spec behavior for the selector-combinations command when `window/showDocument` is unavailable.
+- [ ] Assert that the command does not fall back to `window/showMessage` for selector combinations.
+- [ ] Assert that the command fails or otherwise follows the spec-only path instead of silently degrading.
+- [ ] Add an exact contract test for `workspace/executeCommand` argument ordering and values: document URI first, Fluent key second.
+- [ ] Add an invalid-params test for a non-string document URI argument.
+- [ ] Add an invalid-params test for a non-string Fluent key argument.
 
-## 11. Neovim Smoke Coverage
+### Selector combinations document
 
-- Every user-visible indexed feature still needs Neovim smoke coverage.
-- Add or extend smoke scenarios for:
-  - goto-definition using the index
-  - references using the index
-  - hover after live edits
-  - completion after live edits
-  - local-only-file warning
-  - behaviour after closing a modified buffer and reopening
-- Add at least one smoke scenario that proves invalidation from an editor workflow, not only from synthetic JSON-RPC calls:
-  - open file
-  - edit content
-  - save or do not save depending on scenario
-  - request feature again
-  - verify updated result
+- [ ] Add an integration test that proves selector-combinations document output preserves unresolved term references in rendered combination blocks.
+- [ ] Add an integration test that proves selector-combinations document output preserves unresolved non-selector inline Fluent references in rendered combination blocks.
 
-## 12. Post-Index Benchmarks
+## Diagnostics
 
-- Benchmark again after the index lands.
-- Measure:
-  - initial indexing time
-  - indexed cold-start cost
-  - indexed warm-request cost
-  - cost of invalidating one file after `didChange`
-  - cost of invalidating many files if config forces a rebuild
-- Keep the same two benchmark flavours as the baseline run.
-- Compare baseline and indexed results side by side.
-- We should expect:
-  - startup to get slower
-  - warm cross-file requests to get materially faster
-  - invalidation cost to stay proportional to the changed file, not to whole-workspace size
+### Unicode plural categories
 
-## 13. Acceptance Criteria
+- [ ] Add a unit test that explicitly proves English treats `[zero]` as an unsupported plural category and emits `` `zero` is not a supported plural category for `en` `` when unsupported-category diagnostics are enabled.
+- [ ] Add a JSON-RPC integration test for the same English `[zero]` unsupported-category diagnostic path.
+- [ ] Add end-to-end Unicode-plural coverage for a locale with extended category sets, so categories such as `two`, `few`, and `many` are exercised beyond the unit-only category-table assertions.
 
-- Baseline and post-index benchmark results are checked in or otherwise recorded in a reproducible way.
-- All indexed requests are covered by unit tests, integration tests, and Neovim smoke tests where the feature is user-visible.
-- Index invalidation is covered by explicit regression tests, not only happy-path tests.
-- Local-only-file warnings are implemented and tested.
-- No custom editor/client integration is required; all behaviour uses standard LSP features.
+## Index And Refresh
 
-## 14. Next Phase: Remove Reparsing, Tighten Semantics
+- [ ] Add a background-refresh test that picks up on-disk content or mtime changes for an already indexed file, not just add/delete events.
 
-- Stop reparsing source files inside request handlers where indexed data should already exist.
-- Route all cross-file request behaviour through the workspace index rather than rebuilding request-local views of the same data.
-- Expand the indexed per-file model so requests can answer from precomputed data instead of reparsing:
-  - cursor-position to key/attribute resolution
-  - block/range metadata needed for definition, references, and hover
-  - completion documentation/source snippets
-  - selector expansion/count metadata used by CodeLens and selector commands
-  - origin template data used by missing-entry code actions
-- Remove request-time "figure it out again" algorithms once indexed equivalents exist.
-- Treat reparsing during request handling as a temporary bug, not a permanent fallback strategy.
+## Trace Logging
 
-## 15. Next Phase: Test Hardening
-
-- Add regression tests for every request path that previously reparsed whole files or whole key sets.
-- Add focused benchmarks for the former hot spots so algorithmic regressions are obvious:
-  - definition on translation files
-  - hover and references on large files
-  - completion on large origin files
-  - CodeLens on selector-heavy files
-  - missing-entry code actions on large partially translated workspaces
-- Extend integration coverage so each request is exercised against indexed data only, not mixed indexed/reparsed behaviour.
-- Add Neovim smoke scenarios for every user-visible request whose implementation changes in this phase.
-- Treat feature work as incomplete until the corresponding Neovim smoke path exists, is documented, and uses a local scenario fixture.
-
-## 16. Next Phase: Error Reporting Policy
-
-- Tighten request wrappers so they stop quietly swallowing bad inputs and internal failures.
-- Prefer returning explicit LSP errors for client misuse and server inconsistency, especially for:
-  - invalid or non-file document URIs
-  - requests against files outside configured Fluent workspace scope
-  - malformed command arguments
-  - unavailable or failed index actor/query paths
-  - impossible index states that indicate internal bugs
-- Return `null` only when there is genuinely no semantic result to return, not when the server failed to validate input or complete the request.
-- Define request-by-request semantics for:
-  - `invalid_params` cases
-  - `internal_error` cases
-  - legitimate "no result" cases
-- Add integration tests that assert these error/no-result boundaries explicitly so the policy does not drift back toward silent failure.
+- [ ] Add trace coverage for `textDocument/references`.
+- [ ] Add trace coverage for `textDocument/hover`.
+- [ ] Add trace coverage for `textDocument/completion`.
+- [ ] Add trace coverage for `textDocument/codeAction`.
+- [ ] Add trace coverage for `textDocument/codeLens`.
+- [ ] Add trace coverage for `workspace/executeCommand`.
+- [ ] Add verbose trace coverage for payload shapes that are currently untested, especially `count=<count>` and `command=<command> ok=true`.
