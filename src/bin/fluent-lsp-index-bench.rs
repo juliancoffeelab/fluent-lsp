@@ -22,7 +22,10 @@ fn main() {
         files_per_language: args.files_per_language,
         messages_per_file: args.messages_per_file,
     };
-    let generated_workspace = args.workspace_root.is_none().then(|| generate_workspace(shape));
+    let generated_workspace = args
+        .workspace_root
+        .is_none()
+        .then(|| generate_workspace(shape));
     let workspace_root = args
         .workspace_root
         .clone()
@@ -103,8 +106,7 @@ impl Args {
                     let value = args
                         .next()
                         .unwrap_or_else(|| panic!("missing value for {flag}"));
-                    parsed.messages_per_file =
-                        value.parse().expect("invalid --messages-per-file");
+                    parsed.messages_per_file = value.parse().expect("invalid --messages-per-file");
                 }
                 "--repeats" => {
                     let value = args
@@ -140,8 +142,11 @@ fn generate_workspace(shape: Shape) -> TempDir {
             let relative = format!("locales/lang{language:02}/file{file:03}.ftl");
             let path = root.join(relative);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(&path, build_file_contents(language, file, shape.messages_per_file))
-                .unwrap();
+            std::fs::write(
+                &path,
+                build_file_contents(language, file, shape.messages_per_file),
+            )
+            .unwrap();
         }
     }
 

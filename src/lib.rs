@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range as ByteRange;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,17 +21,21 @@ use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tower_lsp::jsonrpc::{Error as LspError, Result as LspResult};
 use tower_lsp::ls_types::{
-    CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
-    CodeActionProviderCapability, CodeActionResponse, CodeLens, CodeLensOptions, CodeLensParams,
-    Command, CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams,
-    CompletionResponse, Diagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentChanges, Documentation, ExecuteCommandOptions,
-    ExecuteCommandParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
-    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    Location, MarkupContent, MarkupKind, MessageType, OneOf, OneOf3,
-    OptionalVersionedTextDocumentIdentifier, Position, ProgressToken, Range, ReferenceParams,
-    ServerCapabilities, SetTraceParams, ShowDocumentParams, SnippetTextEdit, TextDocumentEdit,
+    CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand,
+    CodeActionParams, CodeActionProviderCapability, CodeActionResponse,
+    CodeLens, CodeLensOptions, CodeLensParams, Command, CompletionItem,
+    CompletionItemKind, CompletionOptions, CompletionParams,
+    CompletionResponse, Diagnostic, DiagnosticSeverity,
+    DidChangeConfigurationParams, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentChanges, Documentation,
+    ExecuteCommandOptions, ExecuteCommandParams, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, InitializeResult,
+    InitializedParams, Location, MarkupContent, MarkupKind, MessageType, OneOf,
+    OneOf3, OptionalVersionedTextDocumentIdentifier, Position, ProgressToken,
+    Range, ReferenceParams, ServerCapabilities, SetTraceParams,
+    ShowDocumentParams, SnippetTextEdit, TextDocumentEdit,
     TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
     TextDocumentSyncSaveOptions, TextEdit, TraceValue, Uri, WorkspaceEdit,
 };
@@ -39,7 +43,8 @@ use tower_lsp::{Client, LanguageServer};
 
 const CONFIG_FILE_NAMES: [&str; 2] = ["fluent-lsp.toml", ".fluent-lsp.toml"];
 const SHOW_MESSAGE_SELECTOR_COMBINATIONS_LIMIT: usize = 10;
-const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str = "fluent-lsp.showSelectorCombinations";
+const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str =
+    "fluent-lsp.showSelectorCombinations";
 const LSP_COPY_MARKER: &str = "# [LSP-COPY]";
 const LSP_COPY_MARKER_PREFIX: &str = "# [LSP-COPY .";
 const BACKGROUND_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -156,29 +161,38 @@ impl WorkspaceConfig {
         Self::load_with_client(root_dir, &ClientConfig::default())
     }
 
-    fn load_with_client(root_dir: PathBuf, client_config: &ClientConfig) -> Result<Self> {
+    fn load_with_client(
+        root_dir: PathBuf,
+        client_config: &ClientConfig,
+    ) -> Result<Self> {
         let config_path = CONFIG_FILE_NAMES
             .iter()
             .map(|name| root_dir.join(name))
             .find(|path| path.is_file());
 
         let Some(config_path) = config_path else {
-            return Self::from_client_config(root_dir, client_config).with_context(|| {
-                format!(
-                    "missing config file; tried {}",
-                    CONFIG_FILE_NAMES
-                        .iter()
-                        .map(|name| root_dir.join(name).display().to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            });
+            return Self::from_client_config(root_dir.clone(), client_config)
+                .with_context(|| {
+                    format!(
+                        "missing config file; tried {}",
+                        CONFIG_FILE_NAMES
+                            .iter()
+                            .map(|name| root_dir
+                                .join(name)
+                                .display()
+                                .to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                });
         };
 
-        let raw = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("failed to read {}", config_path.display()))?;
-        let config: Config = toml::from_str(&raw)
-            .with_context(|| format!("failed to parse {}", config_path.display()))?;
+        let raw = std::fs::read_to_string(&config_path).with_context(|| {
+            format!("failed to read {}", config_path.display())
+        })?;
+        let config: Config = toml::from_str(&raw).with_context(|| {
+            format!("failed to parse {}", config_path.display())
+        })?;
         Self::from_config(root_dir, config)
     }
 
@@ -200,25 +214,32 @@ impl WorkspaceConfig {
             origin_language,
             file_masks,
             selector_style: config.selector_style,
-            error_on_unsupported_plural_categories: config.error_on_unsupported_plural_categories,
-            warn_on_missing_plural_categories: config.warn_on_missing_plural_categories,
-            warn_on_selector_style_mismatch: config.warn_on_selector_style_mismatch,
+            error_on_unsupported_plural_categories: config
+                .error_on_unsupported_plural_categories,
+            warn_on_missing_plural_categories: config
+                .warn_on_missing_plural_categories,
+            warn_on_selector_style_mismatch: config
+                .warn_on_selector_style_mismatch,
         })
     }
 
-    fn from_client_config(root_dir: PathBuf, client_config: &ClientConfig) -> Result<Self> {
+    fn from_client_config(
+        root_dir: PathBuf,
+        client_config: &ClientConfig,
+    ) -> Result<Self> {
         let origin_language = client_config
             .origin_language
             .as_deref()
             .map(str::trim)
             .filter(|language| !language.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("origin_language must not be empty"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("origin_language must not be empty")
+            })?
             .to_string();
         let file_masks = compile_file_masks(
-            client_config
-                .file_masks
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("client settings must include file_masks"))?,
+            client_config.file_masks.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("client settings must include file_masks")
+            })?,
         )?;
         if file_masks.is_empty() {
             anyhow::bail!(
@@ -299,7 +320,12 @@ impl WorkspaceConfig {
     }
 
     #[cfg(test)]
-    fn render_path(&self, mask_index: usize, language: &str, filepath: &str) -> PathBuf {
+    fn render_path(
+        &self,
+        mask_index: usize,
+        language: &str,
+        filepath: &str,
+    ) -> PathBuf {
         let relative = self.file_masks[mask_index]
             .raw
             .replace("{lang}", language)
@@ -327,7 +353,10 @@ impl WorkspaceConfig {
         self.selector_style
     }
 
-    fn effective_diagnostic_config(&self, client: ClientConfig) -> EffectiveDiagnosticConfig {
+    fn effective_diagnostic_config(
+        &self,
+        client: ClientConfig,
+    ) -> EffectiveDiagnosticConfig {
         EffectiveDiagnosticConfig {
             error_on_unsupported_plural_categories: self
                 .error_on_unsupported_plural_categories
@@ -373,24 +402,30 @@ fn compile_file_masks(masks: &[String]) -> Result<Vec<FileMask>> {
     let mut compiled = Vec::with_capacity(masks.len());
 
     for mask in masks {
-        if mask.matches("{lang}").count() != 1 || mask.matches("{filepath}").count() != 1 {
+        if mask.matches("{lang}").count() != 1
+            || mask.matches("{filepath}").count() != 1
+        {
             anyhow::bail!(
                 "invalid file mask `{mask}`: expected exactly one {{lang}} and one {{filepath}} placeholder"
             );
         }
 
-        let lang_offset = mask
-            .find("{lang}")
-            .with_context(|| format!("invalid file mask `{mask}`: missing {{lang}}"))?;
-        let filepath_offset = mask
-            .find("{filepath}")
-            .with_context(|| format!("invalid file mask `{mask}`: missing {{filepath}}"))?;
-        let (first_offset, first_placeholder, second_offset, second_placeholder) =
-            if lang_offset < filepath_offset {
-                (lang_offset, "{lang}", filepath_offset, "{filepath}")
-            } else {
-                (filepath_offset, "{filepath}", lang_offset, "{lang}")
-            };
+        let lang_offset = mask.find("{lang}").with_context(|| {
+            format!("invalid file mask `{mask}`: missing {{lang}}")
+        })?;
+        let filepath_offset = mask.find("{filepath}").with_context(|| {
+            format!("invalid file mask `{mask}`: missing {{filepath}}")
+        })?;
+        let (
+            first_offset,
+            first_placeholder,
+            second_offset,
+            second_placeholder,
+        ) = if lang_offset < filepath_offset {
+            (lang_offset, "{lang}", filepath_offset, "{filepath}")
+        } else {
+            (filepath_offset, "{filepath}", lang_offset, "{lang}")
+        };
 
         let mut pattern = String::from("^");
         pattern.push_str(&regex::escape(&mask[..first_offset]));
@@ -414,8 +449,9 @@ fn compile_file_masks(masks: &[String]) -> Result<Vec<FileMask>> {
 
         compiled.push(FileMask {
             raw: mask.clone(),
-            matcher: Regex::new(&pattern)
-                .with_context(|| format!("invalid file mask regex generated from `{mask}`"))?,
+            matcher: Regex::new(&pattern).with_context(|| {
+                format!("invalid file mask regex generated from `{mask}`")
+            })?,
         });
     }
 
@@ -635,10 +671,14 @@ struct WorkspaceIndex {
 
 impl WorkspaceIndex {
     #[cfg(test)]
-    fn build(workspace: &WorkspaceConfig, overlays: &FastMap<Uri, String>) -> Self {
+    fn build(
+        workspace: &WorkspaceConfig,
+        overlays: &FastMap<Uri, String>,
+    ) -> Self {
         let mut paths = collect_matching_files(workspace);
         for uri in overlays.keys() {
-            let Some(path) = uri.to_file_path().map(|path| path.into_owned()) else {
+            let Some(path) = uri.to_file_path().map(|path| path.into_owned())
+            else {
                 continue;
             };
             if workspace.file_match(&path).is_some() && !paths.contains(&path) {
@@ -747,7 +787,10 @@ impl WorkspaceIndex {
     }
 
     #[cfg(test)]
-    fn local_only_files(&self, workspace: &WorkspaceConfig) -> Vec<&IndexedFile> {
+    fn local_only_files(
+        &self,
+        workspace: &WorkspaceConfig,
+    ) -> Vec<&IndexedFile> {
         let mut files = self
             .files
             .values()
@@ -773,7 +816,11 @@ fn load_indexed_file(
     Some(index_fluent_file(path.to_path_buf(), file_match, source))
 }
 
-fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> IndexedFile {
+fn index_fluent_file(
+    path: PathBuf,
+    file_match: FileMatch,
+    source: String,
+) -> IndexedFile {
     let (resource, _parse_errors) = parse_fluent_resource_with_errors(&source);
     let source_index = SourceLineIndex::new(&source);
     let mut key_capacity = 0usize;
@@ -790,8 +837,10 @@ fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> In
             _ => {}
         }
     }
-    let mut keys = FastSet::with_capacity_and_hasher(key_capacity, Default::default());
-    let mut definitions = FastMap::with_capacity_and_hasher(key_capacity, Default::default());
+    let mut keys =
+        FastSet::with_capacity_and_hasher(key_capacity, Default::default());
+    let mut definitions =
+        FastMap::with_capacity_and_hasher(key_capacity, Default::default());
     let mut block_line_ranges =
         FastMap::with_capacity_and_hasher(key_capacity, Default::default());
     let mut ordered_message_keys = Vec::with_capacity(message_count);
@@ -820,7 +869,8 @@ fn index_fluent_file(path: PathBuf, file_match: FileMatch, source: String) -> In
                     .map(|attribute| attribute.id.name.to_string())
                     .collect::<Vec<_>>();
                 if !attributes.is_empty() {
-                    message_attributes.insert(message_key.clone(), attributes.clone());
+                    message_attributes
+                        .insert(message_key.clone(), attributes.clone());
                 }
 
                 for attribute in &message.attributes {
@@ -918,14 +968,19 @@ fn index_key_metadata(
     definitions: &mut FastMap<String, Range>,
     block_line_ranges: &mut FastMap<String, (usize, usize)>,
 ) {
-    let Some(range) = byte_range_to_lsp_range_with_index(source, source_index, span) else {
+    let Some(range) =
+        byte_range_to_lsp_range_with_index(source, source_index, span)
+    else {
         return;
     };
     let key = key.to_string();
     definitions.insert(key.clone(), range);
-    if let Some(block_range) =
-        block_line_range_from_definition_with_index(source, source_index, &range, is_attribute)
-    {
+    if let Some(block_range) = block_line_range_from_definition_with_index(
+        source,
+        source_index,
+        &range,
+        is_attribute,
+    ) {
         block_line_ranges.insert(key, block_range);
     }
 }
@@ -1053,7 +1108,10 @@ impl IndexActor {
         }
     }
 
-    fn indexed_translation_diagnostics_for(&self, path: &Path) -> Vec<Diagnostic> {
+    fn indexed_translation_diagnostics_for(
+        &self,
+        path: &Path,
+    ) -> Vec<Diagnostic> {
         let Some(file) = self.index.file(path) else {
             return Vec::new();
         };
@@ -1061,7 +1119,9 @@ impl IndexActor {
             return Vec::new();
         }
         match self.index.origin_for(&self.workspace, file) {
-            Some(origin) => collect_translation_counterpart_diagnostics(file, origin),
+            Some(origin) => {
+                collect_translation_counterpart_diagnostics(file, origin)
+            }
             None => vec![local_only_file_diagnostic(file)],
         }
     }
@@ -1070,7 +1130,9 @@ impl IndexActor {
         self.index
             .files
             .values()
-            .filter(|file| file.file_match.language != self.workspace.origin_language)
+            .filter(|file| {
+                file.file_match.language != self.workspace.origin_language
+            })
             .filter(|file| {
                 !self
                     .indexed_translation_diagnostics_for(&file.path)
@@ -1080,14 +1142,20 @@ impl IndexActor {
             .collect()
     }
 
-    fn diagnostic_batch_for_path(&self, path: &Path) -> Option<(Uri, Vec<Diagnostic>)> {
+    fn diagnostic_batch_for_path(
+        &self,
+        path: &Path,
+    ) -> Option<(Uri, Vec<Diagnostic>)> {
         let file = self.index.file(path)?;
         let uri = Uri::from_file_path(path)?;
         let settings = self
             .workspace
-            .effective_diagnostic_config(self.client_config);
-        let mut diagnostics =
-            collect_document_diagnostics(&file.source, &file.file_match.language, settings);
+            .effective_diagnostic_config(self.client_config.clone());
+        let mut diagnostics = collect_document_diagnostics(
+            &file.source,
+            &file.file_match.language,
+            settings,
+        );
         if diagnostics.is_empty() {
             diagnostics.extend(self.indexed_translation_diagnostics_for(path));
         }
@@ -1096,14 +1164,20 @@ impl IndexActor {
 
     fn update_overlay(&mut self, path: PathBuf, text: String) {
         self.overlays.insert(path.clone(), text);
-        self.index
-            .replace_file(&self.workspace, &path, &self.pathbuf_overlays_as_uri_map());
+        self.index.replace_file(
+            &self.workspace,
+            &path,
+            &self.pathbuf_overlays_as_uri_map(),
+        );
     }
 
     fn drop_overlay(&mut self, path: PathBuf) {
         self.overlays.remove(&path);
-        self.index
-            .replace_file(&self.workspace, &path, &self.pathbuf_overlays_as_uri_map());
+        self.index.replace_file(
+            &self.workspace,
+            &path,
+            &self.pathbuf_overlays_as_uri_map(),
+        );
     }
 
     fn apply_disk_refresh(&mut self, event: DiskRefreshEvent) {
@@ -1132,7 +1206,9 @@ impl IndexActor {
     fn pathbuf_overlays_as_uri_map(&self) -> FastMap<Uri, String> {
         self.overlays
             .iter()
-            .filter_map(|(path, text)| Some((Uri::from_file_path(path)?, text.clone())))
+            .filter_map(|(path, text)| {
+                Some((Uri::from_file_path(path)?, text.clone()))
+            })
             .collect()
     }
 
@@ -1171,8 +1247,11 @@ impl IndexActor {
                 range: *origin_file.definitions.get(key)?,
             });
         }
-        for translation_file in self.index.translations_for(&self.workspace, origin_file) {
-            let Some(range) = translation_file.definitions.get(key).copied() else {
+        for translation_file in
+            self.index.translations_for(&self.workspace, origin_file)
+        {
+            let Some(range) = translation_file.definitions.get(key).copied()
+            else {
                 continue;
             };
             let Some(uri) = Uri::from_file_path(&translation_file.path) else {
@@ -1183,7 +1262,11 @@ impl IndexActor {
         Some(references)
     }
 
-    fn hover(&self, path: &Path, position: Position) -> LspResult<Option<Hover>> {
+    fn hover(
+        &self,
+        path: &Path,
+        position: Position,
+    ) -> LspResult<Option<Hover>> {
         let Some(file) = self.index.file(path) else {
             return Ok(None);
         };
@@ -1225,8 +1308,10 @@ impl IndexActor {
         let Some(pattern) = find_fluent_pattern(&resource, key) else {
             return Ok(None);
         };
-        let selector_overrides = selector_overrides_for_position(&file.source, key, position);
-        let current_preview = render_message_preview(pattern, Some(&selector_overrides));
+        let selector_overrides =
+            selector_overrides_for_position(&file.source, key, position);
+        let current_preview =
+            render_message_preview(pattern, Some(&selector_overrides));
         let source_preview = if !self.workspace.is_origin_file(path)
             && !range_contains_position(&hover_range, position)
         {
@@ -1236,9 +1321,14 @@ impl IndexActor {
                     origin_file.keys.contains(key).then_some(origin_file)
                 })
                 .map(|origin_file| {
-                    let origin_resource = parse_fluent_resource(&origin_file.source);
-                    let origin_pattern = find_fluent_pattern(&origin_resource, key)?;
-                    Some(render_message_preview(origin_pattern, Some(&selector_overrides)))
+                    let origin_resource =
+                        parse_fluent_resource(&origin_file.source);
+                    let origin_pattern =
+                        find_fluent_pattern(&origin_resource, key)?;
+                    Some(render_message_preview(
+                        origin_pattern,
+                        Some(&selector_overrides),
+                    ))
                 })
                 .flatten()
         } else {
@@ -1247,23 +1337,32 @@ impl IndexActor {
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: render_hover_markdown(source_preview.as_ref(), &current_preview),
+                value: render_hover_markdown(
+                    source_preview.as_ref(),
+                    &current_preview,
+                ),
             }),
             range: Some(hover_range),
         }))
     }
 
-    fn completion(&self, path: &Path, position: Position) -> LspResult<Option<CompletionResponse>> {
+    fn completion(
+        &self,
+        path: &Path,
+        position: Position,
+    ) -> LspResult<Option<CompletionResponse>> {
         let Some(file) = self.index.file(path) else {
             return Ok(None);
         };
         if file.file_match.language == self.workspace.origin_language {
             return Ok(Some(CompletionResponse::Array(Vec::new())));
         }
-        let Some(site) = completion_site_for_position(&file.source, position) else {
-            return Ok(None);
+        let Some(site) = completion_site_for_position(&file.source, position)
+        else {
+            return Ok(Some(CompletionResponse::Array(Vec::new())));
         };
-        let Some(origin_file) = self.index.origin_for(&self.workspace, file) else {
+        let Some(origin_file) = self.index.origin_for(&self.workspace, file)
+        else {
             return Ok(Some(CompletionResponse::Array(Vec::new())));
         };
         Ok(Some(CompletionResponse::Array(
@@ -1271,15 +1370,25 @@ impl IndexActor {
         )))
     }
 
-    fn origin_message_templates(&self, path: &Path) -> Option<Vec<OriginMessageTemplate>> {
+    fn origin_message_templates(
+        &self,
+        path: &Path,
+    ) -> Option<Vec<OriginMessageTemplate>> {
         let file = self.index.file(path)?;
         self.index
             .origin_for(&self.workspace, file)
             .map(|origin_file| origin_file.origin_message_templates.clone())
     }
 
-    fn key_at_position(&self, path: &Path, position: Position) -> Option<String> {
-        self.index.file(path)?.key_at_position(position).map(str::to_string)
+    fn key_at_position(
+        &self,
+        path: &Path,
+        position: Position,
+    ) -> Option<String> {
+        self.index
+            .file(path)?
+            .key_at_position(position)
+            .map(str::to_string)
     }
 
     fn origin_source(&self, path: &Path) -> Option<String> {
@@ -1298,9 +1407,13 @@ impl IndexActor {
                 IndexMessage::SetClientConfig { client_config } => {
                     self.client_config = client_config;
                 }
-                IndexMessage::ReplaceOverlay { path, text } => self.update_overlay(path, text),
+                IndexMessage::ReplaceOverlay { path, text } => {
+                    self.update_overlay(path, text)
+                }
                 IndexMessage::DropOverlay { path } => self.drop_overlay(path),
-                IndexMessage::ApplyDiskRefresh { event } => self.apply_disk_refresh(event),
+                IndexMessage::ApplyDiskRefresh { event } => {
+                    self.apply_disk_refresh(event)
+                }
                 IndexMessage::Definition {
                     path,
                     position,
@@ -1315,7 +1428,12 @@ impl IndexActor {
                     include_declaration,
                     reply,
                 } => {
-                    let _ = reply.send(self.references(&path, &uri, position, include_declaration));
+                    let _ = reply.send(self.references(
+                        &path,
+                        &uri,
+                        position,
+                        include_declaration,
+                    ));
                 }
                 IndexMessage::Hover {
                     path,
@@ -1345,7 +1463,8 @@ impl IndexActor {
                     let _ = reply.send(self.origin_message_templates(&path));
                 }
                 IndexMessage::IndexedTranslationDiagnostics { path, reply } => {
-                    let _ = reply.send(self.indexed_translation_diagnostics_for(&path));
+                    let _ = reply
+                        .send(self.indexed_translation_diagnostics_for(&path));
                 }
             }
         }
@@ -1400,14 +1519,21 @@ impl Backend {
         self.client
             .send_notification::<tower_lsp::ls_types::notification::LogTrace>(
                 tower_lsp::ls_types::LogTraceParams {
-                    message: format!("fluent-lsp trace updated value={trace_label}"),
+                    message: format!(
+                        "fluent-lsp trace updated value={trace_label}"
+                    ),
                     verbose: None,
                 },
             )
             .await;
     }
 
-    async fn log_trace_timing(&self, operation: &str, elapsed: Duration, verbose: Option<String>) {
+    async fn log_trace_timing(
+        &self,
+        operation: &str,
+        elapsed: Duration,
+        verbose: Option<String>,
+    ) {
         let trace = self.state.read().await.trace;
         if trace == TraceValue::Off {
             return;
@@ -1429,7 +1555,9 @@ impl Backend {
             .await;
     }
 
-    async fn index_sender(&self) -> Option<mpsc::UnboundedSender<IndexMessage>> {
+    async fn index_sender(
+        &self,
+    ) -> Option<mpsc::UnboundedSender<IndexMessage>> {
         self.state.read().await.index_tx.clone()
     }
 
@@ -1450,7 +1578,9 @@ impl Backend {
     ) {
         let overlay_paths = overlays
             .iter()
-            .filter_map(|(uri, text)| Some((uri.to_file_path()?.into_owned(), text.clone())))
+            .filter_map(|(uri, text)| {
+                Some((uri.to_file_path()?.into_owned(), text.clone()))
+            })
             .collect::<HashMap<_, _>>();
         let (index_tx, index_rx) = mpsc::unbounded_channel();
         let (notification_tx, mut notification_rx) = mpsc::unbounded_channel();
@@ -1474,8 +1604,11 @@ impl Backend {
             }
         });
 
-        let refresh_task =
-            self.spawn_background_refresh_task(workspace, snapshot, index_tx.clone());
+        let refresh_task = self.spawn_background_refresh_task(
+            workspace,
+            snapshot,
+            index_tx.clone(),
+        );
         let mut state = self.state.write().await;
         if let Some(refresh_task) = state.refresh_task.take() {
             refresh_task.abort();
@@ -1552,7 +1685,9 @@ impl Backend {
             }
         }
         let tx = self.index_sender().await.ok_or_else(|| {
-            internal_error_with_message(format!("workspace index unavailable for {operation}"))
+            internal_error_with_message(format!(
+                "workspace index unavailable for {operation}"
+            ))
         })?;
         let (reply_tx, reply_rx) = oneshot::channel();
         tx.send(make(reply_tx)).map_err(|_| {
@@ -1573,10 +1708,9 @@ impl Backend {
             .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
             .into_owned();
         let state = self.state.read().await;
-        let workspace = state
-            .workspace
-            .as_ref()
-            .ok_or_else(|| internal_error_with_message("workspace is not initialized"))?;
+        let workspace = state.workspace.as_ref().ok_or_else(|| {
+            internal_error_with_message("workspace is not initialized")
+        })?;
         if workspace.file_match(&path).is_none() {
             return Err(LspError::invalid_params(format!(
                 "document is outside the configured Fluent workspace: {}",
@@ -1648,8 +1782,14 @@ impl Backend {
             index.replace_file(&workspace, path, &overlays);
         }
 
-        self.spawn_index_actor(workspace, index, snapshot, overlays, client_config)
-            .await;
+        self.spawn_index_actor(
+            workspace,
+            index,
+            snapshot,
+            overlays,
+            client_config,
+        )
+        .await;
 
         if let Some(progress) = progress {
             progress
@@ -1665,7 +1805,8 @@ impl Backend {
     }
 
     async fn replace_indexed_file(&self, uri: &Uri, text: String) {
-        let Some(path) = uri.to_file_path().map(|path| path.into_owned()) else {
+        let Some(path) = uri.to_file_path().map(|path| path.into_owned())
+        else {
             return;
         };
         self.send_index_message(IndexMessage::ReplaceOverlay { path, text })
@@ -1673,7 +1814,8 @@ impl Backend {
     }
 
     async fn drop_indexed_overlay(&self, uri: &Uri) {
-        let Some(path) = uri.to_file_path().map(|path| path.into_owned()) else {
+        let Some(path) = uri.to_file_path().map(|path| path.into_owned())
+        else {
             return;
         };
         self.send_index_message(IndexMessage::DropOverlay { path })
@@ -1699,10 +1841,13 @@ impl Backend {
             let Some(workspace) = state.workspace.clone() else {
                 return;
             };
-            let Some(source) = state.open_documents.get(uri).cloned().or_else(|| {
-                uri.to_file_path()
-                    .and_then(|path| std::fs::read_to_string(path.as_ref()).ok())
-            }) else {
+            let Some(source) =
+                state.open_documents.get(uri).cloned().or_else(|| {
+                    uri.to_file_path().and_then(|path| {
+                        std::fs::read_to_string(path.as_ref()).ok()
+                    })
+                })
+            else {
                 return;
             };
             let Some(path) = uri.to_file_path() else {
@@ -1720,10 +1865,16 @@ impl Backend {
         };
 
         let settings = workspace.effective_diagnostic_config(client_config);
-        let mut diagnostics = collect_document_diagnostics(&source, &language, settings);
-        let indexed_translation = match uri.to_file_path().map(|path| path.into_owned()) {
+        let mut diagnostics =
+            collect_document_diagnostics(&source, &language, settings);
+        let indexed_translation = match uri
+            .to_file_path()
+            .map(|path| path.into_owned())
+        {
             Some(path) => self
-                .request_index(|reply| IndexMessage::IndexedTranslationDiagnostics { path, reply })
+                .request_index(|reply| {
+                    IndexMessage::IndexedTranslationDiagnostics { path, reply }
+                })
                 .await
                 .unwrap_or_default(),
             None => Vec::new(),
@@ -1736,7 +1887,10 @@ impl Backend {
             .await;
     }
 
-    async fn definition_for(&self, params: GotoDefinitionParams) -> LspResult<Option<Location>> {
+    async fn definition_for(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> LspResult<Option<Location>> {
         let uri = params.text_document_position_params.text_document.uri;
         let path = self.indexed_request_path(&uri).await?;
         self.request_index_result("textDocument/definition", |reply| {
@@ -1749,7 +1903,10 @@ impl Backend {
         .await
     }
 
-    async fn references_for(&self, params: ReferenceParams) -> LspResult<Option<Vec<Location>>> {
+    async fn references_for(
+        &self,
+        params: ReferenceParams,
+    ) -> LspResult<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri;
         let path = self.indexed_request_path(&uri).await?;
         self.request_index_result("textDocument/references", |reply| {
@@ -1767,10 +1924,12 @@ impl Backend {
     async fn hover_for(&self, params: HoverParams) -> LspResult<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
         let path = self.indexed_request_path(&uri).await?;
-        self.request_index_result("textDocument/hover", |reply| IndexMessage::Hover {
-            path,
-            position: params.text_document_position_params.position,
-            reply,
+        self.request_index_result("textDocument/hover", |reply| {
+            IndexMessage::Hover {
+                path,
+                position: params.text_document_position_params.position,
+                reply,
+            }
         })
         .await?
     }
@@ -1815,7 +1974,10 @@ impl Backend {
             .cloned()
             .or_else(|| std::fs::read_to_string(&path).ok())
             .ok_or_else(|| {
-                internal_error_with_message(format!("failed to read {}", path.display()))
+                internal_error_with_message(format!(
+                    "failed to read {}",
+                    path.display()
+                ))
             })?;
         let style = workspace
             .selector_style()
@@ -1823,26 +1985,28 @@ impl Backend {
             .unwrap_or_default();
         let supports_snippet_text_edits = state.supports_snippet_text_edits;
         drop(state);
-        let origin_templates = if workspace.matches_translation_file(&path) && has_index {
-            self.request_index(|reply| IndexMessage::OriginTemplates {
-                path: path.clone(),
-                reply,
-            })
-            .await
-            .flatten()
-        } else {
-            None
-        };
-        let origin_source = if workspace.matches_translation_file(&path) && has_index {
-            self.request_index(|reply| IndexMessage::OriginSource {
-                path: path.clone(),
-                reply,
-            })
-            .await
-            .flatten()
-        } else {
-            None
-        };
+        let origin_templates =
+            if workspace.matches_translation_file(&path) && has_index {
+                self.request_index(|reply| IndexMessage::OriginTemplates {
+                    path: path.clone(),
+                    reply,
+                })
+                .await
+                .flatten()
+            } else {
+                None
+            };
+        let origin_source =
+            if workspace.matches_translation_file(&path) && has_index {
+                self.request_index(|reply| IndexMessage::OriginSource {
+                    path: path.clone(),
+                    reply,
+                })
+                .await
+                .flatten()
+            } else {
+                None
+            };
         let current_key = if is_fluent_file(&path) && has_index {
             self.request_index(|reply| IndexMessage::KeyAtPosition {
                 path: path.clone(),
@@ -1863,23 +2027,11 @@ impl Backend {
 
         let mut actions = Vec::new();
         if let Some(origin_templates) = origin_templates.as_deref() {
-            let missing =
-                collect_missing_translation_entries_from_templates(origin_templates, &source);
+            let missing = collect_missing_translation_entries_from_templates(
+                origin_templates,
+                &source,
+            );
             if !missing.is_empty() {
-                if let Some(edit) = build_missing_entries_workspace_edit(
-                    &uri,
-                    &source,
-                    &missing,
-                    None,
-                    MissingEntryRenderMode::EmptyStub,
-                ) {
-                    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                        title: "Add missing keys and attributes from source".to_string(),
-                        kind: Some(CodeActionKind::QUICKFIX),
-                        edit: Some(edit),
-                        ..CodeAction::default()
-                    }));
-                }
                 if let Some(edit) = build_missing_entries_workspace_edit(
                     &uri,
                     &source,
@@ -1888,7 +2040,7 @@ impl Backend {
                     MissingEntryRenderMode::CopySource,
                 ) {
                     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                        title: "Copy missing keys and attributes from source".to_string(),
+                        title: "Copy missing strings in file".to_string(),
                         kind: Some(CodeActionKind::QUICKFIX),
                         edit: Some(edit),
                         ..CodeAction::default()
@@ -1908,15 +2060,18 @@ impl Backend {
             }
         }
 
-        if let Some(target) = selector_context
-            .as_ref()
-            .and_then(|context| find_generate_selector_target_in_context(&source, context))
-        {
-            let Some(edit_range) = byte_range_to_lsp_range(&source, target.pattern_span.clone())
+        if let Some(target) = selector_context.as_ref().and_then(|context| {
+            find_generate_selector_target_in_context(&source, context)
+        }) {
+            let Some(edit_range) =
+                byte_range_to_lsp_range(&source, target.pattern_span.clone())
             else {
                 return Ok(None);
             };
-            let ordered_styles = ordered_selector_styles(available_selector_styles(&target), style);
+            let ordered_styles = ordered_selector_styles(
+                available_selector_styles(&target),
+                style,
+            );
             for candidate_style in ordered_styles {
                 let Some(generated) = generate_number_selector_edit(
                     &source,
@@ -1927,28 +2082,37 @@ impl Backend {
                 ) else {
                     continue;
                 };
-                let generated =
-                    pad_assignment_replacement(&source, &target.pattern_span, generated);
+                let generated = pad_assignment_replacement(
+                    &source,
+                    &target.pattern_span,
+                    generated,
+                );
 
                 let edit = if supports_snippet_text_edits {
                     WorkspaceEdit {
                         changes: None,
-                        document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
-                            text_document: OptionalVersionedTextDocumentIdentifier {
-                                uri: uri.clone(),
-                                version: None,
+                        document_changes: Some(DocumentChanges::Edits(vec![
+                            TextDocumentEdit {
+                                text_document:
+                                    OptionalVersionedTextDocumentIdentifier {
+                                        uri: uri.clone(),
+                                        version: None,
+                                    },
+                                edits: vec![OneOf3::Right(SnippetTextEdit {
+                                    range: edit_range,
+                                    snippet: generated,
+                                    annotation_id: None,
+                                })],
                             },
-                            edits: vec![OneOf3::Right(SnippetTextEdit {
-                                range: edit_range,
-                                snippet: generated,
-                                annotation_id: None,
-                            })],
-                        }])),
+                        ])),
                         change_annotations: None,
                     }
                 } else {
                     let mut changes = HashMap::new();
-                    changes.insert(uri.clone(), vec![TextEdit::new(edit_range, generated)]);
+                    changes.insert(
+                        uri.clone(),
+                        vec![TextEdit::new(edit_range, generated)],
+                    );
                     WorkspaceEdit {
                         changes: Some(changes),
                         document_changes: None,
@@ -1969,7 +2133,10 @@ impl Backend {
                         candidate_style.label()
                     )
                 } else {
-                    format!("Generate number selector ({})", candidate_style.label())
+                    format!(
+                        "Generate number selector ({})",
+                        candidate_style.label()
+                    )
                 };
 
                 actions.push(CodeActionOrCommand::CodeAction(CodeAction {
@@ -1982,11 +2149,14 @@ impl Backend {
             }
         }
 
-        if let Some((pattern_span, rewrite_actions)) = selector_context
-            .as_ref()
-            .and_then(|context| find_selector_rewrite_target_in_context(&source, context))
+        if let Some((pattern_span, rewrite_actions)) =
+            selector_context.as_ref().and_then(|context| {
+                find_selector_rewrite_target_in_context(&source, context)
+            })
         {
-            let Some(edit_range) = byte_range_to_lsp_range(&source, pattern_span.clone()) else {
+            let Some(edit_range) =
+                byte_range_to_lsp_range(&source, pattern_span.clone())
+            else {
                 return Ok(None);
             };
             for rewrite in rewrite_actions {
@@ -1995,7 +2165,11 @@ impl Backend {
                     uri.clone(),
                     vec![TextEdit::new(
                         edit_range,
-                        pad_assignment_replacement(&source, &pattern_span, rewrite.replacement),
+                        pad_assignment_replacement(
+                            &source,
+                            &pattern_span,
+                            rewrite.replacement,
+                        ),
                     )],
                 );
                 actions.push(CodeActionOrCommand::CodeAction(CodeAction {
@@ -2018,7 +2192,10 @@ impl Backend {
         }
     }
 
-    async fn code_lenses_for(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
+    async fn code_lenses_for(
+        &self,
+        params: CodeLensParams,
+    ) -> LspResult<Option<Vec<CodeLens>>> {
         let state = self.state.read().await;
         let Some(workspace) = state.workspace.clone() else {
             return Ok(None);
@@ -2038,7 +2215,10 @@ impl Backend {
             .cloned()
             .or_else(|| std::fs::read_to_string(&path).ok())
             .ok_or_else(|| {
-                internal_error_with_message(format!("failed to read {}", path.display()))
+                internal_error_with_message(format!(
+                    "failed to read {}",
+                    path.display()
+                ))
             })?;
         drop(state);
         let mut lenses = Vec::new();
@@ -2046,7 +2226,8 @@ impl Backend {
             let Some(range) = find_fluent_definition(&source, &key) else {
                 continue;
             };
-            let Some(expansion) = selector_expansion_for(&source, &key, 1) else {
+            let Some(expansion) = selector_expansion_for(&source, &key, 1)
+            else {
                 continue;
             };
             if expansion.items.is_empty()
@@ -2054,7 +2235,8 @@ impl Backend {
             {
                 continue;
             }
-            let Some(total_count) = selector_total_count_for(&source, &key) else {
+            let Some(total_count) = selector_total_count_for(&source, &key)
+            else {
                 continue;
             };
 
@@ -2063,7 +2245,10 @@ impl Backend {
                 command: Some(Command {
                     title: code_lens_title(total_count),
                     command: SHOW_SELECTOR_COMBINATIONS_COMMAND.to_string(),
-                    arguments: Some(vec![Value::String(uri.to_string()), Value::String(key)]),
+                    arguments: Some(vec![
+                        Value::String(uri.to_string()),
+                        Value::String(key),
+                    ]),
                 }),
                 data: None,
             });
@@ -2079,7 +2264,10 @@ impl Backend {
         if params.command != SHOW_SELECTOR_COMBINATIONS_COMMAND {
             return self
                 .respond_to_clicked_command_with_error(
-                    LspError::invalid_params(format!("unknown command: {}", params.command)),
+                    LspError::invalid_params(format!(
+                        "unknown command: {}",
+                        params.command
+                    )),
                     MessageType::ERROR,
                     format!("Unknown command: {}", params.command),
                 )
@@ -2133,7 +2321,8 @@ impl Backend {
                 )
                 .await;
         };
-        let Some(path) = uri.to_file_path().map(|path| path.into_owned()) else {
+        let Some(path) = uri.to_file_path().map(|path| path.into_owned())
+        else {
             return self
                 .respond_to_clicked_command_with_error(
                     LspError::invalid_params("document URI must point to a file"),
@@ -2147,7 +2336,9 @@ impl Backend {
         let Some(workspace) = state.workspace.clone() else {
             return self
                 .respond_to_clicked_command_with_error(
-                    internal_error_with_message("no fluent-lsp workspace is loaded"),
+                    internal_error_with_message(
+                        "no fluent-lsp workspace is loaded",
+                    ),
                     MessageType::ERROR,
                     "fluent-lsp is not configured for this workspace",
                 )
@@ -2178,7 +2369,10 @@ impl Backend {
         let Some(source) = source else {
             return self
                 .respond_to_clicked_command_with_error(
-                    internal_error_with_message(format!("failed to read {}", path.display())),
+                    internal_error_with_message(format!(
+                        "failed to read {}",
+                        path.display()
+                    )),
                     MessageType::ERROR,
                     format!("Failed to read {}", path.display()),
                 )
@@ -2192,7 +2386,10 @@ impl Backend {
                         path.display()
                     )),
                     MessageType::ERROR,
-                    format!("Failed to resolve file metadata for {}", path.display()),
+                    format!(
+                        "Failed to resolve file metadata for {}",
+                        path.display()
+                    ),
                 )
                 .await;
         };
@@ -2256,15 +2453,21 @@ impl Backend {
                 &current_section,
             );
 
-            let document_uri = write_selector_combinations_temp_document(&key, &document_text)
-                .map_err(|message| internal_error_with_message(message.clone()))?;
+            let document_uri =
+                write_selector_combinations_temp_document(&key, &document_text)
+                    .map_err(|message| {
+                        internal_error_with_message(message.clone())
+                    })?;
             let opened = self
                 .client
                 .show_document(ShowDocumentParams {
                     uri: document_uri,
                     external: Some(false),
                     take_focus: Some(true),
-                    selection: Some(Range::new(Position::new(0, 0), Position::new(0, 0))),
+                    selection: Some(Range::new(
+                        Position::new(0, 0),
+                        Position::new(0, 0),
+                    )),
                 })
                 .await
                 .map_err(|error| {
@@ -2298,26 +2501,29 @@ impl Backend {
 }
 
 impl LanguageServer for Backend {
-    async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
+    async fn initialize(
+        &self,
+        params: InitializeParams,
+    ) -> LspResult<InitializeResult> {
         #[allow(deprecated)]
         let root_dir = params
             .workspace_folders
             .as_ref()
             .and_then(|folders| {
-                folders
-                    .first()
-                    .and_then(|folder| folder.uri.to_file_path().map(|path| path.into_owned()))
+                folders.first().and_then(|folder| {
+                    folder.uri.to_file_path().map(|path| path.into_owned())
+                })
             })
             .or_else(|| {
-                params
-                    .root_uri
-                    .and_then(|uri| uri.to_file_path().map(|path| path.into_owned()))
+                params.root_uri.and_then(|uri| {
+                    uri.to_file_path().map(|path| path.into_owned())
+                })
             });
 
         let client_config = ClientConfig::default();
-        let workspace = root_dir
-            .as_ref()
-            .and_then(|root| WorkspaceConfig::load_with_client(root.clone(), &client_config).ok());
+        let workspace = root_dir.as_ref().and_then(|root| {
+            WorkspaceConfig::load_with_client(root.clone(), &client_config).ok()
+        });
 
         {
             let mut state = self.state.write().await;
@@ -2350,16 +2556,16 @@ impl LanguageServer for Backend {
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
-                code_action_provider: Some(CodeActionProviderCapability::Options(
-                    CodeActionOptions {
+                code_action_provider: Some(
+                    CodeActionProviderCapability::Options(CodeActionOptions {
                         code_action_kinds: Some(vec![
                             CodeActionKind::QUICKFIX,
                             CodeActionKind::REFACTOR_REWRITE,
                         ]),
                         resolve_provider: Some(false),
                         work_done_progress_options: Default::default(),
-                    },
-                )),
+                    }),
+                ),
                 code_lens_provider: Some(CodeLensOptions {
                     resolve_provider: Some(false),
                 }),
@@ -2369,7 +2575,9 @@ impl LanguageServer for Backend {
                 }),
                 definition_provider: Some(OneOf::Left(true)),
                 execute_command_provider: Some(ExecuteCommandOptions {
-                    commands: vec![SHOW_SELECTOR_COMBINATIONS_COMMAND.to_string()],
+                    commands: vec![
+                        SHOW_SELECTOR_COMBINATIONS_COMMAND.to_string(),
+                    ],
                     work_done_progress_options: Default::default(),
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
@@ -2378,7 +2586,9 @@ impl LanguageServer for Backend {
                     TextDocumentSyncOptions {
                         open_close: Some(true),
                         change: Some(TextDocumentSyncKind::FULL),
-                        save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                        save: Some(TextDocumentSyncSaveOptions::Supported(
+                            true,
+                        )),
                         ..Default::default()
                     },
                 )),
@@ -2475,7 +2685,10 @@ impl LanguageServer for Backend {
         self.publish_document_diagnostics(&uri).await;
     }
 
-    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+    async fn did_change_configuration(
+        &self,
+        params: DidChangeConfigurationParams,
+    ) {
         let client_config = parse_client_config(&params.settings);
         let open_documents = {
             let state = self.state.read().await;
@@ -2485,7 +2698,9 @@ impl LanguageServer for Backend {
             let mut state = self.state.write().await;
             state.client_config = client_config.clone();
             if let Some(root_dir) = state.root_dir.clone() {
-                state.workspace = WorkspaceConfig::load_with_client(root_dir, &client_config).ok();
+                state.workspace =
+                    WorkspaceConfig::load_with_client(root_dir, &client_config)
+                        .ok();
                 state.index_tx = None;
                 if let Some(refresh_task) = state.refresh_task.take() {
                     refresh_task.abort();
@@ -2493,8 +2708,10 @@ impl LanguageServer for Backend {
             }
         }
         self.rebuild_index_with_progress().await;
-        self.send_index_message(IndexMessage::SetClientConfig { client_config })
-            .await;
+        self.send_index_message(IndexMessage::SetClientConfig {
+            client_config,
+        })
+        .await;
         for uri in open_documents {
             self.publish_document_diagnostics(&uri).await;
         }
@@ -2525,7 +2742,10 @@ impl LanguageServer for Backend {
         result
     }
 
-    async fn references(&self, params: ReferenceParams) -> LspResult<Option<Vec<Location>>> {
+    async fn references(
+        &self,
+        params: ReferenceParams,
+    ) -> LspResult<Option<Vec<Location>>> {
         let started = Instant::now();
         let result = self.references_for(params).await;
         self.log_trace_timing(
@@ -2564,7 +2784,10 @@ impl LanguageServer for Backend {
         result
     }
 
-    async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
+    async fn completion(
+        &self,
+        params: CompletionParams,
+    ) -> LspResult<Option<CompletionResponse>> {
         let started = Instant::now();
         let result = self.completions_for(params).await;
         let count = result
@@ -2582,7 +2805,10 @@ impl LanguageServer for Backend {
         result
     }
 
-    async fn code_action(&self, params: CodeActionParams) -> LspResult<Option<CodeActionResponse>> {
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> LspResult<Option<CodeActionResponse>> {
         let started = Instant::now();
         let result = self.code_actions_for(params).await;
         self.log_trace_timing(
@@ -2602,7 +2828,10 @@ impl LanguageServer for Backend {
         result
     }
 
-    async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
+    async fn code_lens(
+        &self,
+        params: CodeLensParams,
+    ) -> LspResult<Option<Vec<CodeLens>>> {
         let started = Instant::now();
         let result = self.code_lenses_for(params).await;
         self.log_trace_timing(
@@ -2622,7 +2851,10 @@ impl LanguageServer for Backend {
         result
     }
 
-    async fn execute_command(&self, params: ExecuteCommandParams) -> LspResult<Option<Value>> {
+    async fn execute_command(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> LspResult<Option<Value>> {
         let started = Instant::now();
         let command = params.command.clone();
         let result = self.execute_selector_combinations_command(params).await;
@@ -2643,9 +2875,13 @@ fn completion_response_len(response: &CompletionResponse) -> usize {
     }
 }
 
-pub fn extract_key_at_position(source: &str, position: Position) -> Option<String> {
+pub fn extract_key_at_position(
+    source: &str,
+    position: Position,
+) -> Option<String> {
     let (line, line_start) = line_at(source, position.line as usize)?;
-    let line_offset = utf16_position_to_byte_index(line, position.character as usize)?;
+    let line_offset =
+        utf16_position_to_byte_index(line, position.character as usize)?;
 
     let mut probe = line_offset;
     if !is_key_byte(line.as_bytes().get(probe).copied()) && probe > 0 {
@@ -2674,7 +2910,11 @@ pub fn extract_key_at_position(source: &str, position: Position) -> Option<Strin
     }
 }
 
-pub fn extract_definition_key(source: &str, path: &Path, position: Position) -> Option<String> {
+pub fn extract_definition_key(
+    source: &str,
+    path: &Path,
+    position: Position,
+) -> Option<String> {
     if is_fluent_file(path) {
         extract_fluent_key_at_position(source, position)
     } else {
@@ -2682,7 +2922,10 @@ pub fn extract_definition_key(source: &str, path: &Path, position: Position) -> 
     }
 }
 
-fn indexed_fluent_key_at_position(source: &str, position: Position) -> Option<String> {
+fn indexed_fluent_key_at_position(
+    source: &str,
+    position: Position,
+) -> Option<String> {
     index_fluent_file(
         PathBuf::from("/tmp/indexed-fluent-key-at-position.ftl"),
         FileMatch {
@@ -2711,7 +2954,11 @@ fn build_selector_code_action_context<'a>(
     let resource = parse_fluent_resource(source);
     let definition_span = find_fluent_definition_span(&resource, &key)?;
     let source_index = SourceLineIndex::new(source);
-    let definition_range = byte_range_to_lsp_range_with_index(source, &source_index, definition_span)?;
+    let definition_range = byte_range_to_lsp_range_with_index(
+        source,
+        &source_index,
+        definition_span,
+    )?;
 
     Some(SelectorCodeActionContext {
         key,
@@ -2761,8 +3008,14 @@ fn render_fluent_source_from_resource(
     key: &str,
 ) -> Option<SourceRender> {
     let source_index = SourceLineIndex::new(source);
-    let comments = render_comment_source_from_resource(source, resource, entry_index);
-    let source = render_entry_source(source, &source_index, &resource.body[entry_index], key)?;
+    let comments =
+        render_comment_source_from_resource(source, resource, entry_index);
+    let source = render_entry_source(
+        source,
+        &source_index,
+        &resource.body[entry_index],
+        key,
+    )?;
 
     Some(SourceRender { comments, source })
 }
@@ -2856,22 +3109,29 @@ fn render_selector_combinations_document(
     sections.join("\n\n")
 }
 
-fn write_selector_combinations_temp_document(key: &str, contents: &str) -> Result<Uri, String> {
+fn write_selector_combinations_temp_document(
+    key: &str,
+    contents: &str,
+) -> Result<Uri, String> {
     let mut file = TempFileBuilder::new()
         .prefix("fluent-lsp-selector-combinations-")
         .suffix(&format!("-{}.md", sanitize_document_segment(key)))
         .tempfile()
-        .map_err(|error| format!("failed to create temp selector document: {error}"))?;
+        .map_err(|error| {
+            format!("failed to create temp selector document: {error}")
+        })?;
 
     use std::io::Write;
-    file.write_all(contents.as_bytes())
-        .map_err(|error| format!("failed to write temp selector document: {error}"))?;
+    file.write_all(contents.as_bytes()).map_err(|error| {
+        format!("failed to write temp selector document: {error}")
+    })?;
     let temp_path = file.into_temp_path();
-    let path = temp_path
-        .keep()
-        .map_err(|error| format!("failed to persist temp selector document: {error}"))?;
-    Uri::from_file_path(&path)
-        .ok_or_else(|| format!("failed to convert temp path to URI: {}", path.display()))
+    let path = temp_path.keep().map_err(|error| {
+        format!("failed to persist temp selector document: {error}")
+    })?;
+    Uri::from_file_path(&path).ok_or_else(|| {
+        format!("failed to convert temp path to URI: {}", path.display())
+    })
 }
 
 fn render_entry_source(
@@ -2939,10 +3199,15 @@ fn render_source_span(
         }
         _ => return None,
     };
-    let definition = byte_range_to_lsp_range_with_index(source, source_index, key_span)?;
+    let definition =
+        byte_range_to_lsp_range_with_index(source, source_index, key_span)?;
     let is_attribute = split_fluent_key(key).1.is_some();
-    let (start_line, end_line) =
-        block_line_range_from_definition_with_index(source, source_index, &definition, is_attribute)?;
+    let (start_line, end_line) = block_line_range_from_definition_with_index(
+        source,
+        source_index,
+        &definition,
+        is_attribute,
+    )?;
     Some(
         source_index.line_start_offset(start_line)?
             ..source_index.end_of_line_offset(source, end_line)?,
@@ -2955,7 +3220,8 @@ fn render_message_preview(
 ) -> MessagePreview {
     let mut preview = MessagePreview::default();
     for element in &pattern.elements {
-        let element_preview = render_pattern_element_preview(element, selector_overrides);
+        let element_preview =
+            render_pattern_element_preview(element, selector_overrides);
         preview.selectors.extend(element_preview.selectors);
         preview.text.push_str(&element_preview.text);
     }
@@ -2967,13 +3233,15 @@ fn render_pattern_element_preview(
     selector_overrides: Option<&HashMap<String, String>>,
 ) -> MessagePreview {
     match element {
-        fluent_syntax::ast::PatternElement::TextElement { value, .. } => MessagePreview {
-            selectors: Vec::new(),
-            text: (*value).to_string(),
-        },
-        fluent_syntax::ast::PatternElement::Placeable { expression, .. } => {
-            render_expression_preview(expression, selector_overrides)
+        fluent_syntax::ast::PatternElement::TextElement { value, .. } => {
+            MessagePreview {
+                selectors: Vec::new(),
+                text: (*value).to_string(),
+            }
         }
+        fluent_syntax::ast::PatternElement::Placeable {
+            expression, ..
+        } => render_expression_preview(expression, selector_overrides),
     }
 }
 
@@ -2994,20 +3262,29 @@ fn render_expression_preview(
                 .find(|variant| variant.default)
                 .or_else(|| variants.first());
             let selector_name = render_inline_expression(selector);
-            let Some((selected_variant, rendered_variant_name)) = selector_overrides
-                .and_then(|overrides| {
-                    let requested = overrides.get(&selector_name)?;
-                    variants
-                        .iter()
-                        .find(|variant| render_variant_key(&variant.key) == *requested)
-                        .map(|variant| (variant, requested.clone()))
-                })
-                .or_else(|| default_variant.map(|variant| (variant, "*".to_string())))
+            let Some((selected_variant, rendered_variant_name)) =
+                selector_overrides
+                    .and_then(|overrides| {
+                        let requested = overrides.get(&selector_name)?;
+                        variants
+                            .iter()
+                            .find(|variant| {
+                                render_variant_key(&variant.key) == *requested
+                            })
+                            .map(|variant| (variant, requested.clone()))
+                    })
+                    .or_else(|| {
+                        default_variant
+                            .map(|variant| (variant, "*".to_string()))
+                    })
             else {
                 return MessagePreview::default();
             };
 
-            let mut preview = render_message_preview(&selected_variant.value, selector_overrides);
+            let mut preview = render_message_preview(
+                &selected_variant.value,
+                selector_overrides,
+            );
             preview
                 .selectors
                 .insert(0, (selector_name, rendered_variant_name));
@@ -3030,7 +3307,9 @@ fn render_comment_source_from_resource(
 ) -> Option<String> {
     let mut spans = Vec::new();
     let mut comment_start = entry_index;
-    while comment_start > 0 && is_free_comment_entry(&resource.body[comment_start - 1]) {
+    while comment_start > 0
+        && is_free_comment_entry(&resource.body[comment_start - 1])
+    {
         comment_start -= 1;
     }
     for comment_entry in &resource.body[comment_start..entry_index] {
@@ -3107,7 +3386,9 @@ fn render_selector_combinations_section(
     max_items: usize,
 ) -> Option<String> {
     let expansion = selector_expansion_for(source, key, max_items)?;
-    if expansion.items.is_empty() || expansion.items.iter().all(|item| item.selectors.is_empty()) {
+    if expansion.items.is_empty()
+        || expansion.items.iter().all(|item| item.selectors.is_empty())
+    {
         return None;
     }
 
@@ -3125,7 +3406,11 @@ fn render_selector_combinations_section(
     Some(lines.join("\n"))
 }
 
-fn selector_expansion_for(source: &str, key: &str, max_items: usize) -> Option<SelectorExpansion> {
+fn selector_expansion_for(
+    source: &str,
+    key: &str,
+    max_items: usize,
+) -> Option<SelectorExpansion> {
     let resource = parse_fluent_resource(source);
     let pattern = find_fluent_pattern(&resource, key)?;
     Some(expand_pattern(pattern, max_items))
@@ -3151,7 +3436,9 @@ fn parse_client_config(settings: &Value) -> ClientConfig {
                 .get("origin_language")
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
-            file_masks: object.get("file_masks").and_then(string_array_from_json),
+            file_masks: object
+                .get("file_masks")
+                .and_then(string_array_from_json),
             selector_style: object
                 .get("selector_style")
                 .and_then(selector_style_from_json),
@@ -3176,7 +3463,9 @@ fn parse_client_config(settings: &Value) -> ClientConfig {
                         .get("origin_language")
                         .and_then(Value::as_str)
                         .map(ToString::to_string),
-                    file_masks: nested.get("file_masks").and_then(string_array_from_json),
+                    file_masks: nested
+                        .get("file_masks")
+                        .and_then(string_array_from_json),
                     selector_style: nested
                         .get("selector_style")
                         .and_then(selector_style_from_json),
@@ -3206,7 +3495,10 @@ fn selector_style_from_json(value: &Value) -> Option<SelectorStyle> {
 
 fn string_array_from_json(value: &Value) -> Option<Vec<String>> {
     let items = value.as_array()?;
-    items.iter().map(|item| item.as_str().map(ToString::to_string)).collect()
+    items
+        .iter()
+        .map(|item| item.as_str().map(ToString::to_string))
+        .collect()
 }
 
 fn collect_document_diagnostics(
@@ -3215,7 +3507,8 @@ fn collect_document_diagnostics(
     settings: EffectiveDiagnosticConfig,
 ) -> Vec<Diagnostic> {
     let (resource, parse_errors) = parse_fluent_resource_with_errors(source);
-    let mut diagnostics = collect_parse_error_diagnostics(source, &parse_errors);
+    let mut diagnostics =
+        collect_parse_error_diagnostics(source, &parse_errors);
     diagnostics.extend(collect_lsp_copy_marker_diagnostics(source));
 
     if !settings.error_on_unsupported_plural_categories
@@ -3315,7 +3608,10 @@ fn local_only_file_diagnostic(file: &IndexedFile) -> Diagnostic {
     }
 }
 
-fn translation_counterpart_diagnostic(range: Range, message: String) -> Diagnostic {
+fn translation_counterpart_diagnostic(
+    range: Range,
+    message: String,
+) -> Diagnostic {
     Diagnostic {
         range,
         severity: Some(DiagnosticSeverity::WARNING),
@@ -3337,7 +3633,9 @@ fn collect_translation_counterpart_diagnostics(
             Entry::Message(message) => {
                 let message_key = message.id.name.to_string();
                 if !origin.keys.contains(&message_key) {
-                    if let Some(range) = translation.definitions.get(&message_key).copied() {
+                    if let Some(range) =
+                        translation.definitions.get(&message_key).copied()
+                    {
                         diagnostics.push(translation_counterpart_diagnostic(
                             range,
                             format!(
@@ -3353,7 +3651,9 @@ fn collect_translation_counterpart_diagnostics(
                     if origin.keys.contains(&key) {
                         continue;
                     }
-                    if let Some(range) = translation.definitions.get(&key).copied() {
+                    if let Some(range) =
+                        translation.definitions.get(&key).copied()
+                    {
                         diagnostics.push(translation_counterpart_diagnostic(
                             range,
                             format!(
@@ -3366,7 +3666,9 @@ fn collect_translation_counterpart_diagnostics(
             Entry::Term(term) => {
                 let term_key = format!("-{}", term.id.name);
                 if !origin.keys.contains(&term_key) {
-                    if let Some(range) = translation.definitions.get(&term_key).copied() {
+                    if let Some(range) =
+                        translation.definitions.get(&term_key).copied()
+                    {
                         diagnostics.push(translation_counterpart_diagnostic(
                             range,
                             format!(
@@ -3382,7 +3684,9 @@ fn collect_translation_counterpart_diagnostics(
                     if origin.keys.contains(&key) {
                         continue;
                     }
-                    if let Some(range) = translation.definitions.get(&key).copied() {
+                    if let Some(range) =
+                        translation.definitions.get(&key).copied()
+                    {
                         diagnostics.push(translation_counterpart_diagnostic(
                             range,
                             format!(
@@ -3435,10 +3739,16 @@ fn collect_lsp_copy_marker_diagnostics(source: &str) -> Vec<Diagnostic> {
             }
             let marker = parse_lsp_copy_marker_line(&line[marker_start..])?;
             Some(Diagnostic {
-                range: marker_diagnostic_range(source, line_index, marker_start, &marker)?,
+                range: marker_diagnostic_range(
+                    source,
+                    line_index,
+                    marker_start,
+                    &marker,
+                )?,
                 severity: Some(DiagnosticSeverity::WARNING),
                 source: Some("fluent-lsp".to_string()),
-                message: "Entry still contains an `# [LSP-COPY]` marker".to_string(),
+                message: "Entry still contains an `# [LSP-COPY]` marker"
+                    .to_string(),
                 ..Diagnostic::default()
             })
         })
@@ -3452,10 +3762,13 @@ fn marker_diagnostic_range(
     marker: &LspCopyMarkerKind,
 ) -> Option<Range> {
     if let LspCopyMarkerKind::Attribute(attribute_key) = marker {
-        if let Some(message_key) = next_message_key_after_line(source, line_index) {
-            if let Some(range) =
-                find_fluent_definition(source, &format!("{message_key}.{attribute_key}"))
-            {
+        if let Some(message_key) =
+            next_message_key_after_line(source, line_index)
+        {
+            if let Some(range) = find_fluent_definition(
+                source,
+                &format!("{message_key}.{attribute_key}"),
+            ) {
                 return Some(range);
             }
         }
@@ -3472,7 +3785,10 @@ fn marker_diagnostic_range(
     ))
 }
 
-fn next_message_key_after_line<'a>(source: &'a str, line_index: usize) -> Option<&'a str> {
+fn next_message_key_after_line<'a>(
+    source: &'a str,
+    line_index: usize,
+) -> Option<&'a str> {
     source.lines().skip(line_index + 1).find_map(|line| {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -3486,7 +3802,10 @@ fn next_message_key_after_line<'a>(source: &'a str, line_index: usize) -> Option
     })
 }
 
-fn parse_error_range(source: &str, error: &parser::ParserError) -> Option<Range> {
+fn parse_error_range(
+    source: &str,
+    error: &parser::ParserError,
+) -> Option<Range> {
     byte_range_to_lsp_range(source, error.pos.clone()).or_else(|| {
         error
             .slice
@@ -3506,9 +3825,15 @@ fn collect_pattern_diagnostics(
     if settings.warn_on_selector_style_mismatch {
         if let Some(shape) = analyze_selector_pattern_shape(source, pattern) {
             let (style, select) = match &shape {
-                SelectorPatternShape::Whole(select) => (SelectorStyle::Whole, select),
-                SelectorPatternShape::Prefix { select, .. } => (SelectorStyle::Prefix, select),
-                SelectorPatternShape::Suffix { select, .. } => (SelectorStyle::Suffix, select),
+                SelectorPatternShape::Whole(select) => {
+                    (SelectorStyle::Whole, select)
+                }
+                SelectorPatternShape::Prefix { select, .. } => {
+                    (SelectorStyle::Prefix, select)
+                }
+                SelectorPatternShape::Suffix { select, .. } => {
+                    (SelectorStyle::Suffix, select)
+                }
             };
             if parsed_select_is_number_like(select)
                 && settings
@@ -3517,7 +3842,10 @@ fn collect_pattern_diagnostics(
             {
                 let range = byte_range_to_lsp_range(
                     source,
-                    trim_trailing_newlines_from_span(source, pattern.span.0.clone()),
+                    trim_trailing_newlines_from_span(
+                        source,
+                        pattern.span.0.clone(),
+                    ),
                 );
                 if let Some(range) = range {
                     diagnostics.push(Diagnostic {
@@ -3537,8 +3865,11 @@ fn collect_pattern_diagnostics(
 
         if analyze_selector_pattern_shape(source, pattern).is_none() {
             for occurrence in select_occurrences_in_pattern(source, pattern) {
-                let Some(style) = analyze_selector_occurrence_style(source, pattern, &occurrence)
-                else {
+                let Some(style) = analyze_selector_occurrence_style(
+                    source,
+                    pattern,
+                    &occurrence,
+                ) else {
                     continue;
                 };
                 if parsed_select_is_number_like(&occurrence.select)
@@ -3546,9 +3877,10 @@ fn collect_pattern_diagnostics(
                         .preferred_selector_style
                         .is_some_and(|preferred| preferred != style)
                 {
-                    if let Some(range) =
-                        byte_range_to_lsp_range(source, occurrence.placeable_span.clone())
-                    {
+                    if let Some(range) = byte_range_to_lsp_range(
+                        source,
+                        occurrence.placeable_span.clone(),
+                    ) {
                         diagnostics.push(Diagnostic {
                             range,
                             severity: Some(DiagnosticSeverity::WARNING),
@@ -3567,7 +3899,10 @@ fn collect_pattern_diagnostics(
     }
 
     for element in &pattern.elements {
-        let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = element else {
+        let fluent_syntax::ast::PatternElement::Placeable {
+            expression, ..
+        } = element
+        else {
             continue;
         };
         collect_expression_diagnostics(
@@ -3589,17 +3924,22 @@ fn collect_expression_diagnostics(
     expression: &fluent_syntax::ast::Expression<&str>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let fluent_syntax::ast::Expression::Select { variants, .. } = expression else {
+    let fluent_syntax::ast::Expression::Select { variants, .. } = expression
+    else {
         return;
     };
 
     if selector_is_number_like(variants) {
         if settings.error_on_unsupported_plural_categories {
             for variant in variants {
-                let Some(category_name) = identifier_variant_key_name(&variant.key) else {
+                let Some(category_name) =
+                    identifier_variant_key_name(&variant.key)
+                else {
                     continue;
                 };
-                let unsupported_message = if !is_known_plural_category_name(category_name) {
+                let unsupported_message = if !is_known_plural_category_name(
+                    category_name,
+                ) {
                     Some(format!(
                         "`{category_name}` is not a supported numeric selector key for `{language}`; use exact numbers or plural categories"
                     ))
@@ -3611,9 +3951,10 @@ fn collect_expression_diagnostics(
                     None
                 };
                 if let Some(message) = unsupported_message {
-                    if let Some(range) =
-                        byte_range_to_lsp_range(source, variant_key_span(&variant.key))
-                    {
+                    if let Some(range) = byte_range_to_lsp_range(
+                        source,
+                        variant_key_span(&variant.key),
+                    ) {
                         diagnostics.push(Diagnostic {
                             range,
                             severity: Some(DiagnosticSeverity::ERROR),
@@ -3631,8 +3972,10 @@ fn collect_expression_diagnostics(
                 .iter()
                 .filter_map(|variant| identifier_variant_key_name(&variant.key))
                 .collect::<HashSet<_>>();
-            if let Some(range) = byte_range_to_lsp_range(source, select_expression_span(expression))
-            {
+            if let Some(range) = byte_range_to_lsp_range(
+                source,
+                select_expression_span(expression),
+            ) {
                 for category in supported_categories {
                     if present.contains(category) {
                         continue;
@@ -3677,7 +4020,9 @@ fn parsed_select_is_number_like(select: &ParsedSelectExpression<'_>) -> bool {
     })
 }
 
-fn selector_is_number_like(variants: &[fluent_syntax::ast::Variant<&str>]) -> bool {
+fn selector_is_number_like(
+    variants: &[fluent_syntax::ast::Variant<&str>],
+) -> bool {
     variants.iter().any(|variant| match &variant.key {
         fluent_syntax::ast::VariantKey::NumberLiteral { .. } => true,
         fluent_syntax::ast::VariantKey::Identifier { name, .. } => {
@@ -3703,14 +4048,20 @@ fn identifier_variant_key_name<'a>(
     }
 }
 
-fn variant_key_span(key: &fluent_syntax::ast::VariantKey<&str>) -> ByteRange<usize> {
+fn variant_key_span(
+    key: &fluent_syntax::ast::VariantKey<&str>,
+) -> ByteRange<usize> {
     match key {
         fluent_syntax::ast::VariantKey::Identifier { span, .. }
-        | fluent_syntax::ast::VariantKey::NumberLiteral { span, .. } => span.0.clone(),
+        | fluent_syntax::ast::VariantKey::NumberLiteral { span, .. } => {
+            span.0.clone()
+        }
     }
 }
 
-fn select_expression_span(expression: &fluent_syntax::ast::Expression<&str>) -> ByteRange<usize> {
+fn select_expression_span(
+    expression: &fluent_syntax::ast::Expression<&str>,
+) -> ByteRange<usize> {
     match expression {
         fluent_syntax::ast::Expression::Select { span, .. }
         | fluent_syntax::ast::Expression::Inline(_, span) => span.0.clone(),
@@ -3737,8 +4088,9 @@ fn parse_select_openers(line: &str) -> Vec<String> {
     use std::sync::OnceLock;
 
     static SELECT_OPENER_RE: OnceLock<Regex> = OnceLock::new();
-    let re = SELECT_OPENER_RE
-        .get_or_init(|| Regex::new(r"\{\s*([^{}\n]+?)\s*->").expect("valid select opener regex"));
+    let re = SELECT_OPENER_RE.get_or_init(|| {
+        Regex::new(r"\{\s*([^{}\n]+?)\s*->").expect("valid select opener regex")
+    });
 
     re.captures_iter(line)
         .filter_map(|captures| {
@@ -3755,7 +4107,12 @@ fn find_generate_selector_target(
     position: Position,
 ) -> Option<GenerateSelectorTarget> {
     let current_key = indexed_fluent_key_at_position(source, position);
-    let context = build_selector_code_action_context(source, path, position, current_key.as_deref())?;
+    let context = build_selector_code_action_context(
+        source,
+        path,
+        position,
+        current_key.as_deref(),
+    )?;
     find_generate_selector_target_in_context(source, &context)
 }
 
@@ -3768,13 +4125,23 @@ fn find_generate_selector_target_in_context(
     let functions = collect_function_selector_targets(source, pattern);
     let selected_variable = variables
         .iter()
-        .find(|variable| variable.selection_span.contains(&context.position_byte_index))
+        .find(|variable| {
+            variable
+                .selection_span
+                .contains(&context.position_byte_index)
+        })
         .cloned();
     let selected_function = if selected_variable.is_none() {
         functions
             .iter()
-            .filter(|function| function.selection_span.contains(&context.position_byte_index))
-            .min_by_key(|function| function.selection_span.end - function.selection_span.start)
+            .filter(|function| {
+                function
+                    .selection_span
+                    .contains(&context.position_byte_index)
+            })
+            .min_by_key(|function| {
+                function.selection_span.end - function.selection_span.start
+            })
             .cloned()
     } else {
         None
@@ -3784,11 +4151,15 @@ fn find_generate_selector_target_in_context(
         variable.container_span.clone()
     } else if let Some(function) = &selected_function {
         function.container_span.clone()
-    } else if let Some(position_span) =
-        deepest_pattern_span_for_byte_index(pattern, context.position_byte_index)
-    {
+    } else if let Some(position_span) = deepest_pattern_span_for_byte_index(
+        pattern,
+        context.position_byte_index,
+    ) {
         position_span
-    } else if range_contains_position(&context.definition_range, context.position) {
+    } else if range_contains_position(
+        &context.definition_range,
+        context.position,
+    ) {
         pattern.span.0.clone()
     } else {
         return None;
@@ -3841,7 +4212,11 @@ fn collect_function_selector_targets(
     pattern: &fluent_syntax::ast::Pattern<&str>,
 ) -> Vec<FunctionSelectorTarget> {
     let mut functions = Vec::new();
-    collect_function_selector_targets_in_pattern(source, pattern, &mut functions);
+    collect_function_selector_targets_in_pattern(
+        source,
+        pattern,
+        &mut functions,
+    );
     functions
 }
 
@@ -3854,13 +4229,16 @@ fn generate_number_selector_edit(
 ) -> Option<String> {
     let pattern_text = source.get(target.pattern_span.clone())?;
     let line_indent = line_indentation_at(source, target.pattern_span.start);
-    let anchor_variable = target.selected_variable.as_ref().cloned().or_else(|| {
-        target
-            .variables
-            .iter()
-            .find(|variable| variable.anchor_span.start < variable.anchor_span.end)
-            .cloned()
-    });
+    let anchor_variable =
+        target.selected_variable.as_ref().cloned().or_else(|| {
+            target
+                .variables
+                .iter()
+                .find(|variable| {
+                    variable.anchor_span.start < variable.anchor_span.end
+                })
+                .cloned()
+        });
     let anchor_function = target.selected_function.as_ref().cloned();
     let binding = selector_binding_for_target(
         target.selected_function.as_ref(),
@@ -3897,13 +4275,15 @@ fn generate_number_selector_edit(
             &line_indent,
         ),
         SelectorStyle::Prefix => {
-            let anchor_relative = if let Some(function) = anchor_function.as_ref() {
-                relative_span(&target.pattern_span, &function.anchor_span)?
-            } else {
-                let variable = anchor_variable.as_ref()?;
-                relative_span(&target.pattern_span, &variable.anchor_span)?
-            };
-            let before_including_anchor = if target.selected_function.is_some() {
+            let anchor_relative =
+                if let Some(function) = anchor_function.as_ref() {
+                    relative_span(&target.pattern_span, &function.anchor_span)?
+                } else {
+                    let variable = anchor_variable.as_ref()?;
+                    relative_span(&target.pattern_span, &variable.anchor_span)?
+                };
+            let before_including_anchor = if target.selected_function.is_some()
+            {
                 pattern_text[..anchor_relative.end].to_string()
             } else if let Some(variable) = anchor_variable.as_ref() {
                 replace_variable_references(
@@ -3945,12 +4325,13 @@ fn generate_number_selector_edit(
             )
         }
         SelectorStyle::Suffix => {
-            let anchor_relative = if let Some(function) = anchor_function.as_ref() {
-                relative_span(&target.pattern_span, &function.anchor_span)?
-            } else {
-                let variable = anchor_variable.as_ref()?;
-                relative_span(&target.pattern_span, &variable.anchor_span)?
-            };
+            let anchor_relative =
+                if let Some(function) = anchor_function.as_ref() {
+                    relative_span(&target.pattern_span, &function.anchor_span)?
+                } else {
+                    let variable = anchor_variable.as_ref()?;
+                    relative_span(&target.pattern_span, &variable.anchor_span)?
+                };
             let before_anchor = if target.selected_function.is_some() {
                 pattern_text[..anchor_relative.start].to_string()
             } else if let Some(variable) = anchor_variable.as_ref() {
@@ -4000,7 +4381,12 @@ fn find_selector_rewrite_target(
     position: Position,
 ) -> Option<(ByteRange<usize>, Vec<SelectorRewriteAction>)> {
     let current_key = indexed_fluent_key_at_position(source, position);
-    let context = build_selector_code_action_context(source, path, position, current_key.as_deref())?;
+    let context = build_selector_code_action_context(
+        source,
+        path,
+        position,
+        current_key.as_deref(),
+    )?;
     find_selector_rewrite_target_in_context(source, &context)
 }
 
@@ -4011,10 +4397,14 @@ fn find_selector_rewrite_target_in_context(
     let root_pattern = find_fluent_pattern(&context.resource, &context.key)?;
 
     if range_contains_position(&context.definition_range, context.position) {
-        let actions = selector_rewrite_actions_for_pattern(source, root_pattern);
+        let actions =
+            selector_rewrite_actions_for_pattern(source, root_pattern);
         if !actions.is_empty() {
             return Some((
-                trim_trailing_newlines_from_span(source, root_pattern.span.0.clone()),
+                trim_trailing_newlines_from_span(
+                    source,
+                    root_pattern.span.0.clone(),
+                ),
                 actions,
             ));
         }
@@ -4022,23 +4412,35 @@ fn find_selector_rewrite_target_in_context(
 
     let mut candidate_patterns = Vec::new();
     collect_pattern_refs(root_pattern, &mut candidate_patterns);
-    candidate_patterns.retain(|pattern| pattern.span.0.contains(&context.position_byte_index));
-    candidate_patterns.sort_by_key(|pattern| pattern.span.0.end - pattern.span.0.start);
+    candidate_patterns.retain(|pattern| {
+        pattern.span.0.contains(&context.position_byte_index)
+    });
+    candidate_patterns
+        .sort_by_key(|pattern| pattern.span.0.end - pattern.span.0.start);
 
     for pattern in candidate_patterns {
         let actions = selector_rewrite_actions_for_pattern(source, pattern);
         if !actions.is_empty() {
             return Some((
-                trim_trailing_newlines_from_span(source, pattern.span.0.clone()),
+                trim_trailing_newlines_from_span(
+                    source,
+                    pattern.span.0.clone(),
+                ),
                 actions,
             ));
         }
 
-        let actions =
-            selector_rewrite_actions_for_occurrence(source, pattern, context.position_byte_index);
+        let actions = selector_rewrite_actions_for_occurrence(
+            source,
+            pattern,
+            context.position_byte_index,
+        );
         if !actions.is_empty() {
             return Some((
-                trim_trailing_newlines_from_span(source, pattern.span.0.clone()),
+                trim_trailing_newlines_from_span(
+                    source,
+                    pattern.span.0.clone(),
+                ),
                 actions,
             ));
         }
@@ -4064,7 +4466,9 @@ fn selector_rewrite_actions_for_pattern(
 
     match shape {
         SelectorPatternShape::Whole(select) => {
-            if let Some(replacement) = rewrite_whole_selector_to_prefix(source, pattern, &select) {
+            if let Some(replacement) =
+                rewrite_whole_selector_to_prefix(source, pattern, &select)
+            {
                 if replacement != current_text {
                     actions.push(SelectorRewriteAction {
                         kind: SelectorRewriteKind::Prefix,
@@ -4072,7 +4476,9 @@ fn selector_rewrite_actions_for_pattern(
                     });
                 }
             }
-            if let Some(replacement) = rewrite_whole_selector_to_suffix(source, pattern, &select) {
+            if let Some(replacement) =
+                rewrite_whole_selector_to_suffix(source, pattern, &select)
+            {
                 if replacement != current_text {
                     actions.push(SelectorRewriteAction {
                         kind: SelectorRewriteKind::Suffix,
@@ -4085,9 +4491,12 @@ fn selector_rewrite_actions_for_pattern(
             outer_prefix,
             select,
         } => {
-            if let Some(replacement) =
-                rewrite_prefixed_selector_to_whole(source, pattern, &outer_prefix, &select)
-            {
+            if let Some(replacement) = rewrite_prefixed_selector_to_whole(
+                source,
+                pattern,
+                &outer_prefix,
+                &select,
+            ) {
                 if replacement != current_text {
                     actions.push(SelectorRewriteAction {
                         kind: SelectorRewriteKind::Whole,
@@ -4100,9 +4509,12 @@ fn selector_rewrite_actions_for_pattern(
             outer_prefix,
             select,
         } => {
-            if let Some(replacement) =
-                rewrite_prefixed_selector_to_whole(source, pattern, &outer_prefix, &select)
-            {
+            if let Some(replacement) = rewrite_prefixed_selector_to_whole(
+                source,
+                pattern,
+                &outer_prefix,
+                &select,
+            ) {
                 if replacement != current_text {
                     actions.push(SelectorRewriteAction {
                         kind: SelectorRewriteKind::Whole,
@@ -4110,9 +4522,12 @@ fn selector_rewrite_actions_for_pattern(
                     });
                 }
             }
-            if let Some(replacement) =
-                rewrite_suffix_selector_to_prefix(source, pattern, &outer_prefix, &select)
-            {
+            if let Some(replacement) = rewrite_suffix_selector_to_prefix(
+                source,
+                pattern,
+                &outer_prefix,
+                &select,
+            ) {
                 if replacement != current_text {
                     actions.push(SelectorRewriteAction {
                         kind: SelectorRewriteKind::Prefix,
@@ -4144,7 +4559,8 @@ fn selector_rewrite_actions_for_occurrence(
             continue;
         }
 
-        if let Some(replacement) = rewrite_selected_selector_to_whole(source, pattern, &occurrence)
+        if let Some(replacement) =
+            rewrite_selected_selector_to_whole(source, pattern, &occurrence)
         {
             if replacement != current_text {
                 actions.push(SelectorRewriteAction {
@@ -4154,7 +4570,8 @@ fn selector_rewrite_actions_for_occurrence(
             }
         }
 
-        if let Some(replacement) = rewrite_selected_selector_to_suffix(source, pattern, &occurrence)
+        if let Some(replacement) =
+            rewrite_selected_selector_to_suffix(source, pattern, &occurrence)
         {
             if replacement != current_text {
                 actions.push(SelectorRewriteAction {
@@ -4209,20 +4626,27 @@ fn analyze_selector_occurrence_style(
     occurrence: &ParsedSelectOccurrence<'_>,
 ) -> Option<SelectorStyle> {
     if occurrence.outer_suffix.is_empty() {
-        if selector_prefix_anchor_index(&occurrence.outer_prefix, occurrence.select.selector_name)
-            .is_some()
+        if selector_prefix_anchor_index(
+            &occurrence.outer_prefix,
+            occurrence.select.selector_name,
+        )
+        .is_some()
         {
             return Some(SelectorStyle::Prefix);
         }
 
         if occurrence.select.variants.iter().all(|variant| {
-            variant_starts_with_direct_selector(variant.value, occurrence.select.selector_name)
+            variant_starts_with_direct_selector(
+                variant.value,
+                occurrence.select.selector_name,
+            )
         }) {
             return Some(SelectorStyle::Suffix);
         }
     }
 
-    rewrite_selected_selector_to_whole(source, pattern, occurrence).map(|_| SelectorStyle::Whole)
+    rewrite_selected_selector_to_whole(source, pattern, occurrence)
+        .map(|_| SelectorStyle::Whole)
 }
 
 fn analyze_selector_pattern_shape<'a>(
@@ -4240,18 +4664,18 @@ fn analyze_selector_pattern_shape<'a>(
         return Some(SelectorPatternShape::Whole(select));
     }
 
-    if selector_prefix_anchor_index(&outer_prefix, select.selector_name).is_some() {
+    if selector_prefix_anchor_index(&outer_prefix, select.selector_name)
+        .is_some()
+    {
         return Some(SelectorPatternShape::Prefix {
             outer_prefix,
             select,
         });
     }
 
-    if select
-        .variants
-        .iter()
-        .all(|variant| variant_starts_with_direct_selector(variant.value, select.selector_name))
-    {
+    if select.variants.iter().all(|variant| {
+        variant_starts_with_direct_selector(variant.value, select.selector_name)
+    }) {
         return Some(SelectorPatternShape::Suffix {
             outer_prefix,
             select,
@@ -4266,7 +4690,8 @@ fn select_expression_from_tail_element<'a>(
     pattern: &'a fluent_syntax::ast::Pattern<&'a str>,
 ) -> Option<ParsedSelectExpression<'a>> {
     let tail = pattern.elements.last()?;
-    let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = tail else {
+    let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = tail
+    else {
         return None;
     };
     select_expression_from_expression(source, expression)
@@ -4282,7 +4707,9 @@ fn select_expression_from_expression<'a>(
     else {
         return None;
     };
-    let fluent_syntax::ast::InlineExpression::VariableReference { id, .. } = selector else {
+    let fluent_syntax::ast::InlineExpression::VariableReference { id, .. } =
+        selector
+    else {
         return None;
     };
 
@@ -4312,10 +4739,14 @@ fn select_occurrences_in_pattern<'a>(
     let mut occurrences = Vec::new();
 
     for (index, element) in pattern.elements.iter().enumerate() {
-        let fluent_syntax::ast::PatternElement::Placeable { expression, span } = element else {
+        let fluent_syntax::ast::PatternElement::Placeable { expression, span } =
+            element
+        else {
             continue;
         };
-        let Some(select) = select_expression_from_expression(source, expression) else {
+        let Some(select) =
+            select_expression_from_expression(source, expression)
+        else {
             continue;
         };
         occurrences.push(ParsedSelectOccurrence {
@@ -4363,8 +4794,10 @@ fn rewrite_selected_selector_to_whole(
     pattern: &fluent_syntax::ast::Pattern<&str>,
     occurrence: &ParsedSelectOccurrence<'_>,
 ) -> Option<String> {
-    let prefix_text = render_pattern_elements(source, &occurrence.outer_prefix)?;
-    let suffix_text = render_pattern_elements(source, &occurrence.outer_suffix)?;
+    let prefix_text =
+        render_pattern_elements(source, &occurrence.outer_prefix)?;
+    let suffix_text =
+        render_pattern_elements(source, &occurrence.outer_suffix)?;
     let variants = occurrence
         .select
         .variants
@@ -4393,7 +4826,8 @@ fn rewrite_whole_selector_to_prefix(
     pattern: &fluent_syntax::ast::Pattern<&str>,
     select: &ParsedSelectExpression<'_>,
 ) -> Option<String> {
-    let common_prefix_len = common_prefix_element_count(source, &select.variants);
+    let common_prefix_len =
+        common_prefix_element_count(source, &select.variants);
     if common_prefix_len == 0 {
         return None;
     }
@@ -4404,7 +4838,9 @@ fn rewrite_whole_selector_to_prefix(
         .iter()
         .take(common_prefix_len)
         .collect::<Vec<_>>();
-    if selector_prefix_anchor_index(&prefix_elements, select.selector_name).is_none() {
+    if selector_prefix_anchor_index(&prefix_elements, select.selector_name)
+        .is_none()
+    {
         return None;
     }
     let outer_prefix_text = render_pattern_elements(source, &prefix_elements)?;
@@ -4419,7 +4855,9 @@ fn rewrite_whole_selector_to_prefix(
             Some(RenderedVariant {
                 key_text: variant.key_text.clone(),
                 default: variant.default,
-                body: trim_rendered_variant_body(render_pattern_element_slice(source, remaining)?),
+                body: trim_rendered_variant_body(render_pattern_element_slice(
+                    source, remaining,
+                )?),
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -4439,7 +4877,8 @@ fn rewrite_whole_selector_to_suffix(
     pattern: &fluent_syntax::ast::Pattern<&str>,
     select: &ParsedSelectExpression<'_>,
 ) -> Option<String> {
-    let common_prefix_len = common_prefix_element_count(source, &select.variants);
+    let common_prefix_len =
+        common_prefix_element_count(source, &select.variants);
     let first_variant = select.variants.first()?;
     let common_prefix = first_variant
         .value
@@ -4451,14 +4890,17 @@ fn rewrite_whole_selector_to_suffix(
         .iter()
         .enumerate()
         .filter_map(|(index, element)| {
-            (direct_variable_placeable_name(element) == Some(select.selector_name)).then_some(index)
+            (direct_variable_placeable_name(element)
+                == Some(select.selector_name))
+            .then_some(index)
         })
         .last()?;
     if anchor_index == 0 {
         return None;
     }
     let outer_prefix_elements = &common_prefix[..anchor_index];
-    let outer_prefix_text = render_pattern_elements(source, outer_prefix_elements)?;
+    let outer_prefix_text =
+        render_pattern_elements(source, outer_prefix_elements)?;
     let variants = select
         .variants
         .iter()
@@ -4470,7 +4912,9 @@ fn rewrite_whole_selector_to_suffix(
             Some(RenderedVariant {
                 key_text: variant.key_text.clone(),
                 default: variant.default,
-                body: trim_rendered_variant_body(render_pattern_element_slice(source, remaining)?),
+                body: trim_rendered_variant_body(render_pattern_element_slice(
+                    source, remaining,
+                )?),
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -4493,7 +4937,9 @@ fn rewrite_suffix_selector_to_prefix(
 ) -> Option<String> {
     let first_variant = select.variants.first()?;
     let anchor_element = first_variant.value.elements.first()?;
-    if direct_variable_placeable_name(anchor_element) != Some(select.selector_name) {
+    if direct_variable_placeable_name(anchor_element)
+        != Some(select.selector_name)
+    {
         return None;
     }
     let mut prefix_elements = outer_prefix.to_vec();
@@ -4510,7 +4956,9 @@ fn rewrite_suffix_selector_to_prefix(
             Some(RenderedVariant {
                 key_text: variant.key_text.clone(),
                 default: variant.default,
-                body: trim_rendered_variant_body(render_pattern_element_slice(source, remaining)?),
+                body: trim_rendered_variant_body(render_pattern_element_slice(
+                    source, remaining,
+                )?),
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -4530,13 +4978,20 @@ fn rewrite_selected_selector_to_suffix(
     pattern: &fluent_syntax::ast::Pattern<&str>,
     occurrence: &ParsedSelectOccurrence<'_>,
 ) -> Option<String> {
-    let anchor_index =
-        selector_prefix_anchor_index(&occurrence.outer_prefix, occurrence.select.selector_name)?;
-    let outer_prefix_text =
-        render_pattern_elements(source, &occurrence.outer_prefix[..anchor_index])?;
-    let body_prefix_text =
-        render_pattern_elements(source, &occurrence.outer_prefix[anchor_index..])?;
-    let suffix_text = render_pattern_elements(source, &occurrence.outer_suffix)?;
+    let anchor_index = selector_prefix_anchor_index(
+        &occurrence.outer_prefix,
+        occurrence.select.selector_name,
+    )?;
+    let outer_prefix_text = render_pattern_elements(
+        source,
+        &occurrence.outer_prefix[..anchor_index],
+    )?;
+    let body_prefix_text = render_pattern_elements(
+        source,
+        &occurrence.outer_prefix[anchor_index..],
+    )?;
+    let suffix_text =
+        render_pattern_elements(source, &occurrence.outer_suffix)?;
     let variants = occurrence
         .select
         .variants
@@ -4587,7 +5042,11 @@ fn render_select_block(
     indent_selector_block(&lines.join("\n"), line_indent)
 }
 
-fn render_generated_selector_block(variable: &str, language: &str, branch_body: &str) -> String {
+fn render_generated_selector_block(
+    variable: &str,
+    language: &str,
+    branch_body: &str,
+) -> String {
     let mut lines = vec![format!("{{ {variable} ->")];
     let body = format_variant_body(branch_body);
     let categories = plural_categories(language);
@@ -4693,7 +5152,9 @@ fn plural_category_name(category: PluralCategory) -> &'static str {
     }
 }
 
-fn available_selector_styles(target: &GenerateSelectorTarget) -> Vec<SelectorStyle> {
+fn available_selector_styles(
+    target: &GenerateSelectorTarget,
+) -> Vec<SelectorStyle> {
     if target.selected_function.is_some() || !target.variables.is_empty() {
         vec![
             SelectorStyle::Prefix,
@@ -4723,9 +5184,15 @@ fn collect_variable_placeables_in_pattern(
     pattern: &fluent_syntax::ast::Pattern<&str>,
     variables: &mut Vec<VariablePlaceable>,
 ) {
-    let container_span = trim_trailing_newlines_from_span(source, pattern.span.0.clone());
+    let container_span =
+        trim_trailing_newlines_from_span(source, pattern.span.0.clone());
     for element in &pattern.elements {
-        collect_variable_placeables_in_element(source, element, &container_span, variables);
+        collect_variable_placeables_in_element(
+            source,
+            element,
+            &container_span,
+            variables,
+        );
     }
 }
 
@@ -4735,10 +5202,16 @@ fn collect_variable_placeables_in_element(
     container_span: &ByteRange<usize>,
     variables: &mut Vec<VariablePlaceable>,
 ) {
-    if let fluent_syntax::ast::PatternElement::Placeable { expression, span } = element {
+    if let fluent_syntax::ast::PatternElement::Placeable { expression, span } =
+        element
+    {
         let anchor_span = normalize_placeable_span(source, span.0.clone());
         if let fluent_syntax::ast::Expression::Inline(
-            fluent_syntax::ast::InlineExpression::VariableReference { id, span, .. },
+            fluent_syntax::ast::InlineExpression::VariableReference {
+                id,
+                span,
+                ..
+            },
             _,
         ) = expression
         {
@@ -4789,7 +5262,11 @@ fn collect_variable_references_in_expression(
                 variables,
             );
             for variant in variants {
-                collect_variable_placeables_in_pattern(source, &variant.value, variables);
+                collect_variable_placeables_in_pattern(
+                    source,
+                    &variant.value,
+                    variables,
+                );
             }
         }
     }
@@ -4803,7 +5280,10 @@ fn collect_variable_references_in_inline(
     variables: &mut Vec<VariablePlaceable>,
 ) {
     match inline {
-        fluent_syntax::ast::InlineExpression::VariableReference { id, span } => {
+        fluent_syntax::ast::InlineExpression::VariableReference {
+            id,
+            span,
+        } => {
             variables.push(VariablePlaceable {
                 name: format!("${}", id.name),
                 reference_span: span.0.clone(),
@@ -4812,7 +5292,10 @@ fn collect_variable_references_in_inline(
                 container_span: container_span.clone(),
             });
         }
-        fluent_syntax::ast::InlineExpression::FunctionReference { arguments, .. } => {
+        fluent_syntax::ast::InlineExpression::FunctionReference {
+            arguments,
+            ..
+        } => {
             collect_variable_references_in_call_arguments(
                 source,
                 arguments,
@@ -4821,7 +5304,10 @@ fn collect_variable_references_in_inline(
                 variables,
             );
         }
-        fluent_syntax::ast::InlineExpression::TermReference { arguments, .. } => {
+        fluent_syntax::ast::InlineExpression::TermReference {
+            arguments,
+            ..
+        } => {
             if let Some(arguments) = arguments {
                 collect_variable_references_in_call_arguments(
                     source,
@@ -4832,7 +5318,9 @@ fn collect_variable_references_in_inline(
                 );
             }
         }
-        fluent_syntax::ast::InlineExpression::Placeable { expression, .. } => {
+        fluent_syntax::ast::InlineExpression::Placeable {
+            expression, ..
+        } => {
             collect_variable_references_in_expression(
                 source,
                 expression,
@@ -4879,9 +5367,15 @@ fn collect_function_selector_targets_in_pattern(
     pattern: &fluent_syntax::ast::Pattern<&str>,
     functions: &mut Vec<FunctionSelectorTarget>,
 ) {
-    let container_span = trim_trailing_newlines_from_span(source, pattern.span.0.clone());
+    let container_span =
+        trim_trailing_newlines_from_span(source, pattern.span.0.clone());
     for element in &pattern.elements {
-        collect_function_selector_targets_in_element(source, element, &container_span, functions);
+        collect_function_selector_targets_in_element(
+            source,
+            element,
+            &container_span,
+            functions,
+        );
     }
 }
 
@@ -4891,7 +5385,9 @@ fn collect_function_selector_targets_in_element(
     container_span: &ByteRange<usize>,
     functions: &mut Vec<FunctionSelectorTarget>,
 ) {
-    if let fluent_syntax::ast::PatternElement::Placeable { expression, span } = element {
+    if let fluent_syntax::ast::PatternElement::Placeable { expression, span } =
+        element
+    {
         let anchor_span = normalize_placeable_span(source, span.0.clone());
         collect_function_selector_targets_in_expression(
             source,
@@ -4931,7 +5427,11 @@ fn collect_function_selector_targets_in_expression(
                 functions,
             );
             for variant in variants {
-                collect_function_selector_targets_in_pattern(source, &variant.value, functions);
+                collect_function_selector_targets_in_pattern(
+                    source,
+                    &variant.value,
+                    functions,
+                );
             }
         }
     }
@@ -4946,7 +5446,9 @@ fn collect_function_selector_targets_in_inline(
 ) {
     match inline {
         fluent_syntax::ast::InlineExpression::FunctionReference {
-            span, arguments, ..
+            span,
+            arguments,
+            ..
         } => {
             if let Some(selector_text) = source.get(span.0.clone()) {
                 functions.push(FunctionSelectorTarget {
@@ -4964,7 +5466,10 @@ fn collect_function_selector_targets_in_inline(
                 functions,
             );
         }
-        fluent_syntax::ast::InlineExpression::TermReference { arguments, .. } => {
+        fluent_syntax::ast::InlineExpression::TermReference {
+            arguments,
+            ..
+        } => {
             if let Some(arguments) = arguments {
                 collect_function_selector_targets_in_call_arguments(
                     source,
@@ -4975,7 +5480,9 @@ fn collect_function_selector_targets_in_inline(
                 );
             }
         }
-        fluent_syntax::ast::InlineExpression::Placeable { expression, .. } => {
+        fluent_syntax::ast::InlineExpression::Placeable {
+            expression, ..
+        } => {
             collect_function_selector_targets_in_expression(
                 source,
                 expression,
@@ -5039,23 +5546,31 @@ fn deepest_pattern_span_for_byte_index(
         .min_by_key(|span| span.end - span.start)
 }
 
-fn pattern_contains_select(pattern: &fluent_syntax::ast::Pattern<&str>) -> bool {
+fn pattern_contains_select(
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+) -> bool {
     pattern.elements.iter().any(pattern_element_contains_select)
 }
 
-fn pattern_element_contains_select(element: &fluent_syntax::ast::PatternElement<&str>) -> bool {
+fn pattern_element_contains_select(
+    element: &fluent_syntax::ast::PatternElement<&str>,
+) -> bool {
     match element {
         fluent_syntax::ast::PatternElement::TextElement { .. } => false,
-        fluent_syntax::ast::PatternElement::Placeable { expression, .. } => {
-            expression_contains_select(expression)
-        }
+        fluent_syntax::ast::PatternElement::Placeable {
+            expression, ..
+        } => expression_contains_select(expression),
     }
 }
 
-fn expression_contains_select(expression: &fluent_syntax::ast::Expression<&str>) -> bool {
+fn expression_contains_select(
+    expression: &fluent_syntax::ast::Expression<&str>,
+) -> bool {
     match expression {
         fluent_syntax::ast::Expression::Inline(
-            fluent_syntax::ast::InlineExpression::Placeable { expression, .. },
+            fluent_syntax::ast::InlineExpression::Placeable {
+                expression, ..
+            },
             _,
         ) => expression_contains_select(expression),
         fluent_syntax::ast::Expression::Inline(_, _) => false,
@@ -5069,7 +5584,11 @@ fn collect_pattern_spans(
 ) {
     spans.push(pattern.span.0.clone());
     for element in &pattern.elements {
-        if let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = element {
+        if let fluent_syntax::ast::PatternElement::Placeable {
+            expression,
+            ..
+        } = element
+        {
             collect_pattern_spans_from_expression(expression, spans);
         }
     }
@@ -5081,7 +5600,11 @@ fn collect_pattern_refs<'a>(
 ) {
     patterns.push(pattern);
     for element in &pattern.elements {
-        if let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = element {
+        if let fluent_syntax::ast::PatternElement::Placeable {
+            expression,
+            ..
+        } = element
+        {
             collect_pattern_refs_from_expression(expression, patterns);
         }
     }
@@ -5091,7 +5614,8 @@ fn collect_pattern_refs_from_expression<'a>(
     expression: &'a fluent_syntax::ast::Expression<&'a str>,
     patterns: &mut Vec<&'a fluent_syntax::ast::Pattern<&'a str>>,
 ) {
-    if let fluent_syntax::ast::Expression::Select { variants, .. } = expression {
+    if let fluent_syntax::ast::Expression::Select { variants, .. } = expression
+    {
         for variant in variants {
             collect_pattern_refs(&variant.value, patterns);
         }
@@ -5102,7 +5626,8 @@ fn collect_pattern_spans_from_expression(
     expression: &fluent_syntax::ast::Expression<&str>,
     spans: &mut Vec<ByteRange<usize>>,
 ) {
-    if let fluent_syntax::ast::Expression::Select { variants, .. } = expression {
+    if let fluent_syntax::ast::Expression::Select { variants, .. } = expression
+    {
         for variant in variants {
             collect_pattern_spans(&variant.value, spans);
         }
@@ -5145,7 +5670,9 @@ fn render_selector_token(binding: &VariableBinding) -> String {
 fn direct_variable_placeable_name<'a>(
     element: &'a fluent_syntax::ast::PatternElement<&'a str>,
 ) -> Option<&'a str> {
-    let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = element else {
+    let fluent_syntax::ast::PatternElement::Placeable { expression, .. } =
+        element
+    else {
         return None;
     };
     let fluent_syntax::ast::Expression::Inline(
@@ -5177,7 +5704,8 @@ fn selector_prefix_anchor_index(
         .iter()
         .enumerate()
         .filter_map(|(index, element)| {
-            (direct_variable_placeable_name(element) == Some(selector_name)).then_some(index)
+            (direct_variable_placeable_name(element) == Some(selector_name))
+                .then_some(index)
         })
         .last()?;
     elements[anchor_index + 1..]
@@ -5186,7 +5714,9 @@ fn selector_prefix_anchor_index(
         .then_some(anchor_index)
 }
 
-fn whitespace_text_element(element: &fluent_syntax::ast::PatternElement<&str>) -> bool {
+fn whitespace_text_element(
+    element: &fluent_syntax::ast::PatternElement<&str>,
+) -> bool {
     match element {
         fluent_syntax::ast::PatternElement::TextElement { value, .. } => {
             value.chars().all(char::is_whitespace)
@@ -5251,7 +5781,9 @@ fn pattern_element_source_text<'a>(
     element: &fluent_syntax::ast::PatternElement<&str>,
 ) -> Option<&'a str> {
     match element {
-        fluent_syntax::ast::PatternElement::TextElement { span, .. } => source.get(span.0.clone()),
+        fluent_syntax::ast::PatternElement::TextElement { span, .. } => {
+            source.get(span.0.clone())
+        }
         fluent_syntax::ast::PatternElement::Placeable { span, .. } => {
             source.get(normalize_placeable_span(source, span.0.clone()))
         }
@@ -5270,7 +5802,10 @@ fn variant_key_source_text(
     }
 }
 
-fn common_prefix_element_count(source: &str, variants: &[ParsedVariant<'_>]) -> usize {
+fn common_prefix_element_count(
+    source: &str,
+    variants: &[ParsedVariant<'_>],
+) -> usize {
     let Some(first) = variants.first() else {
         return 0;
     };
@@ -5281,7 +5816,10 @@ fn common_prefix_element_count(source: &str, variants: &[ParsedVariant<'_>]) -> 
         let mut index = 0usize;
         while index < common_len
             && pattern_element_source_text(source, &first.value.elements[index])
-                == pattern_element_source_text(source, &variant.value.elements[index])
+                == pattern_element_source_text(
+                    source,
+                    &variant.value.elements[index],
+                )
         {
             index += 1;
         }
@@ -5329,7 +5867,10 @@ fn replace_variable_references(
     result
 }
 
-fn relative_span(outer: &ByteRange<usize>, inner: &ByteRange<usize>) -> Option<ByteRange<usize>> {
+fn relative_span(
+    outer: &ByteRange<usize>,
+    inner: &ByteRange<usize>,
+) -> Option<ByteRange<usize>> {
     if inner.start < outer.start || inner.end > outer.end {
         None
     } else {
@@ -5337,7 +5878,10 @@ fn relative_span(outer: &ByteRange<usize>, inner: &ByteRange<usize>) -> Option<B
     }
 }
 
-fn normalize_placeable_span(source: &str, span: ByteRange<usize>) -> ByteRange<usize> {
+fn normalize_placeable_span(
+    source: &str,
+    span: ByteRange<usize>,
+) -> ByteRange<usize> {
     if source.as_bytes().get(span.end) == Some(&b'}') {
         span.start..(span.end + 1)
     } else {
@@ -5345,8 +5889,13 @@ fn normalize_placeable_span(source: &str, span: ByteRange<usize>) -> ByteRange<u
     }
 }
 
-fn trim_trailing_newlines_from_span(source: &str, mut span: ByteRange<usize>) -> ByteRange<usize> {
-    while span.end > span.start && source.as_bytes().get(span.end - 1) == Some(&b'\n') {
+fn trim_trailing_newlines_from_span(
+    source: &str,
+    mut span: ByteRange<usize>,
+) -> ByteRange<usize> {
+    while span.end > span.start
+        && source.as_bytes().get(span.end - 1) == Some(&b'\n')
+    {
         span.end -= 1;
     }
     span
@@ -5381,7 +5930,11 @@ fn indent_selector_block(block: &str, line_indent: &str) -> String {
     rendered
 }
 
-fn position_overlaps_byte_span(source: &str, position: Position, span: &ByteRange<usize>) -> bool {
+fn position_overlaps_byte_span(
+    source: &str,
+    position: Position,
+    span: &ByteRange<usize>,
+) -> bool {
     byte_range_to_lsp_range(source, span.clone())
         .is_some_and(|range| range_contains_position(&range, position))
 }
@@ -5406,13 +5959,19 @@ fn collect_fluent_keys_from_resource(resource: &Resource<&str>) -> Vec<String> {
             Entry::Message(message) => {
                 keys.push(message.id.name.to_string());
                 for attribute in &message.attributes {
-                    keys.push(format!("{}.{}", message.id.name, attribute.id.name));
+                    keys.push(format!(
+                        "{}.{}",
+                        message.id.name, attribute.id.name
+                    ));
                 }
             }
             Entry::Term(term) => {
                 keys.push(format!("-{}", term.id.name));
                 for attribute in &term.attributes {
-                    keys.push(format!("-{}.{}", term.id.name, attribute.id.name));
+                    keys.push(format!(
+                        "-{}.{}",
+                        term.id.name, attribute.id.name
+                    ));
                 }
             }
             _ => {}
@@ -5422,24 +5981,31 @@ fn collect_fluent_keys_from_resource(resource: &Resource<&str>) -> Vec<String> {
     keys
 }
 
-fn count_pattern_combinations(pattern: &fluent_syntax::ast::Pattern<&str>) -> usize {
+fn count_pattern_combinations(
+    pattern: &fluent_syntax::ast::Pattern<&str>,
+) -> usize {
     let mut total_count = 1usize;
     for element in &pattern.elements {
-        total_count = total_count.saturating_mul(count_pattern_element_combinations(element));
+        total_count = total_count
+            .saturating_mul(count_pattern_element_combinations(element));
     }
     total_count
 }
 
-fn count_pattern_element_combinations(element: &fluent_syntax::ast::PatternElement<&str>) -> usize {
+fn count_pattern_element_combinations(
+    element: &fluent_syntax::ast::PatternElement<&str>,
+) -> usize {
     match element {
         fluent_syntax::ast::PatternElement::TextElement { .. } => 1,
-        fluent_syntax::ast::PatternElement::Placeable { expression, .. } => {
-            count_expression_combinations(expression)
-        }
+        fluent_syntax::ast::PatternElement::Placeable {
+            expression, ..
+        } => count_expression_combinations(expression),
     }
 }
 
-fn count_expression_combinations(expression: &fluent_syntax::ast::Expression<&str>) -> usize {
+fn count_expression_combinations(
+    expression: &fluent_syntax::ast::Expression<&str>,
+) -> usize {
     match expression {
         fluent_syntax::ast::Expression::Inline(..) => 1,
         fluent_syntax::ast::Expression::Select { variants, .. } => {
@@ -5455,30 +6021,41 @@ fn parse_fluent_resource(source: &str) -> Resource<&str> {
     resource
 }
 
-fn parse_fluent_resource_with_errors(source: &str) -> (Resource<&str>, Vec<parser::ParserError>) {
+fn parse_fluent_resource_with_errors(
+    source: &str,
+) -> (Resource<&str>, Vec<parser::ParserError>) {
     match parser::parse(source) {
         Ok(resource) => (resource, Vec::new()),
         Err((resource, errors)) => (resource, errors),
     }
 }
 
-fn extract_fluent_key_at_position(source: &str, position: Position) -> Option<String> {
+fn extract_fluent_key_at_position(
+    source: &str,
+    position: Position,
+) -> Option<String> {
     let line_index = usize::try_from(position.line).ok()?;
     collect_fluent_keys(source)
         .into_iter()
         .filter_map(|key| {
-            let (start_line, end_line) = find_fluent_block_line_range(source, &key)?;
+            let (start_line, end_line) =
+                find_fluent_block_line_range(source, &key)?;
             if start_line <= line_index && line_index <= end_line {
                 Some((key, start_line, end_line))
             } else {
                 None
             }
         })
-        .max_by_key(|(_, start_line, end_line)| (*start_line, usize::MAX - (end_line - start_line)))
+        .max_by_key(|(_, start_line, end_line)| {
+            (*start_line, usize::MAX - (end_line - start_line))
+        })
         .map(|(key, _, _)| key)
 }
 
-fn completion_site_for_position(source: &str, position: Position) -> Option<CompletionSite> {
+fn completion_site_for_position(
+    source: &str,
+    position: Position,
+) -> Option<CompletionSite> {
     let byte_index = position_to_byte_index(source, position)?;
     let line_start = source[..byte_index]
         .rfind('\n')
@@ -5492,7 +6069,10 @@ fn completion_site_for_position(source: &str, position: Position) -> Option<Comp
     let cursor_in_line = byte_index.checked_sub(line_start)?;
     let before_cursor = line.get(..cursor_in_line)?;
     let trimmed_before = before_cursor.trim_start();
-    if trimmed_before.is_empty() || trimmed_before.starts_with('#') || before_cursor.contains('=') {
+    if trimmed_before.is_empty()
+        || trimmed_before.starts_with('#')
+        || before_cursor.contains('=')
+    {
         return None;
     }
 
@@ -5510,10 +6090,13 @@ fn completion_site_for_position(source: &str, position: Position) -> Option<Comp
     if cursor_in_line < indent {
         return None;
     }
-    if !trimmed_before.starts_with('.') || !is_completion_prefix(trimmed_before, true) {
+    if !trimmed_before.starts_with('.')
+        || !is_completion_prefix(trimmed_before, true)
+    {
         return None;
     }
-    let message_key = enclosing_message_key_for_attribute_completion(source, position.line)?;
+    let message_key =
+        enclosing_message_key_for_attribute_completion(source, position.line)?;
     Some(CompletionSite::AttributeKey {
         message_key,
         prefix: trimmed_before.to_string(),
@@ -5535,7 +6118,10 @@ fn is_completion_prefix(prefix: &str, allow_bare_dot: bool) -> bool {
     })
 }
 
-fn enclosing_message_key_for_attribute_completion(source: &str, line: u32) -> Option<String> {
+fn enclosing_message_key_for_attribute_completion(
+    source: &str,
+    line: u32,
+) -> Option<String> {
     let target_line = usize::try_from(line).ok()?;
     let lines = source.lines().collect::<Vec<_>>();
     for current in (0..target_line).rev() {
@@ -5564,22 +6150,27 @@ fn enclosing_message_key_for_attribute_completion(source: &str, line: u32) -> Op
 }
 
 #[cfg(test)]
-fn completion_items_for_site(origin_source: &str, site: &CompletionSite) -> Vec<CompletionItem> {
+fn completion_items_for_site(
+    origin_source: &str,
+    site: &CompletionSite,
+) -> Vec<CompletionItem> {
     match site {
-        CompletionSite::MessageKey { prefix } => origin_message_keys(origin_source)
-            .into_iter()
-            .filter(|key| key.starts_with(prefix))
-            .enumerate()
-            .map(|(index, key)| {
-                completion_item(
-                    origin_source,
-                    key,
-                    "message",
-                    CompletionItemKind::TEXT,
-                    index,
-                )
-            })
-            .collect(),
+        CompletionSite::MessageKey { prefix } => {
+            origin_message_keys(origin_source)
+                .into_iter()
+                .filter(|key| key.starts_with(prefix))
+                .enumerate()
+                .map(|(index, key)| {
+                    completion_item(
+                        origin_source,
+                        key,
+                        "message",
+                        CompletionItemKind::TEXT,
+                        index,
+                    )
+                })
+                .collect()
+        }
         CompletionSite::AttributeKey {
             message_key,
             prefix,
@@ -5610,7 +6201,10 @@ fn indexed_completion_items_for_site(
         CompletionSite::MessageKey { prefix } => origin_file
             .ordered_message_keys
             .iter()
-            .filter(|key| key.starts_with(prefix) && !local_file.keys.contains(key.as_str()))
+            .filter(|key| {
+                key.starts_with(prefix)
+                    && !local_file.keys.contains(key.as_str())
+            })
             .enumerate()
             .map(|(index, key)| {
                 indexed_completion_item(
@@ -5697,7 +6291,10 @@ fn indexed_completion_item(
 }
 
 #[cfg(test)]
-fn completion_item_documentation(origin_source: &str, key: &str) -> Option<Documentation> {
+fn completion_item_documentation(
+    origin_source: &str,
+    key: &str,
+) -> Option<Documentation> {
     let rendered = render_fluent_source(origin_source, key)?;
     let mut sections = Vec::new();
     if let Some(comments) = rendered
@@ -5782,7 +6379,10 @@ fn collect_missing_translation_entries(
     translation_source: &str,
 ) -> MissingTranslationEntries {
     let templates = origin_message_templates(origin_source);
-    collect_missing_translation_entries_from_templates(&templates, translation_source)
+    collect_missing_translation_entries_from_templates(
+        &templates,
+        translation_source,
+    )
 }
 
 fn collect_missing_translation_entries_from_templates(
@@ -5800,7 +6400,9 @@ fn collect_missing_translation_entries_from_templates(
         let attributes = template
             .attributes
             .iter()
-            .filter(|attribute| !existing_attributes.contains(attribute.key.as_str()))
+            .filter(|attribute| {
+                !existing_attributes.contains(attribute.key.as_str())
+            })
             .cloned()
             .collect::<Vec<_>>();
         if !attributes.is_empty() {
@@ -5818,7 +6420,9 @@ fn translation_language_from_path(path: &Path) -> Option<String> {
     path.parent()?.file_name()?.to_str().map(str::to_string)
 }
 
-fn origin_message_templates_from_source(source: &str) -> Vec<OriginMessageTemplate> {
+fn origin_message_templates_from_source(
+    source: &str,
+) -> Vec<OriginMessageTemplate> {
     let resource = parse_fluent_resource(source);
     let source_index = SourceLineIndex::new(source);
     resource
@@ -5831,7 +6435,8 @@ fn origin_message_templates_from_source(source: &str) -> Vec<OriginMessageTempla
                     .attributes
                     .iter()
                     .filter_map(|attribute| {
-                        let attribute_key = format!("{}.{}", key, attribute.id.name);
+                        let attribute_key =
+                            format!("{}.{}", key, attribute.id.name);
                         Some(OriginAttributeTemplate {
                             key: attribute.id.name.to_string(),
                             source_span: render_source_span(
@@ -5847,7 +6452,12 @@ fn origin_message_templates_from_source(source: &str) -> Vec<OriginMessageTempla
                     key,
                     has_value: message.value.is_some(),
                     attributes,
-                    source_span: render_source_span(source, &source_index, entry, message.id.name)?,
+                    source_span: render_source_span(
+                        source,
+                        &source_index,
+                        entry,
+                        message.id.name,
+                    )?,
                 })
             }
             _ => None,
@@ -5860,7 +6470,9 @@ fn origin_message_templates(source: &str) -> Vec<OriginMessageTemplate> {
     origin_message_templates_from_source(source)
 }
 
-fn translation_message_attributes(source: &str) -> FastMap<String, FastSet<String>> {
+fn translation_message_attributes(
+    source: &str,
+) -> FastMap<String, FastSet<String>> {
     let resource = parse_fluent_resource(source);
     resource
         .body
@@ -5897,9 +6509,14 @@ fn build_missing_entries_workspace_edit(
     }
 
     if !missing.missing_messages.is_empty() {
-        let insertion =
-            render_missing_messages_appendix(source, origin_source, &missing.missing_messages, mode);
-        let range = byte_range_to_lsp_range(source, source.len()..source.len())?;
+        let insertion = render_missing_messages_appendix(
+            source,
+            origin_source,
+            &missing.missing_messages,
+            mode,
+        );
+        let range =
+            byte_range_to_lsp_range(source, source.len()..source.len())?;
         edits.push(TextEdit::new(range, insertion));
     }
 
@@ -5921,11 +6538,18 @@ fn build_missing_attribute_patch_edit(
     origin_source: &str,
     mode: MissingEntryRenderMode,
 ) -> Option<TextEdit> {
-    let replacement =
-        render_missing_attribute_patched_message(source, patch, origin_source, mode)?;
+    let replacement = render_missing_attribute_patched_message(
+        source,
+        patch,
+        origin_source,
+        mode,
+    )?;
     let existing = render_fluent_source(source, &patch.message_key)?.source;
     let definition = find_fluent_definition(source, &patch.message_key)?;
-    let start_guess = line_start_offset(source, usize::try_from(definition.start.line).ok()?)?;
+    let start_guess = line_start_offset(
+        source,
+        usize::try_from(definition.start.line).ok()?,
+    )?;
     let relative_start = source.get(start_guess..)?.find(&existing)?;
     let start = start_guess + relative_start;
     let end = start + existing.len();
@@ -5955,22 +6579,29 @@ fn build_single_message_copy_code_action(
             uri,
             translation_source,
             message_key,
-            render_missing_message(origin_source, &template, MissingEntryRenderMode::CopySource),
+            render_missing_message(
+                origin_source,
+                &template,
+                MissingEntryRenderMode::CopySource,
+            ),
         )?;
         return Some(CodeAction {
-            title: format!("Copy `{message_key}` from source"),
+            title: format!("Copy missing string `{message_key}`"),
             kind: Some(CodeActionKind::QUICKFIX),
             edit: Some(edit),
             ..CodeAction::default()
         });
     }
 
-    let missing =
-        collect_missing_translation_entries_from_templates(origin_templates, translation_source);
+    let missing = collect_missing_translation_entries_from_templates(
+        origin_templates,
+        translation_source,
+    );
     let patch = missing
         .missing_attributes
         .into_iter()
         .find(|patch| patch.message_key == message_key)?;
+    let attribute_key = patch.attributes.first()?.key.clone();
     let edit = build_missing_entries_workspace_edit(
         uri,
         translation_source,
@@ -5982,7 +6613,9 @@ fn build_single_message_copy_code_action(
         MissingEntryRenderMode::CopySource,
     )?;
     Some(CodeAction {
-        title: format!("Copy missing attributes for `{message_key}` from source"),
+        title: format!(
+            "Copy missing attribute `{message_key}.{attribute_key}`"
+        ),
         kind: Some(CodeActionKind::QUICKFIX),
         edit: Some(edit),
         ..CodeAction::default()
@@ -5994,8 +6627,10 @@ pub fn benchmark_missing_entries_code_actions(
     translation_source: &str,
 ) -> MissingEntriesBenchSummary {
     let origin_templates = origin_message_templates_from_source(origin_source);
-    let missing =
-        collect_missing_translation_entries_from_templates(&origin_templates, translation_source);
+    let missing = collect_missing_translation_entries_from_templates(
+        &origin_templates,
+        translation_source,
+    );
     let uri = Uri::from_file_path("/tmp/missing-entries-bench.ftl")
         .expect("fixed file URI should be valid");
 
@@ -6006,7 +6641,12 @@ pub fn benchmark_missing_entries_code_actions(
         None,
         MissingEntryRenderMode::EmptyStub,
     )
-    .map(|edit| edit.changes.as_ref().map(|changes| changes.len()).unwrap_or(0))
+    .map(|edit| {
+        edit.changes
+            .as_ref()
+            .map(|changes| changes.len())
+            .unwrap_or(0)
+    })
     .unwrap_or(0);
 
     let copy_source_edit_count = build_missing_entries_workspace_edit(
@@ -6016,18 +6656,28 @@ pub fn benchmark_missing_entries_code_actions(
         Some(origin_source),
         MissingEntryRenderMode::CopySource,
     )
-    .map(|edit| edit.changes.as_ref().map(|changes| changes.len()).unwrap_or(0))
+    .map(|edit| {
+        edit.changes
+            .as_ref()
+            .map(|changes| changes.len())
+            .unwrap_or(0)
+    })
     .unwrap_or(0);
 
-    let single_message_copy_action_count = build_single_message_copy_code_action(
-        &uri,
-        translation_source,
-        &origin_templates,
-        origin_source,
-        indexed_fluent_key_at_position(translation_source, Position::new(0, 0)).as_deref(),
-    )
-    .map(|_| 1)
-    .unwrap_or(0);
+    let single_message_copy_action_count =
+        build_single_message_copy_code_action(
+            &uri,
+            translation_source,
+            &origin_templates,
+            origin_source,
+            indexed_fluent_key_at_position(
+                translation_source,
+                Position::new(0, 0),
+            )
+            .as_deref(),
+        )
+        .map(|_| 1)
+        .unwrap_or(0);
 
     MissingEntriesBenchSummary {
         missing_message_count: missing.missing_messages.len(),
@@ -6047,19 +6697,21 @@ pub fn benchmark_code_actions_at_cursor(
     let total_started = Instant::now();
     let uri = Uri::from_file_path("/tmp/code-actions-bench.ftl")
         .expect("fixed file URI should be valid");
-    let current_key = indexed_fluent_key_at_position(translation_source, position);
-    let selector_context =
-        build_selector_code_action_context(
-            translation_source,
-            translation_path,
-            position,
-            current_key.as_deref(),
-        );
+    let current_key =
+        indexed_fluent_key_at_position(translation_source, position);
+    let selector_context = build_selector_code_action_context(
+        translation_source,
+        translation_path,
+        position,
+        current_key.as_deref(),
+    );
 
     let missing_started = Instant::now();
     let origin_templates = origin_message_templates_from_source(origin_source);
-    let missing =
-        collect_missing_translation_entries_from_templates(&origin_templates, translation_source);
+    let missing = collect_missing_translation_entries_from_templates(
+        &origin_templates,
+        translation_source,
+    );
     let mut missing_entries_action_count = 0usize;
     if build_missing_entries_workspace_edit(
         &uri,
@@ -6083,47 +6735,57 @@ pub fn benchmark_code_actions_at_cursor(
     {
         missing_entries_action_count += 1;
     }
-    let single_message_copy_action_count = build_single_message_copy_code_action(
-        &uri,
-        translation_source,
-        &origin_templates,
-        origin_source,
-        current_key.as_deref(),
-    )
-    .map(|_| 1)
-    .unwrap_or(0);
+    let single_message_copy_action_count =
+        build_single_message_copy_code_action(
+            &uri,
+            translation_source,
+            &origin_templates,
+            origin_source,
+            current_key.as_deref(),
+        )
+        .map(|_| 1)
+        .unwrap_or(0);
     let missing_entries_ms = missing_started.elapsed().as_secs_f64() * 1000.0;
 
     let generate_started = Instant::now();
-    let generate_selector_action_count = if let Some(target) = selector_context
-        .as_ref()
-        .and_then(|context| find_generate_selector_target_in_context(translation_source, context))
-    {
-            let language = translation_language_from_path(translation_path).unwrap_or_default();
-            let ordered_styles =
-                ordered_selector_styles(available_selector_styles(&target), SelectorStyle::default());
-            ordered_styles
-                .into_iter()
-                .filter(|candidate_style| {
-                    generate_number_selector_edit(
-                        translation_source,
-                        &target,
-                        &language,
-                        *candidate_style,
-                        false,
-                    )
-                    .is_some()
-                })
-                .count()
+    let generate_selector_action_count = if let Some(target) =
+        selector_context.as_ref().and_then(|context| {
+            find_generate_selector_target_in_context(
+                translation_source,
+                context,
+            )
+        }) {
+        let language = translation_language_from_path(translation_path)
+            .unwrap_or_default();
+        let ordered_styles = ordered_selector_styles(
+            available_selector_styles(&target),
+            SelectorStyle::default(),
+        );
+        ordered_styles
+            .into_iter()
+            .filter(|candidate_style| {
+                generate_number_selector_edit(
+                    translation_source,
+                    &target,
+                    &language,
+                    *candidate_style,
+                    false,
+                )
+                .is_some()
+            })
+            .count()
     } else {
         0
     };
-    let generate_selector_ms = generate_started.elapsed().as_secs_f64() * 1000.0;
+    let generate_selector_ms =
+        generate_started.elapsed().as_secs_f64() * 1000.0;
 
     let rewrite_started = Instant::now();
     let rewrite_selector_action_count = selector_context
         .as_ref()
-        .and_then(|context| find_selector_rewrite_target_in_context(translation_source, context))
+        .and_then(|context| {
+            find_selector_rewrite_target_in_context(translation_source, context)
+        })
         .map(|(_, actions)| actions.len())
         .unwrap_or(0);
     let rewrite_selector_ms = rewrite_started.elapsed().as_secs_f64() * 1000.0;
@@ -6150,7 +6812,9 @@ fn render_missing_messages_appendix(
 ) -> String {
     let rendered = missing_messages
         .iter()
-        .map(|message| render_missing_message(origin_source.unwrap_or(""), message, mode))
+        .map(|message| {
+            render_missing_message(origin_source.unwrap_or(""), message, mode)
+        })
         .collect::<Vec<_>>()
         .join("\n");
     if source.trim().is_empty() {
@@ -6188,7 +6852,9 @@ fn render_missing_message(
                 rendered.push('\n');
             } else {
                 for attribute in &message.attributes {
-                    rendered.push_str(&render_attribute_copy_marker(&attribute.key));
+                    rendered.push_str(&render_attribute_copy_marker(
+                        &attribute.key,
+                    ));
                     rendered.push('\n');
                 }
             }
@@ -6215,7 +6881,11 @@ fn render_missing_attribute_patched_message(
     let preserve_blank_separator = existing.ends_with("\n\n");
     rendered.push_str(existing.trim_end_matches('\n'));
     rendered.push('\n');
-    rendered.push_str(&render_missing_attribute_patch(origin_source, patch, mode));
+    rendered.push_str(&render_missing_attribute_patch(
+        origin_source,
+        patch,
+        mode,
+    ));
     if preserve_blank_separator {
         rendered.push('\n');
     }
@@ -6256,16 +6926,24 @@ fn render_missing_attribute_markers(patch: &MissingAttributePatch) -> String {
     patch
         .attributes
         .iter()
-        .map(|attribute| format!("{}\n", render_attribute_copy_marker(&attribute.key)))
+        .map(|attribute| {
+            format!("{}\n", render_attribute_copy_marker(&attribute.key))
+        })
         .collect()
 }
 
-fn message_block_insert_offset(source: &str, message_key: &str) -> Option<usize> {
+fn message_block_insert_offset(
+    source: &str,
+    message_key: &str,
+) -> Option<usize> {
     let (_, end_line) = find_fluent_block_line_range(source, message_key)?;
     end_of_line_offset(source, end_line)
 }
 
-fn message_block_start_offset(source: &str, message_key: &str) -> Option<usize> {
+fn message_block_start_offset(
+    source: &str,
+    message_key: &str,
+) -> Option<usize> {
     let (start_line, _) = find_fluent_block_line_range(source, message_key)?;
     line_start_offset(source, start_line)
 }
@@ -6310,7 +6988,8 @@ fn build_replace_message_workspace_edit(
     message_key: &str,
     replacement: String,
 ) -> Option<WorkspaceEdit> {
-    let (start_line, end_line) = find_fluent_block_line_range(source, message_key)?;
+    let (start_line, end_line) =
+        find_fluent_block_line_range(source, message_key)?;
     let start = line_start_offset(source, start_line)?;
     let end = end_of_line_offset(source, end_line)?;
     let range = byte_range_to_lsp_range(source, start..end)?;
@@ -6324,12 +7003,19 @@ fn build_replace_message_workspace_edit(
     })
 }
 
-fn message_matches_empty_stub(source: &str, template: &OriginMessageTemplate) -> bool {
+fn message_matches_empty_stub(
+    source: &str,
+    template: &OriginMessageTemplate,
+) -> bool {
     render_fluent_entry(source, &template.key)
         .map(|entry| {
             entry.trim_end()
-                == render_missing_message("", template, MissingEntryRenderMode::EmptyStub)
-                    .trim_end()
+                == render_missing_message(
+                    "",
+                    template,
+                    MissingEntryRenderMode::EmptyStub,
+                )
+                .trim_end()
         })
         .unwrap_or(false)
 }
@@ -6367,7 +7053,10 @@ fn find_fluent_pattern<'a>(
     }
 }
 
-fn find_fluent_definition_span(resource: &Resource<&str>, key: &str) -> Option<ByteRange<usize>> {
+fn find_fluent_definition_span(
+    resource: &Resource<&str>,
+    key: &str,
+) -> Option<ByteRange<usize>> {
     let entry = find_fluent_entry(resource, key)?;
     let (entry_key, attribute_key) = split_fluent_key(key);
 
@@ -6397,7 +7086,10 @@ fn find_fluent_definition_span(resource: &Resource<&str>, key: &str) -> Option<B
     }
 }
 
-fn find_fluent_entry<'a>(resource: &'a Resource<&'a str>, key: &str) -> Option<&'a Entry<&'a str>> {
+fn find_fluent_entry<'a>(
+    resource: &'a Resource<&'a str>,
+    key: &str,
+) -> Option<&'a Entry<&'a str>> {
     let (entry_key, attribute_key) = split_fluent_key(key);
     resource
         .body
@@ -6405,7 +7097,10 @@ fn find_fluent_entry<'a>(resource: &'a Resource<&'a str>, key: &str) -> Option<&
         .find(|entry| entry_matches_key(entry, entry_key, attribute_key))
 }
 
-fn find_fluent_entry_index(resource: &Resource<&str>, key: &str) -> Option<usize> {
+fn find_fluent_entry_index(
+    resource: &Resource<&str>,
+    key: &str,
+) -> Option<usize> {
     let (entry_key, attribute_key) = split_fluent_key(key);
     resource
         .body
@@ -6413,7 +7108,10 @@ fn find_fluent_entry_index(resource: &Resource<&str>, key: &str) -> Option<usize
         .position(|entry| entry_matches_key(entry, entry_key, attribute_key))
 }
 
-fn find_fluent_block_line_range(source: &str, key: &str) -> Option<(usize, usize)> {
+fn find_fluent_block_line_range(
+    source: &str,
+    key: &str,
+) -> Option<(usize, usize)> {
     let source_index = SourceLineIndex::new(source);
     find_fluent_block_line_range_with_index(source, &source_index, key)
 }
@@ -6468,7 +7166,11 @@ fn block_line_range_from_definition_with_index(
     Some((start_line, end_line))
 }
 
-fn entry_matches_key(entry: &Entry<&str>, entry_key: &str, attribute_key: Option<&str>) -> bool {
+fn entry_matches_key(
+    entry: &Entry<&str>,
+    entry_key: &str,
+    attribute_key: Option<&str>,
+) -> bool {
     match entry {
         Entry::Message(message) if entry_key == message.id.name => {
             attribute_key.is_none()
@@ -6490,7 +7192,9 @@ fn entry_matches_key(entry: &Entry<&str>, entry_key: &str, attribute_key: Option
 
 fn split_fluent_key(key: &str) -> (&str, Option<&str>) {
     match key.rsplit_once('.') {
-        Some((entry, attribute)) if !attribute.is_empty() => (entry, Some(attribute)),
+        Some((entry, attribute)) if !attribute.is_empty() => {
+            (entry, Some(attribute))
+        }
         _ => (key, None),
     }
 }
@@ -6503,8 +7207,11 @@ fn selector_overrides_for_position(
     let Some(line_index) = usize::try_from(position.line).ok() else {
         return HashMap::new();
     };
-    let cursor_character = usize::try_from(position.character).ok().unwrap_or(0);
-    let Some((start_line, end_line)) = find_fluent_block_line_range(source, key) else {
+    let cursor_character =
+        usize::try_from(position.character).ok().unwrap_or(0);
+    let Some((start_line, end_line)) =
+        find_fluent_block_line_range(source, key)
+    else {
         return HashMap::new();
     };
     if line_index < start_line || line_index > end_line {
@@ -6525,10 +7232,9 @@ fn selector_overrides_for_position(
         let indent = leading_spaces(line);
 
         if trimmed.starts_with('}') {
-            while selectors
-                .last()
-                .is_some_and(|selector: &ActiveSelectorContext| indent <= selector.indent)
-            {
+            while selectors.last().is_some_and(
+                |selector: &ActiveSelectorContext| indent <= selector.indent,
+            ) {
                 let popped = selectors.pop().expect("checked by is_some_and");
                 if let Some(variant) = popped.current_variant {
                     if index < line_index || cursor_character > indent {
@@ -6632,16 +7338,18 @@ fn expand_pattern_element(
     max_items: usize,
 ) -> SelectorExpansion {
     match element {
-        fluent_syntax::ast::PatternElement::TextElement { value, .. } => SelectorExpansion {
-            items: vec![SelectorExpansionItem {
-                selectors: Vec::new(),
-                text: (*value).to_string(),
-            }],
-            total_count: 1,
-        },
-        fluent_syntax::ast::PatternElement::Placeable { expression, .. } => {
-            expand_expression(expression, max_items)
+        fluent_syntax::ast::PatternElement::TextElement { value, .. } => {
+            SelectorExpansion {
+                items: vec![SelectorExpansionItem {
+                    selectors: Vec::new(),
+                    text: (*value).to_string(),
+                }],
+                total_count: 1,
+            }
         }
+        fluent_syntax::ast::PatternElement::Placeable {
+            expression, ..
+        } => expand_expression(expression, max_items),
     }
 }
 
@@ -6650,13 +7358,15 @@ fn expand_expression(
     max_items: usize,
 ) -> SelectorExpansion {
     match expression {
-        fluent_syntax::ast::Expression::Inline(inline, _) => SelectorExpansion {
-            items: vec![SelectorExpansionItem {
-                selectors: Vec::new(),
-                text: render_inline_expression_preview_text(inline),
-            }],
-            total_count: 1,
-        },
+        fluent_syntax::ast::Expression::Inline(inline, _) => {
+            SelectorExpansion {
+                items: vec![SelectorExpansionItem {
+                    selectors: Vec::new(),
+                    text: render_inline_expression_preview_text(inline),
+                }],
+                total_count: 1,
+            }
+        }
         fluent_syntax::ast::Expression::Select {
             selector, variants, ..
         } => {
@@ -6672,7 +7382,8 @@ fn expand_expression(
                     if items.len() >= max_items {
                         break;
                     }
-                    let mut selectors = vec![(selector_name.clone(), variant_name.clone())];
+                    let mut selectors =
+                        vec![(selector_name.clone(), variant_name.clone())];
                     selectors.extend(item.selectors);
                     items.push(SelectorExpansionItem {
                         selectors,
@@ -6691,8 +7402,12 @@ fn expand_expression(
 
 fn render_variant_key(key: &fluent_syntax::ast::VariantKey<&str>) -> String {
     match key {
-        fluent_syntax::ast::VariantKey::Identifier { name, .. } => (*name).to_string(),
-        fluent_syntax::ast::VariantKey::NumberLiteral { value, .. } => (*value).to_string(),
+        fluent_syntax::ast::VariantKey::Identifier { name, .. } => {
+            (*name).to_string()
+        }
+        fluent_syntax::ast::VariantKey::NumberLiteral { value, .. } => {
+            (*value).to_string()
+        }
     }
 }
 
@@ -6706,28 +7421,38 @@ fn render_inline_expression_preview_text(
     expression: &fluent_syntax::ast::InlineExpression<&str>,
 ) -> String {
     match expression {
-        fluent_syntax::ast::InlineExpression::StringLiteral { value, .. } if value.is_empty() => {
-            String::new()
-        }
+        fluent_syntax::ast::InlineExpression::StringLiteral {
+            value, ..
+        } if value.is_empty() => String::new(),
         _ => render_inline_expression_as_text(expression),
     }
 }
 
-fn render_inline_expression(expression: &fluent_syntax::ast::InlineExpression<&str>) -> String {
+fn render_inline_expression(
+    expression: &fluent_syntax::ast::InlineExpression<&str>,
+) -> String {
     match expression {
-        fluent_syntax::ast::InlineExpression::StringLiteral { value, .. } => {
+        fluent_syntax::ast::InlineExpression::StringLiteral {
+            value, ..
+        } => {
             format!("\"{value}\"")
         }
-        fluent_syntax::ast::InlineExpression::NumberLiteral { value, .. } => (*value).to_string(),
-        fluent_syntax::ast::InlineExpression::FunctionReference { id, .. } => {
+        fluent_syntax::ast::InlineExpression::NumberLiteral {
+            value, ..
+        } => (*value).to_string(),
+        fluent_syntax::ast::InlineExpression::FunctionReference {
+            id, ..
+        } => {
             format!("{}()", id.name)
         }
-        fluent_syntax::ast::InlineExpression::MessageReference { id, attribute, .. } => {
-            match attribute {
-                Some(attribute) => format!("{}.{}", id.name, attribute.name),
-                None => id.name.to_string(),
-            }
-        }
+        fluent_syntax::ast::InlineExpression::MessageReference {
+            id,
+            attribute,
+            ..
+        } => match attribute {
+            Some(attribute) => format!("{}.{}", id.name, attribute.name),
+            None => id.name.to_string(),
+        },
         fluent_syntax::ast::InlineExpression::TermReference {
             id,
             attribute,
@@ -6744,10 +7469,14 @@ fn render_inline_expression(expression: &fluent_syntax::ast::InlineExpression<&s
             }
             rendered
         }
-        fluent_syntax::ast::InlineExpression::VariableReference { id, .. } => {
+        fluent_syntax::ast::InlineExpression::VariableReference {
+            id, ..
+        } => {
             format!("${}", id.name)
         }
-        fluent_syntax::ast::InlineExpression::Placeable { expression, .. } => {
+        fluent_syntax::ast::InlineExpression::Placeable {
+            expression, ..
+        } => {
             format!("{{ {} }}", render_expression_summary(expression))
         }
     }
@@ -6771,9 +7500,13 @@ fn render_ftl_block(text: &str) -> String {
     block
 }
 
-fn render_expression_summary(expression: &fluent_syntax::ast::Expression<&str>) -> String {
+fn render_expression_summary(
+    expression: &fluent_syntax::ast::Expression<&str>,
+) -> String {
     match expression {
-        fluent_syntax::ast::Expression::Inline(inline, _) => render_inline_expression(inline),
+        fluent_syntax::ast::Expression::Inline(inline, _) => {
+            render_inline_expression(inline)
+        }
         fluent_syntax::ast::Expression::Select { selector, .. } => {
             format!("{} -> …", render_inline_expression(selector))
         }
@@ -6795,7 +7528,8 @@ impl SourceLineIndex {
             }
         }
         let mut line_lengths = Vec::with_capacity(line_starts.len());
-        for (line_index, line_start) in line_starts.iter().copied().enumerate() {
+        for (line_index, line_start) in line_starts.iter().copied().enumerate()
+        {
             let line_end = line_starts
                 .get(line_index + 1)
                 .map(|next| next - 1)
@@ -6812,7 +7546,11 @@ impl SourceLineIndex {
         self.line_starts.len()
     }
 
-    fn line_text<'a>(&self, source: &'a str, line_index: usize) -> Option<&'a str> {
+    fn line_text<'a>(
+        &self,
+        source: &'a str,
+        line_index: usize,
+    ) -> Option<&'a str> {
         let start = *self.line_starts.get(line_index)?;
         let line_length = *self.line_lengths.get(line_index)?;
         let end = start + line_length;
@@ -6823,7 +7561,11 @@ impl SourceLineIndex {
         self.line_starts.get(line_index).copied()
     }
 
-    fn end_of_line_offset(&self, source: &str, line_index: usize) -> Option<usize> {
+    fn end_of_line_offset(
+        &self,
+        source: &str,
+        line_index: usize,
+    ) -> Option<usize> {
         self.line_start_offset(line_index)?;
         Some(
             self.line_starts
@@ -6849,7 +7591,10 @@ impl SourceLineIndex {
     }
 }
 
-fn byte_range_to_lsp_range(source: &str, span: ByteRange<usize>) -> Option<Range> {
+fn byte_range_to_lsp_range(
+    source: &str,
+    span: ByteRange<usize>,
+) -> Option<Range> {
     let source_index = SourceLineIndex::new(source);
     byte_range_to_lsp_range_with_index(source, &source_index, span)
 }
@@ -6860,7 +7605,11 @@ fn byte_range_to_lsp_range_with_index(
     span: ByteRange<usize>,
 ) -> Option<Range> {
     Some(Range {
-        start: byte_index_to_position_with_index(source, source_index, span.start)?,
+        start: byte_index_to_position_with_index(
+            source,
+            source_index,
+            span.start,
+        )?,
         end: byte_index_to_position_with_index(source, source_index, span.end)?,
     })
 }
@@ -6887,7 +7636,8 @@ fn line_at(source: &str, line_index: usize) -> Option<(&str, usize)> {
 
 fn position_to_byte_index(source: &str, position: Position) -> Option<usize> {
     let (line, line_start) = line_at(source, position.line as usize)?;
-    let line_offset = utf16_position_to_byte_index(line, position.character as usize)?;
+    let line_offset =
+        utf16_position_to_byte_index(line, position.character as usize)?;
     Some(line_start + line_offset)
 }
 
@@ -6927,9 +7677,11 @@ fn is_fluent_file(path: &Path) -> bool {
 
 fn range_contains_position(range: &Range, position: Position) -> bool {
     (range.start.line < position.line
-        || (range.start.line == position.line && range.start.character <= position.character))
+        || (range.start.line == position.line
+            && range.start.character <= position.character))
         && (position.line < range.end.line
-            || (position.line == range.end.line && position.character <= range.end.character))
+            || (position.line == range.end.line
+                && position.character <= range.end.character))
 }
 
 fn internal_error_with_message<M>(message: M) -> LspError
@@ -7073,7 +7825,12 @@ mod tests {
         std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
         let origin = temp.path().join("locales/en/only.ftl");
         std::fs::write(&origin, "valid = Origin\n").unwrap();
-        index.apply_disk_changes(&workspace, &FastMap::default(), &[origin], &[]);
+        index.apply_disk_changes(
+            &workspace,
+            &FastMap::default(),
+            &[origin],
+            &[],
+        );
         assert!(index.local_only_files(&workspace).is_empty());
     }
 
@@ -7109,28 +7866,37 @@ mod tests {
     #[test]
     fn extracts_key_inside_quotes() {
         let source = "const title = t(\"welcome-title\");\n";
-        let key = extract_key_at_position(source, Position::new(0, 19)).unwrap();
+        let key =
+            extract_key_at_position(source, Position::new(0, 19)).unwrap();
         assert_eq!(key, "welcome-title");
     }
 
     #[test]
     fn extracts_key_from_fluent_message_term_and_attribute() {
-        let source =
-            "welcome-title = Salut\n-brand-name = Nocturne\nbutton-copy =\n    .label = Lancer\n";
+        let source = "welcome-title = Salut\n-brand-name = Nocturne\nbutton-copy =\n    .label = Lancer\n";
 
-        let message =
-            extract_definition_key(source, Path::new("locales/fr/app.ftl"), Position::new(0, 4))
-                .unwrap();
+        let message = extract_definition_key(
+            source,
+            Path::new("locales/fr/app.ftl"),
+            Position::new(0, 4),
+        )
+        .unwrap();
         assert_eq!(message, "welcome-title");
 
-        let term =
-            extract_definition_key(source, Path::new("locales/fr/app.ftl"), Position::new(1, 2))
-                .unwrap();
+        let term = extract_definition_key(
+            source,
+            Path::new("locales/fr/app.ftl"),
+            Position::new(1, 2),
+        )
+        .unwrap();
         assert_eq!(term, "-brand-name");
 
-        let attribute =
-            extract_definition_key(source, Path::new("locales/fr/app.ftl"), Position::new(3, 6))
-                .unwrap();
+        let attribute = extract_definition_key(
+            source,
+            Path::new("locales/fr/app.ftl"),
+            Position::new(3, 6),
+        )
+        .unwrap();
         assert_eq!(attribute, "button-copy.label");
     }
 
@@ -7215,13 +7981,15 @@ mod tests {
 
     #[test]
     fn finds_term_and_attribute_ranges() {
-        let source = "-brand-name = Nightly\nbutton-copy =\n    .label = Launch\n";
+        let source =
+            "-brand-name = Nightly\nbutton-copy =\n    .label = Launch\n";
 
         let term = find_fluent_definition(source, "-brand-name").unwrap();
         assert_eq!(term.start, Position::new(0, 1));
         assert_eq!(term.end, Position::new(0, 11));
 
-        let attribute = find_fluent_definition(source, "button-copy.label").unwrap();
+        let attribute =
+            find_fluent_definition(source, "button-copy.label").unwrap();
         assert_eq!(attribute.start, Position::new(2, 5));
         assert_eq!(attribute.end, Position::new(2, 10));
     }
@@ -7326,7 +8094,8 @@ mod tests {
         .next()
         .unwrap();
 
-        let Documentation::MarkupContent(markup) = item.documentation.unwrap() else {
+        let Documentation::MarkupContent(markup) = item.documentation.unwrap()
+        else {
             panic!("expected markdown completion documentation");
         };
         assert_eq!(markup.kind, MarkupKind::Markdown);
@@ -7351,7 +8120,10 @@ download-action =\n\
         let missing = collect_missing_translation_entries(origin, translation);
         assert!(missing.missing_messages.is_empty());
         assert_eq!(missing.missing_attributes.len(), 1);
-        assert_eq!(missing.missing_attributes[0].message_key, "download-action");
+        assert_eq!(
+            missing.missing_attributes[0].message_key,
+            "download-action"
+        );
         assert_eq!(
             missing.missing_attributes[0]
                 .attributes
@@ -7441,13 +8213,19 @@ download-action =\n\
             Some("Hello")
         );
         assert_eq!(
-            render_fluent_preview_text(&updated, "download-action.tooltip", None).as_deref(),
+            render_fluent_preview_text(
+                &updated,
+                "download-action.tooltip",
+                None
+            )
+            .as_deref(),
             Some("Download this build")
         );
     }
 
     #[test]
-    fn lsp_copy_marker_diagnostics_cover_top_level_and_attribute_markers_only() {
+    fn lsp_copy_marker_diagnostics_cover_top_level_and_attribute_markers_only()
+    {
         let source = concat!(
             "# [LSP-COPY]\n",
             "hello = Hello\n",
@@ -7463,9 +8241,8 @@ download-action =\n\
         assert_eq!(diagnostics.len(), 2);
         assert_eq!(diagnostics[0].range.start, Position::new(0, 0));
         assert_eq!(diagnostics[1].range.start, Position::new(7, 5));
-        assert!(diagnostics.iter().all(
-            |diagnostic| diagnostic.message == "Entry still contains an `# [LSP-COPY]` marker"
-        ));
+        assert!(diagnostics.iter().all(|diagnostic| diagnostic.message
+            == "Entry still contains an `# [LSP-COPY]` marker"));
     }
 
     #[test]
@@ -7716,7 +8493,10 @@ download-action =\n\
         }
     }
 
-    fn apply_workspace_edit_to_source(source: &str, edit: &WorkspaceEdit) -> String {
+    fn apply_workspace_edit_to_source(
+        source: &str,
+        edit: &WorkspaceEdit,
+    ) -> String {
         let mut updated = source.to_string();
         let mut edits = edit
             .changes
@@ -7745,35 +8525,44 @@ download-action =\n\
     }
 
     fn runtime_message_text(source: &str, locale: &str, key: &str) -> String {
-        let resource = FluentResource::try_new(source.to_string()).unwrap_or_else(|(_, errors)| {
-            panic!("failed to build FluentResource with {errors:?}\n{source}")
-        });
+        let resource = FluentResource::try_new(source.to_string())
+            .unwrap_or_else(|(_, errors)| {
+                panic!(
+                    "failed to build FluentResource with {errors:?}\n{source}"
+                )
+            });
         let parsed = parser::parse(source).unwrap_or_else(|(_, errors)| {
             panic!("failed to parse Fluent source with {errors:?}\n{source}")
         });
-        find_runtime_pattern(&parsed, key)
-            .unwrap_or_else(|| panic!("missing parsed pattern `{key}` in runtime source"));
-        let locale: LanguageIdentifier = locale.parse().expect("valid language identifier");
+        find_runtime_pattern(&parsed, key).unwrap_or_else(|| {
+            panic!("missing parsed pattern `{key}` in runtime source")
+        });
+        let locale: LanguageIdentifier =
+            locale.parse().expect("valid language identifier");
         let mut bundle = FluentBundle::new(vec![locale]);
         bundle.set_use_isolating(false);
-        bundle
-            .add_resource(resource)
-            .unwrap_or_else(|errors| panic!("failed to add Fluent resource to bundle: {errors:?}"));
+        bundle.add_resource(resource).unwrap_or_else(|errors| {
+            panic!("failed to add Fluent resource to bundle: {errors:?}")
+        });
 
         let (message_key, attribute_key) = split_runtime_key(key);
-        let message = bundle
-            .get_message(message_key)
-            .unwrap_or_else(|| panic!("missing message `{message_key}` in runtime bundle"));
+        let message = bundle.get_message(message_key).unwrap_or_else(|| {
+            panic!("missing message `{message_key}` in runtime bundle")
+        });
         let pattern = if let Some(attribute_key) = attribute_key {
             message
                 .attributes()
                 .find(|attribute| attribute.id() == attribute_key)
-                .unwrap_or_else(|| panic!("missing attribute `{attribute_key}` on `{message_key}`"))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing attribute `{attribute_key}` on `{message_key}`"
+                    )
+                })
                 .value()
         } else {
-            message
-                .value()
-                .unwrap_or_else(|| panic!("message `{message_key}` has no value"))
+            message.value().unwrap_or_else(|| {
+                panic!("message `{message_key}` has no value")
+            })
         };
         let mut errors = Vec::new();
         let rendered = bundle
@@ -7792,7 +8581,9 @@ download-action =\n\
     ) -> Option<&'a fluent_syntax::ast::Pattern<&'a str>> {
         let (entry_key, attribute_key) = split_runtime_key(key);
         resource.body.iter().find_map(|entry| match entry {
-            fluent_syntax::ast::Entry::Message(message) if entry_key == message.id.name => {
+            fluent_syntax::ast::Entry::Message(message)
+                if entry_key == message.id.name =>
+            {
                 if let Some(attribute_key) = attribute_key {
                     message
                         .attributes
@@ -7849,8 +8640,10 @@ download-action =\n\
         max_items: usize,
     ) -> String {
         let resource = parse_fluent_resource(source);
-        let pattern = find_fluent_pattern(&resource, key)
-            .unwrap_or_else(|| panic!("missing pattern `{key}` in selector source"));
+        let pattern =
+            find_fluent_pattern(&resource, key).unwrap_or_else(|| {
+                panic!("missing pattern `{key}` in selector source")
+            });
         let expansion = expand_pattern(pattern, max_items);
         let rendered_count = expansion.items.len();
         let mut lines = vec![heading.to_string()];
@@ -7873,11 +8666,13 @@ download-action =\n\
     }
 
     #[test]
-    fn render_message_preview_matches_available_selectors_and_defaults_the_rest() {
+    fn render_message_preview_matches_available_selectors_and_defaults_the_rest()
+     {
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
         let resource = parse_fluent_resource(source);
         let pattern = find_fluent_pattern(&resource, "install-hint").unwrap();
-        let overrides = HashMap::from([("$count".to_string(), "one".to_string())]);
+        let overrides =
+            HashMap::from([("$count".to_string(), "one".to_string())]);
 
         assert_eq!(
             render_message_preview(pattern, Some(&overrides)),
@@ -7893,10 +8688,12 @@ download-action =\n\
     }
 
     #[test]
-    fn render_message_preview_ignores_local_only_selectors_and_defaults_source_only_ones() {
+    fn render_message_preview_ignores_local_only_selectors_and_defaults_source_only_ones()
+     {
         let source = "mismatch-rollout =\n    Summary for { $platform ->\n        [desktop] desktop\n       *[mobile] mobile\n    } users with { $count ->\n        [0] no packages\n        [1] one package\n       *[other] { $count } packages\n    } ready.\n";
         let resource = parse_fluent_resource(source);
-        let pattern = find_fluent_pattern(&resource, "mismatch-rollout").unwrap();
+        let pattern =
+            find_fluent_pattern(&resource, "mismatch-rollout").unwrap();
         let overrides = HashMap::from([
             ("$gender".to_string(), "female".to_string()),
             ("$count".to_string(), "1".to_string()),
@@ -7909,7 +8706,8 @@ download-action =\n\
                     ("$platform".to_string(), "*".to_string()),
                     ("$count".to_string(), "1".to_string()),
                 ],
-                text: "Summary for mobile users with one package ready.".to_string(),
+                text: "Summary for mobile users with one package ready."
+                    .to_string(),
             }
         );
     }
@@ -7918,8 +8716,10 @@ download-action =\n\
     fn render_message_preview_supports_explicit_zero_numeric_variants() {
         let source = "numeric-rollout =\n    Summary for { $count ->\n        [0] no packages ready\n        [1] one package ready\n       *[other] { $count } packages ready\n    }.\n";
         let resource = parse_fluent_resource(source);
-        let pattern = find_fluent_pattern(&resource, "numeric-rollout").unwrap();
-        let overrides = HashMap::from([("$count".to_string(), "0".to_string())]);
+        let pattern =
+            find_fluent_pattern(&resource, "numeric-rollout").unwrap();
+        let overrides =
+            HashMap::from([("$count".to_string(), "0".to_string())]);
 
         assert_eq!(
             render_message_preview(pattern, Some(&overrides)),
@@ -7935,7 +8735,8 @@ download-action =\n\
         let source = "zero-rollout =\n    Zero summary: { $count ->\n        [zero] no packages ready\n        [one] one package ready\n       *[other] { $count } packages ready\n    }.\n";
         let resource = parse_fluent_resource(source);
         let pattern = find_fluent_pattern(&resource, "zero-rollout").unwrap();
-        let overrides = HashMap::from([("$count".to_string(), "zero".to_string())]);
+        let overrides =
+            HashMap::from([("$count".to_string(), "zero".to_string())]);
 
         assert_eq!(
             render_message_preview(pattern, Some(&overrides)),
@@ -7951,7 +8752,8 @@ download-action =\n\
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
         let resource = parse_fluent_resource(source);
         let pattern = find_fluent_pattern(&resource, "install-hint").unwrap();
-        let overrides = HashMap::from([("$gender".to_string(), "female".to_string())]);
+        let overrides =
+            HashMap::from([("$gender".to_string(), "female".to_string())]);
 
         assert_eq!(
             render_message_preview(pattern, Some(&overrides)),
@@ -7974,7 +8776,8 @@ download-action =\n\
             rendered,
             SourceRender {
                 comments: Some(
-                    "### Shared menu copy\n## File menu\n# Primary action\n".to_string()
+                    "### Shared menu copy\n## File menu\n# Primary action\n"
+                        .to_string()
                 ),
                 source: ".label = Save\n".to_string(),
             }
@@ -7982,9 +8785,11 @@ download-action =\n\
     }
 
     #[test]
-    fn real_fluent_parser_does_not_attach_indented_marker_between_attributes_as_comment() {
+    fn real_fluent_parser_does_not_attach_indented_marker_between_attributes_as_comment()
+     {
         let source = "download-action =\n    .label = Descargar\n    # [LSP-COPY]\n    .tooltip = Download this build\n";
-        let resource = parser::parse(source).expect("expected valid Fluent source");
+        let resource =
+            parser::parse(source).expect("expected valid Fluent source");
 
         assert_eq!(resource.body.len(), 1);
         let Entry::Message(message) = &resource.body[0] else {
@@ -8004,7 +8809,8 @@ download-action =\n\
     #[test]
     fn render_fluent_source_filters_machine_copy_markers_from_comments() {
         let source = "# Translator note\n# [LSP-COPY .tooltip]\ndownload-action =\n    .label = Descargar\n    .tooltip = Download this build\n";
-        let rendered = render_fluent_source(source, "download-action.tooltip").unwrap();
+        let rendered =
+            render_fluent_source(source, "download-action.tooltip").unwrap();
 
         assert_eq!(rendered.comments, Some("# Translator note\n".to_string()));
         assert_eq!(
@@ -8018,21 +8824,34 @@ download-action =\n\
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
 
         assert_eq!(
-            selector_overrides_for_position(source, "install-hint", Position::new(2, 18)),
+            selector_overrides_for_position(
+                source,
+                "install-hint",
+                Position::new(2, 18)
+            ),
             HashMap::from([("$gender".to_string(), "female".to_string())])
         );
         assert_eq!(
-            selector_overrides_for_position(source, "install-hint", Position::new(0, 3)),
+            selector_overrides_for_position(
+                source,
+                "install-hint",
+                Position::new(0, 3)
+            ),
             HashMap::new()
         );
     }
 
     #[test]
-    fn selector_overrides_preserve_variants_after_closing_brace_on_current_line() {
+    fn selector_overrides_preserve_variants_after_closing_brace_on_current_line()
+     {
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
 
         assert_eq!(
-            selector_overrides_for_position(source, "install-hint", Position::new(5, 8)),
+            selector_overrides_for_position(
+                source,
+                "install-hint",
+                Position::new(5, 8)
+            ),
             HashMap::from([("$gender".to_string(), "other".to_string())])
         );
     }
@@ -8042,7 +8861,11 @@ download-action =\n\
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
 
         assert_eq!(
-            selector_overrides_for_position(source, "install-hint", Position::new(6, 12)),
+            selector_overrides_for_position(
+                source,
+                "install-hint",
+                Position::new(6, 12)
+            ),
             HashMap::from([
                 ("$gender".to_string(), "other".to_string()),
                 ("$count".to_string(), "one".to_string()),
@@ -8055,14 +8878,22 @@ download-action =\n\
         let source = "mismatch-rollout =\n    Resumen para { $gender ->\n        [female] ella misma\n        [male] el mismo\n       *[other] elle misme\n    } con { $count ->\n        [0] ningun paquete\n        [1] un paquete\n       *[other] { $count } paquetes\n    } listo.\n";
 
         assert_eq!(
-            selector_overrides_for_position(source, "mismatch-rollout", Position::new(6, 12)),
+            selector_overrides_for_position(
+                source,
+                "mismatch-rollout",
+                Position::new(6, 12)
+            ),
             HashMap::from([
                 ("$gender".to_string(), "other".to_string()),
                 ("$count".to_string(), "0".to_string()),
             ])
         );
         assert_eq!(
-            selector_overrides_for_position(source, "mismatch-rollout", Position::new(7, 12)),
+            selector_overrides_for_position(
+                source,
+                "mismatch-rollout",
+                Position::new(7, 12)
+            ),
             HashMap::from([
                 ("$gender".to_string(), "other".to_string()),
                 ("$count".to_string(), "1".to_string()),
@@ -8071,7 +8902,8 @@ download-action =\n\
     }
 
     #[test]
-    fn selector_combination_document_omits_duplicate_source_sections_for_origin_files() {
+    fn selector_combination_document_omits_duplicate_source_sections_for_origin_files()
+     {
         let file_match = FileMatch {
             mask_index: 0,
             language: "en".to_string(),
@@ -8110,17 +8942,22 @@ download-action =\n\
 
     #[test]
     fn local_fluent_syntax_fork_exposes_variant_and_variant_key_spans() {
-        let source = "count = { $count ->\n    [0] Zero\n   *[other] Other\n}\n";
+        let source =
+            "count = { $count ->\n    [0] Zero\n   *[other] Other\n}\n";
         let resource = parser::parse(source).unwrap();
         let Entry::Message(message) = &resource.body[0] else {
             panic!("expected message entry");
         };
         let pattern = message.value.as_ref().expect("expected message value");
-        let fluent_syntax::ast::PatternElement::Placeable { expression, .. } = &pattern.elements[0]
+        let fluent_syntax::ast::PatternElement::Placeable {
+            expression, ..
+        } = &pattern.elements[0]
         else {
             panic!("expected select placeable");
         };
-        let fluent_syntax::ast::Expression::Select { variants, .. } = expression else {
+        let fluent_syntax::ast::Expression::Select { variants, .. } =
+            expression
+        else {
             panic!("expected select expression");
         };
 
@@ -8187,8 +9024,7 @@ download-action =\n\
 
     #[test]
     fn collects_unsupported_and_missing_plural_category_diagnostics() {
-        let source =
-            "bad-zero =\n    { $count ->\n        [few] slikti\n       *[other] labi\n    }\n";
+        let source = "bad-zero =\n    { $count ->\n        [few] slikti\n       *[other] labi\n    }\n";
         let diagnostics = collect_document_diagnostics(
             source,
             "lv",
@@ -8203,7 +9039,8 @@ download-action =\n\
         let unsupported = diagnostics
             .iter()
             .find(|diagnostic| {
-                diagnostic.message == "`few` is not a supported plural category for `lv`"
+                diagnostic.message
+                    == "`few` is not a supported plural category for `lv`"
             })
             .unwrap();
         assert_eq!(unsupported.severity, Some(DiagnosticSeverity::ERROR));
@@ -8223,8 +9060,11 @@ download-action =\n\
     #[test]
     fn parse_error_diagnostics_are_reported_without_optional_settings() {
         let source = "welcome-title = Welcome\n\ng@Rb@ge = broken\n";
-        let diagnostics =
-            collect_document_diagnostics(source, "en", EffectiveDiagnosticConfig::default());
+        let diagnostics = collect_document_diagnostics(
+            source,
+            "en",
+            EffectiveDiagnosticConfig::default(),
+        );
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
@@ -8320,8 +9160,7 @@ download-action =\n\
 
     #[test]
     fn selectors_with_only_other_and_custom_keys_are_not_numeric() {
-        let source =
-            "bad-key =\n    { $count ->\n        [admins] nope\n       *[other] ok\n    }\n";
+        let source = "bad-key =\n    { $count ->\n        [admins] nope\n       *[other] ok\n    }\n";
         let diagnostics = collect_document_diagnostics(
             source,
             "en",
@@ -8339,7 +9178,10 @@ download-action =\n\
     fn plural_categories_come_from_unicode_data() {
         assert_eq!(plural_categories("en"), vec!["one", "other"]);
         assert_eq!(plural_categories("lv"), vec!["zero", "one", "other"]);
-        assert_eq!(plural_categories("uk"), vec!["one", "few", "many", "other"]);
+        assert_eq!(
+            plural_categories("uk"),
+            vec!["one", "few", "many", "other"]
+        );
         assert_eq!(
             plural_categories("ar"),
             vec!["zero", "one", "two", "few", "many", "other"]
@@ -8347,17 +9189,21 @@ download-action =\n\
     }
 
     #[test]
-    fn generate_selector_target_prefers_variable_under_cursor_and_uses_pattern_context() {
+    fn generate_selector_target_prefers_variable_under_cursor_and_uses_pattern_context()
+     {
         let source = "coins-line = Tienes { $coins } monedas.\n";
         let path = Path::new("locales/es/app.ftl");
 
-        let from_key = find_generate_selector_target(source, path, Position::new(0, 2)).unwrap();
+        let from_key =
+            find_generate_selector_target(source, path, Position::new(0, 2))
+                .unwrap();
         assert!(from_key.selected_variable.is_none());
         assert_eq!(from_key.variables.len(), 1);
         assert_eq!(from_key.variables[0].name, "$coins");
 
         let from_variable =
-            find_generate_selector_target(source, path, Position::new(0, 23)).unwrap();
+            find_generate_selector_target(source, path, Position::new(0, 23))
+                .unwrap();
         assert_eq!(
             from_variable
                 .selected_variable
@@ -8368,10 +9214,13 @@ download-action =\n\
     }
 
     #[test]
-    fn generate_selector_target_uses_nested_container_pattern_for_selected_variable() {
+    fn generate_selector_target_uses_nested_container_pattern_for_selected_variable()
+     {
         let source = "nested-coins =\n    { $gender ->\n        [female] Ella tiene { $coins } monedas.\n       *[other] Elle tiene { $coins } monedas.\n    }\n";
         let path = Path::new("locales/es/app.ftl");
-        let target = find_generate_selector_target(source, path, Position::new(2, 34)).unwrap();
+        let target =
+            find_generate_selector_target(source, path, Position::new(2, 34))
+                .unwrap();
 
         assert_eq!(
             target
@@ -8393,8 +9242,14 @@ download-action =\n\
         let source = "range-summary = Entre { $min } y { $max } elementos.\n";
         let path = Path::new("locales/es/app.ftl");
 
-        assert!(find_generate_selector_target(source, path, Position::new(0, 2)).is_none());
-        assert!(find_generate_selector_target(source, path, Position::new(0, 26)).is_some());
+        assert!(
+            find_generate_selector_target(source, path, Position::new(0, 2))
+                .is_none()
+        );
+        assert!(
+            find_generate_selector_target(source, path, Position::new(0, 26))
+                .is_some()
+        );
     }
 
     #[test]
@@ -8402,18 +9257,29 @@ download-action =\n\
         let source = "nested-coins =\n    { $gender ->\n        [female] Ella tiene { $coins } monedas.\n       *[other] Elle tiene { $coins } monedas.\n    }\n";
         let path = Path::new("locales/es/app.ftl");
 
-        assert!(find_generate_selector_target(source, path, Position::new(0, 2)).is_none());
+        assert!(
+            find_generate_selector_target(source, path, Position::new(0, 2))
+                .is_none()
+        );
     }
 
     #[test]
     fn generates_prefix_number_selector_snippet_from_message_context() {
         let source = "coins-line = Tienes { $coins } monedas.\n";
         let path = Path::new("locales/es/app.ftl");
-        let target = find_generate_selector_target(source, path, Position::new(0, 2)).unwrap();
+        let target =
+            find_generate_selector_target(source, path, Position::new(0, 2))
+                .unwrap();
 
         assert_eq!(
-            generate_number_selector_edit(source, &target, "es", SelectorStyle::Prefix, true)
-                .unwrap(),
+            generate_number_selector_edit(
+                source,
+                &target,
+                "es",
+                SelectorStyle::Prefix,
+                true
+            )
+            .unwrap(),
             "Tienes { \\$${1:coins} } { \\$${1:coins} ->\n    [one] monedas.\n    *[other] monedas.\n}"
         );
     }
@@ -8422,10 +9288,17 @@ download-action =\n\
     fn generates_whole_number_selector_edit_from_selected_variable() {
         let source = "coins-line = Tienes { $coins } monedas.\n";
         let path = Path::new("locales/es/app.ftl");
-        let target = find_generate_selector_target(source, path, Position::new(0, 23)).unwrap();
-        let generated =
-            generate_number_selector_edit(source, &target, "es", SelectorStyle::Whole, false)
+        let target =
+            find_generate_selector_target(source, path, Position::new(0, 23))
                 .unwrap();
+        let generated = generate_number_selector_edit(
+            source,
+            &target,
+            "es",
+            SelectorStyle::Whole,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(
             generated,
@@ -8438,10 +9311,17 @@ download-action =\n\
     fn generates_latinian_zero_one_other_selector_categories() {
         let source = "coins-line = Tev ir { $coins } monetas.\n";
         let path = Path::new("locales/lv/app.ftl");
-        let target = find_generate_selector_target(source, path, Position::new(0, 2)).unwrap();
-        let generated =
-            generate_number_selector_edit(source, &target, "lv", SelectorStyle::Prefix, false)
+        let target =
+            find_generate_selector_target(source, path, Position::new(0, 2))
                 .unwrap();
+        let generated = generate_number_selector_edit(
+            source,
+            &target,
+            "lv",
+            SelectorStyle::Prefix,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(
             generated,
@@ -8454,22 +9334,33 @@ download-action =\n\
     fn generates_whole_selector_snippet_without_existing_variable() {
         let source = "plain-count = Monedas disponibles.\n";
         let path = Path::new("locales/es/app.ftl");
-        let target = find_generate_selector_target(source, path, Position::new(0, 3)).unwrap();
+        let target =
+            find_generate_selector_target(source, path, Position::new(0, 3))
+                .unwrap();
 
         assert!(target.variables.is_empty());
         assert_eq!(
-            generate_number_selector_edit(source, &target, "es", SelectorStyle::Whole, true)
-                .unwrap(),
+            generate_number_selector_edit(
+                source,
+                &target,
+                "es",
+                SelectorStyle::Whole,
+                true
+            )
+            .unwrap(),
             "{ \\$${1:count} ->\n    [one] Monedas disponibles.\n    *[other] Monedas disponibles.\n}"
         );
     }
 
     #[test]
     fn nested_function_argument_variable_uses_enclosing_placeable_as_anchor() {
-        let source = "formatted-download = Descarga { NUMBER($downloads) } archivos.\n";
+        let source =
+            "formatted-download = Descarga { NUMBER($downloads) } archivos.\n";
         let path = Path::new("locales/es/app.ftl");
 
-        let from_key = find_generate_selector_target(source, path, Position::new(0, 3)).unwrap();
+        let from_key =
+            find_generate_selector_target(source, path, Position::new(0, 3))
+                .unwrap();
         assert_eq!(from_key.variables.len(), 1);
         assert_eq!(from_key.variables[0].name, "$downloads");
         assert_eq!(
@@ -8481,13 +9372,20 @@ download-action =\n\
             ]
         );
         assert_eq!(
-            generate_number_selector_edit(source, &from_key, "es", SelectorStyle::Prefix, true)
-                .unwrap(),
+            generate_number_selector_edit(
+                source,
+                &from_key,
+                "es",
+                SelectorStyle::Prefix,
+                true
+            )
+            .unwrap(),
             "Descarga { NUMBER(\\$${1:downloads}) } { \\$${1:downloads} ->\n    [one] archivos.\n    *[other] archivos.\n}"
         );
 
         let from_variable =
-            find_generate_selector_target(source, path, Position::new(0, 39)).unwrap();
+            find_generate_selector_target(source, path, Position::new(0, 39))
+                .unwrap();
         assert_eq!(
             from_variable
                 .selected_variable
@@ -8510,11 +9408,16 @@ download-action =\n\
 
     #[test]
     fn function_call_under_cursor_selects_on_function_expression_itself() {
-        let source = "formatted-download = Descarga { NUMBER($downloads) } archivos.\n";
+        let source =
+            "formatted-download = Descarga { NUMBER($downloads) } archivos.\n";
         let path = Path::new("locales/es/app.ftl");
         let function_column = source.find("NUMBER(").unwrap() as u32;
-        let target =
-            find_generate_selector_target(source, path, Position::new(0, function_column)).unwrap();
+        let target = find_generate_selector_target(
+            source,
+            path,
+            Position::new(0, function_column),
+        )
+        .unwrap();
 
         assert_eq!(
             target
@@ -8524,17 +9427,26 @@ download-action =\n\
             Some("NUMBER($downloads)")
         );
         assert_eq!(
-            generate_number_selector_edit(source, &target, "es", SelectorStyle::Prefix, false)
-                .unwrap(),
+            generate_number_selector_edit(
+                source,
+                &target,
+                "es",
+                SelectorStyle::Prefix,
+                false
+            )
+            .unwrap(),
             "Descarga { NUMBER($downloads) } { NUMBER($downloads) ->\n    [one] archivos.\n    *[other] archivos.\n}"
         );
     }
 
     #[test]
     fn nested_function_calls_still_find_inner_variable_anchor() {
-        let source = "deep-download = Descarga { WRAP(NUMBER($downloads)) } archivos.\n";
+        let source =
+            "deep-download = Descarga { WRAP(NUMBER($downloads)) } archivos.\n";
         let path = Path::new("locales/es/app.ftl");
-        let target = find_generate_selector_target(source, path, Position::new(0, 44)).unwrap();
+        let target =
+            find_generate_selector_target(source, path, Position::new(0, 44))
+                .unwrap();
 
         assert_eq!(
             target
@@ -8544,8 +9456,14 @@ download-action =\n\
             Some("$downloads")
         );
         assert_eq!(
-            generate_number_selector_edit(source, &target, "es", SelectorStyle::Prefix, false)
-                .unwrap(),
+            generate_number_selector_edit(
+                source,
+                &target,
+                "es",
+                SelectorStyle::Prefix,
+                false
+            )
+            .unwrap(),
             "Descarga { WRAP(NUMBER($downloads)) } { $downloads ->\n    [one] archivos.\n    *[other] archivos.\n}"
         );
     }
@@ -8554,10 +9472,17 @@ download-action =\n\
     fn keeps_punctuation_attached_in_generated_variant_bodies() {
         let source = "coins-period = Tienes { $coins }.\n";
         let path = Path::new("locales/es/app.ftl");
-        let target = find_generate_selector_target(source, path, Position::new(0, 3)).unwrap();
-        let generated =
-            generate_number_selector_edit(source, &target, "es", SelectorStyle::Prefix, false)
+        let target =
+            find_generate_selector_target(source, path, Position::new(0, 3))
                 .unwrap();
+        let generated = generate_number_selector_edit(
+            source,
+            &target,
+            "es",
+            SelectorStyle::Prefix,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(
             generated,
@@ -8571,7 +9496,8 @@ download-action =\n\
         let source = "whole-coins = { $coins ->\n    [one] Tienes { $coins } moneda.\n   *[other] Tienes { $coins } monedas.\n}\n";
         let path = Path::new("locales/es/app.ftl");
         let (pattern_span, actions) =
-            find_selector_rewrite_target(source, path, Position::new(0, 3)).unwrap();
+            find_selector_rewrite_target(source, path, Position::new(0, 3))
+                .unwrap();
 
         assert_eq!(
             source.get(pattern_span).unwrap(),
@@ -8596,7 +9522,9 @@ download-action =\n\
     fn rewrites_prefix_selector_to_whole() {
         let source = "prefix-coins = Tienes { $coins } { $coins ->\n    [one] moneda.\n   *[other] monedas.\n}\n";
         let path = Path::new("locales/es/app.ftl");
-        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(0, 3)).unwrap();
+        let (_, actions) =
+            find_selector_rewrite_target(source, path, Position::new(0, 3))
+                .unwrap();
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Whole);
@@ -8612,7 +9540,8 @@ download-action =\n\
         let source = "suffix-coins = Tienes { $coins ->\n    [one] { $coins } moneda.\n   *[other] { $coins } monedas.\n}\n";
         let path = Path::new("locales/es/app.ftl");
         let (_, actions) =
-            find_selector_rewrite_target(source, path, Position::new(1, 10)).unwrap();
+            find_selector_rewrite_target(source, path, Position::new(1, 10))
+                .unwrap();
 
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Whole);
@@ -8634,7 +9563,8 @@ download-action =\n\
         let source = "bare-suffix-coins = { $coins ->\n    [one] { $coins } moneda.\n   *[other] { $coins } monedas.\n}\n";
         let path = Path::new("locales/es/app.ftl");
         let (_, actions) =
-            find_selector_rewrite_target(source, path, Position::new(1, 10)).unwrap();
+            find_selector_rewrite_target(source, path, Position::new(1, 10))
+                .unwrap();
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Prefix);
@@ -8650,7 +9580,8 @@ download-action =\n\
         let source = "nested-whole-coins =\n    { $gender ->\n        [female] { $coins ->\n            [one] Ella tiene { $coins } moneda.\n           *[other] Ella tiene { $coins } monedas.\n        }\n       *[other] Elle tiene { $coins } monedas.\n    }\n";
         let path = Path::new("locales/es/app.ftl");
         let (_, actions) =
-            find_selector_rewrite_target(source, path, Position::new(3, 24)).unwrap();
+            find_selector_rewrite_target(source, path, Position::new(3, 24))
+                .unwrap();
 
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Prefix);
@@ -8671,7 +9602,9 @@ download-action =\n\
     fn rewrites_whole_selector_inside_attribute_value() {
         let source = "commented-download =\n    .tooltip = { $files ->\n        [one] Descarga { $files } archivo.\n       *[other] Descarga { $files } archivos.\n    }\n";
         let path = Path::new("locales/es/app.ftl");
-        let (_, actions) = find_selector_rewrite_target(source, path, Position::new(1, 6)).unwrap();
+        let (_, actions) =
+            find_selector_rewrite_target(source, path, Position::new(1, 6))
+                .unwrap();
 
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Prefix);
@@ -8693,7 +9626,8 @@ download-action =\n\
         let source = "# Comentario para verificar que la reescritura no toque el comentario\ncommented-download =\n    .tooltip = { $files ->\n        [one] Descarga { $files } archivo.\n       *[other] Descarga { $files } archivos.\n    }\n";
         let path = Path::new("locales/es/app.ftl");
         let (pattern_span, _) =
-            find_selector_rewrite_target(source, path, Position::new(2, 6)).unwrap();
+            find_selector_rewrite_target(source, path, Position::new(2, 6))
+                .unwrap();
 
         assert_eq!(
             source.get(pattern_span).unwrap(),
@@ -8706,7 +9640,8 @@ download-action =\n\
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
         let path = Path::new("locales/en/app.ftl");
         let (_, actions) =
-            find_selector_rewrite_target(source, path, Position::new(5, 31)).unwrap();
+            find_selector_rewrite_target(source, path, Position::new(5, 31))
+                .unwrap();
 
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Whole);
@@ -8728,13 +9663,18 @@ download-action =\n\
         let source = "zero-rollout =\n    Zero summary: { $count ->\n        [zero] no packages ready.\n        [one] one package ready.\n       *[other] { $count } packages ready.\n    }\n";
         let path = Path::new("locales/en/app.ftl");
         let (pattern_span, actions) =
-            find_selector_rewrite_target(source, path, Position::new(1, 20)).unwrap();
+            find_selector_rewrite_target(source, path, Position::new(1, 20))
+                .unwrap();
 
         let whole = actions
             .into_iter()
             .find(|action| action.kind == SelectorRewriteKind::Whole)
             .unwrap();
-        let replacement = pad_assignment_replacement(source, &pattern_span, whole.replacement);
+        let replacement = pad_assignment_replacement(
+            source,
+            &pattern_span,
+            whole.replacement,
+        );
         let mut updated = source.to_string();
         updated.replace_range(pattern_span, &replacement);
 
@@ -8744,11 +9684,13 @@ download-action =\n\
     }
 
     #[test]
-    fn rewrites_selected_gender_selector_to_whole_with_nested_count_selector_preserved() {
+    fn rewrites_selected_gender_selector_to_whole_with_nested_count_selector_preserved()
+     {
         let source = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
         let path = Path::new("locales/en/app.ftl");
         let (_, actions) =
-            find_selector_rewrite_target(source, path, Position::new(1, 35)).unwrap();
+            find_selector_rewrite_target(source, path, Position::new(1, 35))
+                .unwrap();
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].kind, SelectorRewriteKind::Whole);
@@ -8760,13 +9702,21 @@ download-action =\n\
     }
 
     #[test]
-    fn preserves_nested_structure_when_generating_from_variable_inside_variant() {
+    fn preserves_nested_structure_when_generating_from_variable_inside_variant()
+    {
         let source = "nested-coins =\n    { $gender ->\n        [female] Ella tiene { $coins } monedas.\n       *[other] Elle tiene { $coins } monedas.\n    }\n";
         let path = Path::new("locales/es/app.ftl");
-        let target = find_generate_selector_target(source, path, Position::new(2, 34)).unwrap();
-        let generated =
-            generate_number_selector_edit(source, &target, "es", SelectorStyle::Prefix, false)
+        let target =
+            find_generate_selector_target(source, path, Position::new(2, 34))
                 .unwrap();
+        let generated = generate_number_selector_edit(
+            source,
+            &target,
+            "es",
+            SelectorStyle::Prefix,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(
             generated,
@@ -8777,8 +9727,7 @@ download-action =\n\
 
     #[test]
     fn generated_multiline_attribute_pattern_parses() {
-        let generated =
-            "Instala { $files } { $files ->\n    [one] ahora.\n    *[other] ahora mismo.\n}";
+        let generated = "Instala { $files } { $files ->\n    [one] ahora.\n    *[other] ahora mismo.\n}";
         assert_generated_pattern_parses(generated);
     }
 
@@ -8813,10 +9762,16 @@ download-action =\n\
     fn source_line_index_reuses_lines_for_block_ranges() {
         let source = "message = Value\n    .attr = First\n        Continued\nnext = Other\n";
         let index = SourceLineIndex::new(source);
-        let attr_definition = Range::new(Position::new(1, 4), Position::new(1, 9));
+        let attr_definition =
+            Range::new(Position::new(1, 4), Position::new(1, 9));
 
         assert_eq!(
-            block_line_range_from_definition_with_index(source, &index, &attr_definition, true),
+            block_line_range_from_definition_with_index(
+                source,
+                &index,
+                &attr_definition,
+                true
+            ),
             Some((1, 2))
         );
     }
@@ -8828,7 +9783,9 @@ download-action =\n\
             format!("probe = {generated}\n")
         };
         let parsed = parser::parse(wrapped.as_str()).unwrap_or_else(|error| {
-            panic!("generated pattern should parse:\n{wrapped}\nerror: {error:?}")
+            panic!(
+                "generated pattern should parse:\n{wrapped}\nerror: {error:?}"
+            )
         });
         assert!(find_fluent_pattern(&parsed, "probe").is_some());
     }

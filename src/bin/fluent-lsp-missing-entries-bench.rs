@@ -20,7 +20,10 @@ fn main() {
         files_per_language: args.files_per_language,
         messages_per_file: args.messages_per_file,
     };
-    let generated_workspace = args.workspace_root.is_none().then(|| generate_workspace(shape));
+    let generated_workspace = args
+        .workspace_root
+        .is_none()
+        .then(|| generate_workspace(shape));
     let workspace_root = args
         .workspace_root
         .clone()
