@@ -7172,6 +7172,426 @@ selector_style = "whole"
 }
 
 #[test]
+fn client_configuration_applies_plural_diagnostic_settings_without_file_config()
+{
+    let temp = temp_workspace(&[(
+        "locales/lv/app.ftl",
+        r#"bad-zero =
+    { $count ->
+        [few] slikti
+       *[other] labi
+    }
+"#,
+    )]);
+    let source_path = temp.path().join("locales/lv/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 125);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true,
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let mut diagnostics = notification["params"]["diagnostics"]
+        .as_array()
+        .cloned()
+        .expect("expected diagnostics array");
+    diagnostics.sort_by_key(|diagnostic| {
+        diagnostic["message"].as_str().unwrap().to_string()
+    });
+
+    assert_eq!(diagnostics.len(), 3);
+    assert_eq!(
+        diagnostics[0]["message"],
+        Value::String(
+            "Numeric selector for `lv` is missing category `one`".to_string()
+        )
+    );
+    assert_eq!(diagnostics[0]["severity"], Value::from(2));
+    assert_eq!(
+        diagnostics[1]["message"],
+        Value::String(
+            "Numeric selector for `lv` is missing category `zero`".to_string()
+        )
+    );
+    assert_eq!(diagnostics[1]["severity"], Value::from(2));
+    assert_eq!(
+        diagnostics[2]["message"],
+        Value::String(
+            "`few` is not a supported plural category for `lv`".to_string()
+        )
+    );
+    assert_eq!(diagnostics[2]["severity"], Value::from(1));
+}
+
+#[test]
+fn file_config_overrides_client_plural_diagnostic_settings() {
+    let temp = tempdir().unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/lv")).unwrap();
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+error_on_unsupported_plural_categories = false
+warn_on_missing_plural_categories = false
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/en/app.ftl"),
+        r#"bad-zero =
+    { $count ->
+        [few] bad
+       *[other] good
+    }
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/lv/app.ftl"),
+        r#"bad-zero =
+    { $count ->
+        [few] slikti
+       *[other] labi
+    }
+"#,
+    )
+    .unwrap();
+    let source_path = temp.path().join("locales/lv/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 126);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true,
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
+fn diagnostics_report_english_zero_unsupported_category_exactly() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = r#"zero-rollout =
+    { $count ->
+        [zero] no packages
+        [one] one package
+       *[other] packages
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 127);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": position_of(source_text, "[zero]").0, "character": position_of(source_text, "[zero]").1 + 1 },
+                    "end": { "line": position_of(source_text, "[zero]").0, "character": position_of(source_text, "[zero]").1 + 5 }
+                },
+                "severity": 1,
+                "source": "fluent-lsp",
+                "message": "`zero` is not a supported plural category for `en`"
+            }
+        ])
+    );
+}
+
+#[test]
+fn diagnostics_report_invalid_numeric_identifier_key_range_first_branch() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = r#"bad-key =
+    { $count ->
+        [admins] nope
+        [one] ok
+       *[other] ok
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 128);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let key_position = position_of(source_text, "admins");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": key_position.0, "character": key_position.1 },
+                    "end": { "line": key_position.0, "character": key_position.1 + 6 }
+                },
+                "severity": 1,
+                "source": "fluent-lsp",
+                "message": "`admins` is not a supported numeric selector key for `en`; use exact numbers or plural categories"
+            }
+        ])
+    );
+}
+
+#[test]
+fn diagnostics_report_invalid_numeric_identifier_key_range_last_branch() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = r#"bad-key =
+    { $count ->
+        [one] ok
+       *[admins] nope
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 129);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let key_position = position_of(source_text, "admins");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": key_position.0, "character": key_position.1 },
+                    "end": { "line": key_position.0, "character": key_position.1 + 6 }
+                },
+                "severity": 1,
+                "source": "fluent-lsp",
+                "message": "`admins` is not a supported numeric selector key for `en`; use exact numbers or plural categories"
+            }
+        ])
+    );
+}
+
+#[test]
+fn diagnostics_allow_exact_numeric_selector_keys() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = r#"numeric-key =
+    { $count ->
+        [0] none
+        [one] one
+       *[other] many
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 130);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
+fn diagnostics_allow_supported_plural_selector_keys() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = r#"plural-key =
+    { $count ->
+        [one] one
+       *[other] many
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 131);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
+fn diagnostics_report_nested_invalid_numeric_identifier_key_range() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = r#"nested-bad-key =
+    { $gender ->
+        [female] { $count ->
+            [admins] nope
+            [one] ok
+           *[other] ok
+        }
+       *[other] ok
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 132);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let key_position = position_of(source_text, "admins");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": key_position.0, "character": key_position.1 },
+                    "end": { "line": key_position.0, "character": key_position.1 + 6 }
+                },
+                "severity": 1,
+                "source": "fluent-lsp",
+                "message": "`admins` is not a supported numeric selector key for `en`; use exact numbers or plural categories"
+            }
+        ])
+    );
+}
+
+#[test]
+fn diagnostics_suppress_invalid_numeric_identifier_key_when_setting_disabled() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = r#"bad-key =
+    { $count ->
+        [admins] nope
+        [one] ok
+       *[other] ok
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 134);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": false
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
+fn diagnostics_suppress_unsupported_category_when_setting_disabled() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = r#"zero-rollout =
+    { $count ->
+        [zero] no packages
+        [one] one package
+       *[other] packages
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 133);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": false
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
 fn parse_error_diagnostics_publish_on_save_and_clear_after_fix() {
     let temp = tempdir().unwrap();
     std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
@@ -7230,6 +7650,175 @@ garbage = broken
 }
 
 #[test]
+fn parse_error_diagnostics_report_first_line_exactly() {
+    let temp = temp_workspace(&[(
+        "locales/en/first.ftl",
+        r#"g@Rb@ge = broken
+"#,
+    )]);
+    let source_path = temp.path().join("locales/en/first.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 146);
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let error_position = position_of(&source_text, "@");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": error_position.0, "character": error_position.1 },
+                    "end": { "line": error_position.0, "character": error_position.1 + 1 }
+                },
+                "severity": 1,
+                "source": "fluent-lsp",
+                "message": "Fluent syntax error: Expected a token starting with \"=\""
+            }
+        ])
+    );
+}
+
+#[test]
+fn parse_error_diagnostics_report_last_line_exactly() {
+    let temp = temp_workspace(&[(
+        "locales/en/last.ftl",
+        r#"welcome = Welcome
+
+broken@key = broken
+"#,
+    )]);
+    let source_path = temp.path().join("locales/en/last.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 147);
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let error_position = position_of(&source_text, "@");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": error_position.0, "character": error_position.1 },
+                    "end": { "line": error_position.0, "character": error_position.1 + 1 }
+                },
+                "severity": 1,
+                "source": "fluent-lsp",
+                "message": "Fluent syntax error: Expected a token starting with \"=\""
+            }
+        ])
+    );
+}
+
+#[test]
+fn parse_error_dirty_edit_publishes_after_save_exactly() {
+    let temp = temp_workspace(&[(
+        "locales/en/dirty.ftl",
+        r#"welcome = Welcome
+"#,
+    )]);
+    let source_path = temp.path().join("locales/en/dirty.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let invalid_source = r#"welcome = Welcome
+
+broken@key = broken
+"#;
+
+    let mut lsp = initialized_lsp(temp.path(), 148);
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_change_document(&mut lsp, &source_path, 2, invalid_source);
+    send_save_document(&mut lsp, &source_path, None);
+
+    let error_position = position_of(invalid_source, "@");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": error_position.0, "character": error_position.1 },
+                    "end": { "line": error_position.0, "character": error_position.1 + 1 }
+                },
+                "severity": 1,
+                "source": "fluent-lsp",
+                "message": "Fluent syntax error: Expected a token starting with \"=\""
+            }
+        ])
+    );
+}
+
+#[test]
+fn parse_error_did_close_clears_diagnostics_exactly() {
+    let temp = temp_workspace(&[(
+        "locales/en/close.ftl",
+        r#"broken@key = broken
+"#,
+    )]);
+    let source_path = temp.path().join("locales/en/close.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 149);
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+
+    send_close_document(&mut lsp, &source_path);
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["uri"],
+        Value::String(format!("file://{}", source_path.display()))
+    );
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
+fn parse_error_nested_file_contract_matches_top_level_exactly() {
+    let temp = temp_workspace(&[(
+        "locales/en/dialogs/nested.ftl",
+        r#"welcome = Welcome
+
+broken@key = broken
+"#,
+    )]);
+    let source_path = temp.path().join("locales/en/dialogs/nested.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 150);
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let error_position = position_of(&source_text, "@");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": error_position.0, "character": error_position.1 },
+                    "end": { "line": error_position.0, "character": error_position.1 + 1 }
+                },
+                "severity": 1,
+                "source": "fluent-lsp",
+                "message": "Fluent syntax error: Expected a token starting with \"=\""
+            }
+        ])
+    );
+}
+
+#[test]
 fn diagnostics_report_local_selector_style_mismatches_when_enabled() {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");
@@ -7269,6 +7858,590 @@ fn diagnostics_report_local_selector_style_mismatches_when_enabled() {
             "Selector style is `whole`, but workspace prefers `prefix`"
                 .to_string()
         )
+    );
+}
+
+#[test]
+fn diagnostics_report_latvian_unsupported_category_exactly() {
+    let root = fixture_root();
+    let source_path = root.join("locales/lv/app.ftl");
+    let source_text = r#"bad-zero =
+    { $count ->
+        [few] slikti
+       *[other] labi
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 135);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let key_position = position_of(source_text, "few");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": key_position.0, "character": key_position.1 },
+                    "end": { "line": key_position.0, "character": key_position.1 + 3 }
+                },
+                "severity": 1,
+                "source": "fluent-lsp",
+                "message": "`few` is not a supported plural category for `lv`"
+            }
+        ])
+    );
+}
+
+#[test]
+fn diagnostics_report_latvian_missing_zero_category_exactly() {
+    let root = fixture_root();
+    let source_path = root.join("locales/lv/app.ftl");
+    let source_text = r#"missing-zero =
+    { $count ->
+        [one] viena pakotne
+       *[other] pakotnes
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 136);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let start = position_of(source_text, "$count");
+    let end = position_of(&source_text, "    }");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": start.0, "character": start.1 },
+                    "end": { "line": end.0, "character": end.1 + 4 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Numeric selector for `lv` is missing category `zero`"
+            }
+        ])
+    );
+}
+
+#[test]
+fn diagnostics_report_latvian_missing_one_category_exactly() {
+    let root = fixture_root();
+    let source_path = root.join("locales/lv/app.ftl");
+    let source_text = r#"missing-one =
+    { $count ->
+        [zero] neviena pakotne
+       *[other] pakotnes
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 137);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let start = position_of(source_text, "$count");
+    let end = position_of(&source_text, "    }");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": start.0, "character": start.1 },
+                    "end": { "line": end.0, "character": end.1 + 4 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Numeric selector for `lv` is missing category `one`"
+            }
+        ])
+    );
+}
+
+#[test]
+fn diagnostics_report_ukrainian_missing_category_exactly() {
+    let root = fixture_root();
+    let source_path = root.join("locales/uk/app.ftl");
+    let source_text = r#"uk-incomplete =
+    { $count ->
+        [few] кілька пакунків
+        [many] багато пакунків
+       *[other] інші пакунки
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 138);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let start = position_of(source_text, "$count");
+    let end = position_of(&source_text, "    }");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": start.0, "character": start.1 },
+                    "end": { "line": end.0, "character": end.1 + 4 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Numeric selector for `uk` is missing category `one`"
+            }
+        ])
+    );
+}
+
+#[test]
+fn diagnostics_report_arabic_two_few_many_categories_exactly() {
+    let temp = temp_workspace(&[(
+        "locales/ar/app.ftl",
+        r#"arabic-incomplete =
+    { $count ->
+        [zero] صفر
+        [one] واحد
+       *[other] آخر
+    }
+"#,
+    )]);
+    let source_path = temp.path().join("locales/ar/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 139);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let start = position_of(&source_text, "$count");
+    let end = position_of(&source_text, "    }");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": start.0, "character": start.1 },
+                    "end": { "line": end.0, "character": end.1 + 4 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Numeric selector for `ar` is missing category `few`"
+            },
+            {
+                "range": {
+                    "start": { "line": start.0, "character": start.1 },
+                    "end": { "line": end.0, "character": end.1 + 4 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Numeric selector for `ar` is missing category `many`"
+            },
+            {
+                "range": {
+                    "start": { "line": start.0, "character": start.1 },
+                    "end": { "line": end.0, "character": end.1 + 4 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Numeric selector for `ar` is missing category `two`"
+            }
+        ])
+    );
+}
+
+#[test]
+fn diagnostics_use_translation_locale_categories_not_origin_categories() {
+    let temp = tempdir().unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
+    std::fs::create_dir_all(temp.path().join("locales/ar")).unwrap();
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/en/app.ftl"),
+        r#"rollout =
+    { $count ->
+        [one] one package
+       *[other] packages
+    }
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join("locales/ar/app.ftl"),
+        r#"rollout =
+    { $count ->
+        [zero] صفر
+        [one] واحد
+       *[other] آخر
+    }
+"#,
+    )
+    .unwrap();
+    let source_path = temp.path().join("locales/ar/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 140);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let diagnostics = recv_notification(
+        &mut lsp,
+        "textDocument/publishDiagnostics",
+    )["params"]["diagnostics"]
+        .as_array()
+        .cloned()
+        .expect("expected diagnostics array");
+    let messages = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic["message"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        vec![
+            Value::String(
+                "Numeric selector for `ar` is missing category `few`"
+                    .to_string()
+            ),
+            Value::String(
+                "Numeric selector for `ar` is missing category `many`"
+                    .to_string()
+            ),
+            Value::String(
+                "Numeric selector for `ar` is missing category `two`"
+                    .to_string()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn diagnostics_plural_categories_absent_until_enabled_exactly() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = r#"bad-zero =
+    { $count ->
+        [zero] none
+       *[other] many
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 141);
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        Value::Array(Vec::new())
+    );
+
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "error_on_unsupported_plural_categories": true,
+                "warn_on_missing_plural_categories": true
+            }
+        }),
+    );
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let enabled_notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let mut diagnostics = enabled_notification["params"]["diagnostics"]
+        .as_array()
+        .cloned()
+        .expect("expected diagnostics array");
+    diagnostics.sort_by_key(|diagnostic| {
+        diagnostic["message"].as_str().unwrap().to_string()
+    });
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic["message"].clone())
+            .collect::<Vec<_>>(),
+        vec![
+            Value::String(
+                "Numeric selector for `en` is missing category `one`"
+                    .to_string()
+            ),
+            Value::String(
+                "`zero` is not a supported plural category for `en`"
+                    .to_string()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn diagnostics_report_translation_whole_style_mismatch_exactly() {
+    let root = fixture_root();
+    let source_path = root.join("locales/es/app.ftl");
+    let source_text = r#"whole-style =
+    { $count ->
+        [one] un paquete
+       *[other] paquetes
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 142);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_selector_style_mismatch": true,
+                "selector_style": "prefix"
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let start_character = source_text.lines().next().unwrap().chars().count();
+    let end = position_of(&source_text, "    }");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": 0, "character": start_character },
+                    "end": { "line": end.0, "character": end.1 + 5 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Selector style is `whole`, but workspace prefers `prefix`"
+            }
+        ])
+    );
+}
+
+#[test]
+fn diagnostics_report_translation_suffix_style_mismatch_exactly() {
+    let temp = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"suffix-style = You have { $count ->
+        [one] { $count } package
+       *[other] { $count } packages
+    }
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"suffix-style = Tienes { $count ->
+        [one] { $count } paquete
+       *[other] { $count } paquetes
+    }
+"#,
+        ),
+    ]);
+    let source_path = temp.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 143);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_selector_style_mismatch": true,
+                "selector_style": "whole"
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let start_character = position_of(&source_text, "Tienes").1;
+    let end = position_of(&source_text, "    }");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": 0, "character": start_character },
+                    "end": { "line": end.0, "character": end.1 + 5 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Selector style is `suffix`, but workspace prefers `whole`"
+            }
+        ])
+    );
+}
+
+#[test]
+fn diagnostics_report_local_origin_selector_style_mismatch_exactly() {
+    let root = fixture_root();
+    let source_path = root.join("locales/en/app.ftl");
+    let source_text = r#"local-whole =
+    { $count ->
+        [one] one package
+       *[other] packages
+    }
+"#;
+
+    let mut lsp = initialized_lsp(&root, 144);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_selector_style_mismatch": true,
+                "selector_style": "prefix"
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, source_text);
+    send_save_document(&mut lsp, &source_path, Some(source_text));
+
+    let start_character = source_text.lines().next().unwrap().chars().count();
+    let end = position_of(&source_text, "    }");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": 0, "character": start_character },
+                    "end": { "line": end.0, "character": end.1 + 5 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Selector style is `whole`, but workspace prefers `prefix`"
+            }
+        ])
+    );
+}
+
+#[test]
+fn file_config_selector_style_diagnostics_follow_file_config_exactly() {
+    let temp = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"suffix-style = You have { $count ->
+        [one] { $count } package
+       *[other] { $count } packages
+    }
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"suffix-style = Tienes { $count ->
+        [one] { $count } paquete
+       *[other] { $count } paquetes
+    }
+"#,
+        ),
+    ]);
+    std::fs::write(
+        temp.path().join("fluent-lsp.toml"),
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+selector_style = "whole"
+warn_on_selector_style_mismatch = true
+"#,
+    )
+    .unwrap();
+    let source_path = temp.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(temp.path(), 145);
+    change_configuration(
+        &mut lsp,
+        json!({
+            "fluent-lsp": {
+                "warn_on_selector_style_mismatch": true,
+                "selector_style": "prefix"
+            }
+        }),
+    );
+    send_open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let start_character = position_of(&source_text, "Tienes").1;
+    let end = position_of(&source_text, "    }");
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": 0, "character": start_character },
+                    "end": { "line": end.0, "character": end.1 + 5 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Selector style is `suffix`, but workspace prefers `whole`"
+            }
+        ])
     );
 }
 

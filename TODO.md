@@ -33,9 +33,11 @@ Existing coverage:
 - [client_configuration_applies_origin_language_and_file_masks_without_file_config](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5467): client `workspace/didChangeConfiguration` drives counterpart lookup when no file config exists.
 - [code_action_uses_client_selector_style_setting](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5295): client-provided `selector_style` changes the preferred selector-generation action.
 - [diagnostics_report_selector_style_mismatches_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6967): client-provided selector-style settings drive mismatch diagnostics in translation files.
+- [client_configuration_applies_plural_diagnostic_settings_without_file_config](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7175): client `workspace/didChangeConfiguration` enables unsupported-category errors and missing-category warnings when file config does not override those settings.
 
 Missing coverage:
-- [ ] Add precedence coverage that client `workspace/didChangeConfiguration` applies plural-diagnostic settings when file config does not override them.
+- [x] Add precedence coverage that client `workspace/didChangeConfiguration` applies plural-diagnostic settings when file config does not override them.
+  - Covered by function: `client_configuration_applies_plural_diagnostic_settings_without_file_config`.
 
 ### Path: file configuration precedence
 
@@ -43,9 +45,11 @@ Existing coverage:
 - [file_config_overrides_client_origin_language_and_file_masks](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5526): file config wins over client-provided path mapping and origin-language settings.
 - [file_config_selector_style_overrides_client_setting](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5606): file config wins over client selector-style preference for code actions.
 - [file_config_overrides_client_style_diagnostic_settings](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7009): file config wins over client selector-style diagnostic settings.
+- [file_config_overrides_client_plural_diagnostic_settings](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7237): file config wins over client-provided unsupported-category and missing-category diagnostic settings.
 
 Missing coverage:
-- [ ] Add precedence coverage that file config overrides client-provided plural-diagnostic settings, not just path mapping and selector-style settings.
+- [x] Add precedence coverage that file config overrides client-provided plural-diagnostic settings, not just path mapping and selector-style settings.
+  - Covered by function: `file_config_overrides_client_plural_diagnostic_settings`.
 
 ## Capability Paths
 
@@ -753,16 +757,26 @@ Existing coverage:
 - [parse_error_diagnostics_publish_on_save_and_clear_after_fix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7175): parse errors publish on save and clear after the syntax is fixed and saved again.
 
 Missing coverage:
-- [ ] Add a parse-error test where the invalid token is on the first non-empty line in the file.
-- [ ] Add a parse-error test where the invalid token is on the last non-empty line in the file.
-- [ ] Add a parse-error test where the exact severity is asserted.
-- [ ] Add a parse-error test where the exact message string is asserted.
-- [ ] Add a parse-error test where the exact start line is asserted.
-- [ ] Add a parse-error test where the exact start character is asserted.
-- [ ] Add a parse-error test where fixing the syntax and saving clears diagnostics exactly.
-- [ ] Add a parse-error test where an open dirty edit produces the exact diagnostic after save.
-- [ ] Add a parse-error test where `didClose` after a parse error clears diagnostics exactly.
-- [ ] Add a parse-error test where nested files produce the same exact parse-error contract.
+- [x] Add a parse-error test where the invalid token is on the first non-empty line in the file.
+  - Covered by function: `parse_error_diagnostics_report_first_line_exactly`.
+- [x] Add a parse-error test where the invalid token is on the last non-empty line in the file.
+  - Covered by function: `parse_error_diagnostics_report_last_line_exactly`.
+- [x] Add a parse-error test where the exact severity is asserted.
+  - Covered by function: `parse_error_diagnostics_report_first_line_exactly`.
+- [x] Add a parse-error test where the exact message string is asserted.
+  - Covered by function: `parse_error_diagnostics_report_first_line_exactly`.
+- [x] Add a parse-error test where the exact start line is asserted.
+  - Covered by function: `parse_error_diagnostics_report_last_line_exactly`.
+- [x] Add a parse-error test where the exact start character is asserted.
+  - Covered by function: `parse_error_diagnostics_report_last_line_exactly`.
+- [x] Add a parse-error test where fixing the syntax and saving clears diagnostics exactly.
+  - Covered by function: `parse_error_diagnostics_publish_on_save_and_clear_after_fix`.
+- [x] Add a parse-error test where an open dirty edit produces the exact diagnostic after save.
+  - Covered by function: `parse_error_dirty_edit_publishes_after_save_exactly`.
+- [x] Add a parse-error test where `didClose` after a parse error clears diagnostics exactly.
+  - Covered by function: `parse_error_did_close_clears_diagnostics_exactly`.
+- [x] Add a parse-error test where nested files produce the same exact parse-error contract.
+  - Covered by function: `parse_error_nested_file_contract_matches_top_level_exactly`.
 
 ### Path: `LSP-COPY` marker diagnostics
 
@@ -822,18 +836,34 @@ Missing coverage:
 Existing coverage:
 - [diagnostics_report_invalid_numeric_identifier_keys_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7062): unsupported numeric-identifier selector keys publish diagnostics when the setting is enabled.
 - [diagnostics_ignore_non_numeric_admin_other_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7103): non-numeric semantic selector keys do not trigger the numeric-identifier diagnostic.
+- [diagnostics_report_invalid_numeric_identifier_key_range_first_branch](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7337): an invalid English numeric selector key in the first branch publishes the exact message, severity, and range.
+- [diagnostics_report_invalid_numeric_identifier_key_range_last_branch](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7380): an invalid English numeric selector key in the last branch publishes the exact message, severity, and range.
+- [diagnostics_allow_exact_numeric_selector_keys](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7422): exact numeric selector keys such as `[0]` do not trigger the invalid-key diagnostic.
+- [diagnostics_allow_supported_plural_selector_keys](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7454): supported plural category selector keys such as `[one]` do not trigger the invalid-key diagnostic.
+- [diagnostics_report_nested_invalid_numeric_identifier_key_range](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7485): nested numeric selectors still report the exact invalid-key diagnostic at the offending nested branch.
+- [diagnostics_suppress_invalid_numeric_identifier_key_when_setting_disabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7531): disabling unsupported-category diagnostics suppresses invalid numeric selector key diagnostics exactly.
 
 Missing coverage:
-- [ ] Add an English invalid-selector-key test where the exact message is asserted.
-- [ ] Add an English invalid-selector-key test where the exact severity is asserted.
-- [ ] Add an English invalid-selector-key test where the exact range is asserted.
-- [ ] Add a test where the invalid key is the first branch in the selector.
-- [ ] Add a test where the invalid key is the last branch in the selector.
-- [ ] Add a test where an exact numeric key such as `[0]` does not trigger the invalid-key diagnostic.
-- [ ] Add a test where a plural category such as `[one]` does not trigger the invalid-key diagnostic.
-- [ ] Add a test where a non-numeric semantic selector such as `[admins]` under a non-numeric selector does not trigger this diagnostic.
-- [ ] Add a nested selector test where the exact invalid-key diagnostic still points at the offending nested branch.
-- [ ] Add a test where disabling unsupported-category diagnostics suppresses this warning exactly.
+- [x] Add an English invalid-selector-key test where the exact message is asserted.
+  - Covered by function: `diagnostics_report_invalid_numeric_identifier_key_range_first_branch`.
+- [x] Add an English invalid-selector-key test where the exact severity is asserted.
+  - Covered by function: `diagnostics_report_invalid_numeric_identifier_key_range_first_branch`.
+- [x] Add an English invalid-selector-key test where the exact range is asserted.
+  - Covered by function: `diagnostics_report_invalid_numeric_identifier_key_range_first_branch`.
+- [x] Add a test where the invalid key is the first branch in the selector.
+  - Covered by function: `diagnostics_report_invalid_numeric_identifier_key_range_first_branch`.
+- [x] Add a test where the invalid key is the last branch in the selector.
+  - Covered by function: `diagnostics_report_invalid_numeric_identifier_key_range_last_branch`.
+- [x] Add a test where an exact numeric key such as `[0]` does not trigger the invalid-key diagnostic.
+  - Covered by function: `diagnostics_allow_exact_numeric_selector_keys`.
+- [x] Add a test where a plural category such as `[one]` does not trigger the invalid-key diagnostic.
+  - Covered by function: `diagnostics_allow_supported_plural_selector_keys`.
+- [x] Add a test where a non-numeric semantic selector such as `[admins]` under a non-numeric selector does not trigger this diagnostic.
+  - Covered by function: `diagnostics_ignore_non_numeric_admin_other_selector`.
+- [x] Add a nested selector test where the exact invalid-key diagnostic still points at the offending nested branch.
+  - Covered by function: `diagnostics_report_nested_invalid_numeric_identifier_key_range`.
+- [x] Add a test where disabling unsupported-category diagnostics suppresses this warning exactly.
+  - Covered by function: `diagnostics_suppress_invalid_numeric_identifier_key_when_setting_disabled`.
 
 ### Path: plural-category diagnostics
 
@@ -842,18 +872,30 @@ Existing coverage:
 - [diagnostics_report_unsupported_and_missing_categories_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6896): enabling plural-category checks reports unsupported and missing categories.
 - [diagnostics_use_unicode_plural_categories_for_ukrainian](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7276): plural diagnostics use the locale-specific Ukrainian category set.
 - [did_close_clears_document_diagnostics](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7312): closing a document clears its published diagnostics.
+- [diagnostics_report_english_zero_unsupported_category_exactly](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7295): English `[zero]` unsupported-category diagnostics publish the exact message, severity, and range.
+- [diagnostics_suppress_unsupported_category_when_setting_disabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7561): disabling unsupported-category diagnostics suppresses unsupported plural-category diagnostics exactly.
 
 Missing coverage:
-- [ ] Add an English `[zero]` test where the exact unsupported-category message is asserted.
-- [ ] Add an English `[zero]` test where the exact severity is asserted.
-- [ ] Add an English `[zero]` test where the exact range is asserted.
-- [ ] Add a Latvian unsupported-category test where the exact message, severity, and range are asserted.
-- [ ] Add a Latvian missing-category test for `[zero]` where the exact message, severity, and range are asserted.
-- [ ] Add a Latvian missing-category test for `[one]` where the exact message, severity, and range are asserted.
-- [ ] Add a Ukrainian missing-category test where the exact message, severity, and range are asserted.
-- [ ] Add a locale-specific coverage test for a language with `two`, `few`, and `many` where exact diagnostics are asserted.
-- [ ] Add a test where the origin file uses a different plural-category set and the translation side still follows locale-specific rules only.
-- [ ] Add a default-off test where plural-category diagnostics are absent until the relevant settings are enabled.
+- [x] Add an English `[zero]` test where the exact unsupported-category message is asserted.
+  - Covered by function: `diagnostics_report_english_zero_unsupported_category_exactly`.
+- [x] Add an English `[zero]` test where the exact severity is asserted.
+  - Covered by function: `diagnostics_report_english_zero_unsupported_category_exactly`.
+- [x] Add an English `[zero]` test where the exact range is asserted.
+  - Covered by function: `diagnostics_report_english_zero_unsupported_category_exactly`.
+- [x] Add a Latvian unsupported-category test where the exact message, severity, and range are asserted.
+  - Covered by function: `diagnostics_report_latvian_unsupported_category_exactly`.
+- [x] Add a Latvian missing-category test for `[zero]` where the exact message, severity, and range are asserted.
+  - Covered by function: `diagnostics_report_latvian_missing_zero_category_exactly`.
+- [x] Add a Latvian missing-category test for `[one]` where the exact message, severity, and range are asserted.
+  - Covered by function: `diagnostics_report_latvian_missing_one_category_exactly`.
+- [x] Add a Ukrainian missing-category test where the exact message, severity, and range are asserted.
+  - Covered by function: `diagnostics_report_ukrainian_missing_category_exactly`.
+- [x] Add a locale-specific coverage test for a language with `two`, `few`, and `many` where exact diagnostics are asserted.
+  - Covered by function: `diagnostics_report_arabic_two_few_many_categories_exactly`.
+- [x] Add a test where the origin file uses a different plural-category set and the translation side still follows locale-specific rules only.
+  - Covered by function: `diagnostics_use_translation_locale_categories_not_origin_categories`.
+- [x] Add a default-off test where plural-category diagnostics are absent until the relevant settings are enabled.
+  - Covered by function: `diagnostics_plural_categories_absent_until_enabled_exactly`.
 
 ### Path: selector-style mismatch diagnostics
 
@@ -864,13 +906,23 @@ Existing coverage:
 - [diagnostics_report_local_selector_style_mismatches_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7233): local-only selector style mismatches are also diagnosed when enabled.
 
 Missing coverage:
-- [ ] Add a translation-file whole-style mismatch test where the exact message is asserted.
-- [ ] Add a translation-file whole-style mismatch test where the exact severity is asserted.
-- [ ] Add a translation-file whole-style mismatch test where the exact range is asserted.
-- [ ] Add a translation-file suffix-style mismatch test where the exact message is asserted.
-- [ ] Add a translation-file suffix-style mismatch test where the exact severity is asserted.
-- [ ] Add a translation-file suffix-style mismatch test where the exact range is asserted.
-- [ ] Add a local-origin mismatch test where the exact message is asserted.
-- [ ] Add a local-origin mismatch test where the exact severity is asserted.
-- [ ] Add a local-origin mismatch test where the exact range is asserted.
-- [ ] Add a file-config-overrides-client-settings test where the exact mismatch diagnostics follow file config, not client settings.
+- [x] Add a translation-file whole-style mismatch test where the exact message is asserted.
+  - Covered by function: `diagnostics_report_translation_whole_style_mismatch_exactly`.
+- [x] Add a translation-file whole-style mismatch test where the exact severity is asserted.
+  - Covered by function: `diagnostics_report_translation_whole_style_mismatch_exactly`.
+- [x] Add a translation-file whole-style mismatch test where the exact range is asserted.
+  - Covered by function: `diagnostics_report_translation_whole_style_mismatch_exactly`.
+- [x] Add a translation-file suffix-style mismatch test where the exact message is asserted.
+  - Covered by function: `diagnostics_report_translation_suffix_style_mismatch_exactly`.
+- [x] Add a translation-file suffix-style mismatch test where the exact severity is asserted.
+  - Covered by function: `diagnostics_report_translation_suffix_style_mismatch_exactly`.
+- [x] Add a translation-file suffix-style mismatch test where the exact range is asserted.
+  - Covered by function: `diagnostics_report_translation_suffix_style_mismatch_exactly`.
+- [x] Add a local-origin mismatch test where the exact message is asserted.
+  - Covered by function: `diagnostics_report_local_origin_selector_style_mismatch_exactly`.
+- [x] Add a local-origin mismatch test where the exact severity is asserted.
+  - Covered by function: `diagnostics_report_local_origin_selector_style_mismatch_exactly`.
+- [x] Add a local-origin mismatch test where the exact range is asserted.
+  - Covered by function: `diagnostics_report_local_origin_selector_style_mismatch_exactly`.
+- [x] Add a file-config-overrides-client-settings test where the exact mismatch diagnostics follow file config, not client settings.
+  - Covered by function: `file_config_selector_style_diagnostics_follow_file_config_exactly`.

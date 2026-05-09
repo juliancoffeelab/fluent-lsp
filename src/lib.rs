@@ -9009,6 +9009,7 @@ download-action =\n\
             error_on_unsupported_plural_categories: Some(true),
             warn_on_missing_plural_categories: Some(false),
             warn_on_selector_style_mismatch: Some(true),
+            ..ClientConfig::default()
         });
 
         assert_eq!(
