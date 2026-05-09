@@ -20,7 +20,9 @@ impl LspProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .unwrap_or_else(|error| panic!("failed to start {}: {error}", server.display()));
+            .unwrap_or_else(|error| {
+                panic!("failed to start {}: {error}", server.display())
+            });
         Self {
             stdin: child.stdin.take().unwrap(),
             stdout: BufReader::new(child.stdout.take().unwrap()),
@@ -67,14 +69,20 @@ impl LspProcess {
     fn recv_until_index_ready(&mut self) {
         loop {
             let message = self.recv();
-            if message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end" {
+            if message["method"] == "$/progress"
+                && message["params"]["value"]["kind"] == "end"
+            {
                 return;
             }
         }
     }
 
     fn rss_kb(&self) -> Option<u64> {
-        let status = std::fs::read_to_string(format!("/proc/{}/status", self.child.id())).ok()?;
+        let status = std::fs::read_to_string(format!(
+            "/proc/{}/status",
+            self.child.id()
+        ))
+        .ok()?;
         status.lines().find_map(|line| {
             let value = line.strip_prefix("VmRSS:")?.trim();
             value.split_whitespace().next()?.parse().ok()
@@ -135,7 +143,8 @@ fn main() {
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }
-    std::fs::write(&output, serde_json::to_string_pretty(&results).unwrap()).unwrap();
+    std::fs::write(&output, serde_json::to_string_pretty(&results).unwrap())
+        .unwrap();
     println!("{}", serde_json::to_string_pretty(&results).unwrap());
 }
 
@@ -147,7 +156,8 @@ fn default_server_path() -> PathBuf {
 fn run_flavor(name: &str, shape: Shape, server: &Path) -> Value {
     let workspace = generate_workspace(shape);
     let file_count = shape.languages * shape.files_per_language;
-    let message_count = shape.languages * shape.files_per_language * shape.messages_per_file;
+    let message_count =
+        shape.languages * shape.files_per_language * shape.messages_per_file;
     let mut lsp = LspProcess::start(server);
     let startup_start = Instant::now();
     lsp.send(&json!({
@@ -203,8 +213,11 @@ fn run_flavor(name: &str, shape: Shape, server: &Path) -> Value {
     })
 }
 
-fn measure<F>(groups: &mut BTreeMap<&'static str, Vec<f64>>, name: &'static str, mut f: F)
-where
+fn measure<F>(
+    groups: &mut BTreeMap<&'static str, Vec<f64>>,
+    name: &'static str,
+    mut f: F,
+) where
     F: FnMut(),
 {
     let start = Instant::now();
@@ -303,7 +316,14 @@ fn request_code_action(lsp: &mut LspProcess, path: &Path, id_offset: usize) {
     lsp.recv_response(id);
 }
 
-fn request(id: i64, method: &str, path: &Path, line: u32, character: u32, extra: Value) -> Value {
+fn request(
+    id: i64,
+    method: &str,
+    path: &Path,
+    line: u32,
+    character: u32,
+    extra: Value,
+) -> Value {
     let mut params = serde_json::Map::new();
     params.insert(
         "textDocument".to_string(),
@@ -349,16 +369,21 @@ fn generate_workspace(shape: Shape) -> TempDir {
                 } else if message % 7 == 0 {
                     source.push_str(&format!("{key} =\n    .label = {language} label {message}\n    .tooltip = {language} tooltip {message}\n"));
                 } else if message % 5 == 0 {
-                    source.push_str(&format!("-{key} = {language} term {message}\n"));
+                    source.push_str(&format!(
+                        "-{key} = {language} term {message}\n"
+                    ));
                 } else {
-                    source.push_str(&format!("{key} = {language} value {message}\n"));
+                    source.push_str(&format!(
+                        "{key} = {language} value {message}\n"
+                    ));
                 }
                 source.push('\n');
             }
             if lang == 1 && file == shape.files_per_language - 1 {
                 source.push_str("local-only-extra = Local only file marker\n");
             }
-            std::fs::write(dir.join(format!("file{file:03}.ftl")), source).unwrap();
+            std::fs::write(dir.join(format!("file{file:03}.ftl")), source)
+                .unwrap();
         }
     }
     temp

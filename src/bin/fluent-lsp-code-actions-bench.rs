@@ -25,16 +25,16 @@ fn main() {
         .workspace_root
         .is_none()
         .then(|| generate_workspace(shape));
-    let workspace_root = args
-        .workspace_root
-        .clone()
-        .unwrap_or_else(|| generated_workspace.as_ref().unwrap().path().to_path_buf());
+    let workspace_root = args.workspace_root.clone().unwrap_or_else(|| {
+        generated_workspace.as_ref().unwrap().path().to_path_buf()
+    });
 
     let origin = workspace_root.join("locales/lang00/file000.ftl");
     let translation = workspace_root.join("locales/lang01/file000.ftl");
-    let origin_source = std::fs::read_to_string(&origin).expect("failed to read origin source");
-    let translation_source =
-        std::fs::read_to_string(&translation).expect("failed to read translation source");
+    let origin_source =
+        std::fs::read_to_string(&origin).expect("failed to read origin source");
+    let translation_source = std::fs::read_to_string(&translation)
+        .expect("failed to read translation source");
     let position = Position::new(args.line, args.character);
 
     let mut runs = Vec::with_capacity(args.repeats);
@@ -153,10 +153,10 @@ impl Args {
                         .expect("invalid --character");
                 }
                 "--workspace-root" => {
-                    parsed.workspace_root = Some(PathBuf::from(
-                        args.next()
-                            .unwrap_or_else(|| panic!("missing value for {flag}")),
-                    ));
+                    parsed.workspace_root =
+                        Some(PathBuf::from(args.next().unwrap_or_else(|| {
+                            panic!("missing value for {flag}")
+                        })));
                 }
                 _ => panic!("unknown flag {flag}"),
             }
@@ -196,16 +196,21 @@ fn generate_workspace(shape: Shape) -> TempDir {
                         "{key} =\n    .label = {language} label {message}\n    .tooltip = {language} tooltip {message}\n"
                     ));
                 } else if message % 5 == 0 {
-                    source.push_str(&format!("-{key} = {language} term {message}\n"));
+                    source.push_str(&format!(
+                        "-{key} = {language} term {message}\n"
+                    ));
                 } else {
-                    source.push_str(&format!("{key} = {language} value {message}\n"));
+                    source.push_str(&format!(
+                        "{key} = {language} value {message}\n"
+                    ));
                 }
                 source.push('\n');
             }
             if lang == 1 && file == shape.files_per_language - 1 {
                 source.push_str("local-only-extra = Local only file marker\n");
             }
-            std::fs::write(dir.join(format!("file{file:03}.ftl")), source).unwrap();
+            std::fs::write(dir.join(format!("file{file:03}.ftl")), source)
+                .unwrap();
         }
     }
     temp

@@ -2,7 +2,9 @@ use std::hint::black_box;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use fluent_lsp::{IndexBuildSummary, WorkspaceConfig, build_workspace_index_snapshot};
+use fluent_lsp::{
+    IndexBuildSummary, WorkspaceConfig, build_workspace_index_snapshot,
+};
 use rustc_hash::FxHashMap;
 use serde_json::json;
 use tempfile::TempDir;
@@ -26,10 +28,9 @@ fn main() {
         .workspace_root
         .is_none()
         .then(|| generate_workspace(shape));
-    let workspace_root = args
-        .workspace_root
-        .clone()
-        .unwrap_or_else(|| generated_workspace.as_ref().unwrap().path().to_path_buf());
+    let workspace_root = args.workspace_root.clone().unwrap_or_else(|| {
+        generated_workspace.as_ref().unwrap().path().to_path_buf()
+    });
     let config = WorkspaceConfig::load(workspace_root).unwrap();
     let overlays = FxHashMap::<Uri, String>::default();
 
@@ -37,7 +38,8 @@ fn main() {
     let mut last_summary = None;
     for iteration in 0..args.repeats {
         let started = Instant::now();
-        let (snapshot, summary) = build_workspace_index_snapshot(&config, &overlays);
+        let (snapshot, summary) =
+            build_workspace_index_snapshot(&config, &overlays);
         let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
         last_summary = Some(summary);
         black_box((snapshot, summary));
@@ -93,7 +95,8 @@ impl Args {
                     let value = args
                         .next()
                         .unwrap_or_else(|| panic!("missing value for {flag}"));
-                    parsed.languages = value.parse().expect("invalid --languages");
+                    parsed.languages =
+                        value.parse().expect("invalid --languages");
                 }
                 "--files-per-language" => {
                     let value = args
@@ -106,7 +109,8 @@ impl Args {
                     let value = args
                         .next()
                         .unwrap_or_else(|| panic!("missing value for {flag}"));
-                    parsed.messages_per_file = value.parse().expect("invalid --messages-per-file");
+                    parsed.messages_per_file =
+                        value.parse().expect("invalid --messages-per-file");
                 }
                 "--repeats" => {
                     let value = args
@@ -139,7 +143,8 @@ fn generate_workspace(shape: Shape) -> TempDir {
 
     for language in 0..shape.languages {
         for file in 0..shape.files_per_language {
-            let relative = format!("locales/lang{language:02}/file{file:03}.ftl");
+            let relative =
+                format!("locales/lang{language:02}/file{file:03}.ftl");
             let path = root.join(relative);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(
@@ -153,7 +158,11 @@ fn generate_workspace(shape: Shape) -> TempDir {
     temp
 }
 
-fn build_file_contents(language: usize, file: usize, messages: usize) -> String {
+fn build_file_contents(
+    language: usize,
+    file: usize,
+    messages: usize,
+) -> String {
     let mut source = String::new();
     for message in 0..messages {
         source.push_str(&format!(
