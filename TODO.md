@@ -8,6 +8,8 @@ Do not add new test helpers or helper layers beyond the existing `LspProcess` st
 Remove all existing ones, and make tests assert real data, not helpers.
 Do not make tests looser to accommodate incorrect behavior.
 If a test fails because the implementation does not match the spec, say that to the user and fix the code instead of weakening the test.
+Some of the TODO tests will fail when first written, and that is good: a failing test means we are catching a real bug, a spec mismatch, or a hole in current behavior.
+Bare test names are not enough in this file. Every `Existing coverage` entry should say what that test actually covers and where it stops.
 
 ## Coverage Matrix
 
@@ -20,7 +22,7 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 ### Path: documented `fluent-lsp.toml` contract
 
 Existing coverage:
-- [documented_config_contract_resolves_counterparts_from_exact_file_shape](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5359)
+- [documented_config_contract_resolves_counterparts_from_exact_file_shape](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5359): exact `fluent-lsp.toml` shape with documented `origin_language` and `file_masks`, covering both top-level and nested counterpart resolution.
 
 Missing coverage:
 - none currently tracked beyond the path-specific request coverage below
@@ -28,9 +30,9 @@ Missing coverage:
 ### Path: client configuration precedence
 
 Existing coverage:
-- [client_configuration_applies_origin_language_and_file_masks_without_file_config](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5467)
-- [code_action_uses_client_selector_style_setting](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5295)
-- [diagnostics_report_selector_style_mismatches_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6967)
+- [client_configuration_applies_origin_language_and_file_masks_without_file_config](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5467): client `workspace/didChangeConfiguration` drives counterpart lookup when no file config exists.
+- [code_action_uses_client_selector_style_setting](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5295): client-provided `selector_style` changes the preferred selector-generation action.
+- [diagnostics_report_selector_style_mismatches_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6967): client-provided selector-style settings drive mismatch diagnostics in translation files.
 
 Missing coverage:
 - [ ] Add precedence coverage that client `workspace/didChangeConfiguration` applies plural-diagnostic settings when file config does not override them.
@@ -38,9 +40,9 @@ Missing coverage:
 ### Path: file configuration precedence
 
 Existing coverage:
-- [file_config_overrides_client_origin_language_and_file_masks](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5526)
-- [file_config_selector_style_overrides_client_setting](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5606)
-- [file_config_overrides_client_style_diagnostic_settings](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7009)
+- [file_config_overrides_client_origin_language_and_file_masks](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5526): file config wins over client-provided path mapping and origin-language settings.
+- [file_config_selector_style_overrides_client_setting](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5606): file config wins over client selector-style preference for code actions.
+- [file_config_overrides_client_style_diagnostic_settings](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7009): file config wins over client selector-style diagnostic settings.
 
 Missing coverage:
 - [ ] Add precedence coverage that file config overrides client-provided plural-diagnostic settings, not just path mapping and selector-style settings.
@@ -50,7 +52,7 @@ Missing coverage:
 ### Path: exact `initialize` capability contract
 
 Existing coverage:
-- [initialize_returns_exact_capability_contract](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:271)
+- [initialize_returns_exact_capability_contract](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:271): exact `initialize` capability payload, including supported fields and the absence of unsupported ones.
 
 Missing coverage:
 - none currently tracked outside the request-specific paths below
@@ -60,7 +62,7 @@ Missing coverage:
 ### Path: initial index build and progress
 
 Existing coverage:
-- [initialized_builds_index_and_reports_progress_when_supported](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:917)
+- [initialized_builds_index_and_reports_progress_when_supported](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:917): initial index build starts after `initialized` and emits work-done progress when the client supports it.
 
 Missing coverage:
 - [ ] Add a background-refresh test that picks up on-disk content or mtime changes for an already indexed file, not just add/delete events.
@@ -68,11 +70,11 @@ Missing coverage:
 ### Path: index-driven refresh across request paths
 
 Existing coverage:
-- [indexed_requests_reflect_live_origin_changes_without_restart](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1172)
-- [indexed_requests_reflect_live_translation_changes_and_dirty_close_reverts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1259)
-- [indexed_references_pick_up_disk_file_adds_and_deletes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1332)
-- [local_only_file_warning_updates_when_origin_counterpart_appears](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1401)
-- [translation_only_keys_warn_and_clear_when_origin_adds_counterparts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1471)
+- [indexed_requests_reflect_live_origin_changes_without_restart](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1172): open origin overlays immediately affect definition, hover, and completion without restarting the server.
+- [indexed_requests_reflect_live_translation_changes_and_dirty_close_reverts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1259): dirty translation overlays immediately affect references, and `didClose` reverts back to disk state.
+- [indexed_references_pick_up_disk_file_adds_and_deletes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1332): background refresh picks up top-level translation file add/delete events for references.
+- [local_only_file_warning_updates_when_origin_counterpart_appears](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1401): missing-origin-file diagnostics clear after the origin counterpart appears on disk.
+- [translation_only_keys_warn_and_clear_when_origin_adds_counterparts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1471): translation-only entry and attribute warnings clear after matching origin counterparts are added on disk.
 
 Missing coverage:
 - [ ] Add a background-refresh definition test for an origin counterpart file appearing on disk after initialization.
@@ -84,9 +86,9 @@ Missing coverage:
 ### Path: trace logging
 
 Existing coverage:
-- [log_trace_reports_index_and_request_timings_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:968)
-- [verbose_log_trace_includes_request_details](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1040)
-- [set_trace_enables_request_timings_after_initialize](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1097)
+- [log_trace_reports_index_and_request_timings_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:968): `initialize.trace = "messages"` emits timing traces for `workspace/index` and `textDocument/definition`.
+- [verbose_log_trace_includes_request_details](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1040): `initialize.trace = "verbose"` adds verbose payloads for `workspace/index` and `textDocument/definition`.
+- [set_trace_enables_request_timings_after_initialize](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1097): runtime `$/setTrace` enables verbose request tracing after initialization.
 
 Missing coverage:
 - [ ] Add trace coverage for `textDocument/references`.
@@ -105,10 +107,10 @@ Missing coverage:
 ### Path: translation top-level key -> origin top-level key
 
 Existing coverage:
-- [goto_definition_from_translation_resolves_to_origin_fluent_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:96)
-- [documented_config_contract_resolves_counterparts_from_exact_file_shape](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5359)
-- [client_configuration_applies_origin_language_and_file_masks_without_file_config](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5467)
-- [file_config_overrides_client_origin_language_and_file_masks](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5526)
+- [goto_definition_from_translation_resolves_to_origin_fluent_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:96): translation top-level keys resolve to the matching origin key range in the counterpart file.
+- [documented_config_contract_resolves_counterparts_from_exact_file_shape](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5359): documented file config shape is enough for top-level definition requests to find the right origin file.
+- [client_configuration_applies_origin_language_and_file_masks_without_file_config](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5467): client-provided origin-language and file-mask settings are honored for top-level definition when no file config exists.
+- [file_config_overrides_client_origin_language_and_file_masks](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5526): file config overrides client counterpart mapping for top-level definition lookups.
 
 Missing coverage:
 - [ ] Add a test where the translation key is the first non-empty line in the file.
@@ -125,7 +127,7 @@ Missing coverage:
 ### Path: translation term -> origin term
 
 Existing coverage:
-- [goto_definition_from_translation_resolves_to_origin_fluent_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:96)
+- [goto_definition_from_translation_resolves_to_origin_fluent_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:96): translation terms resolve to the matching origin term in the basic counterpart fixture.
 
 Missing coverage:
 - [ ] Add a test where the term is the first non-empty line in the file.
@@ -142,8 +144,8 @@ Missing coverage:
 ### Path: translation attribute key -> origin attribute key
 
 Existing coverage:
-- [goto_definition_from_translation_resolves_to_origin_fluent_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:96)
-- [documented_config_contract_resolves_counterparts_from_exact_file_shape](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5359)
+- [goto_definition_from_translation_resolves_to_origin_fluent_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:96): translation attributes resolve to the matching origin attribute in the base fixture.
+- [documented_config_contract_resolves_counterparts_from_exact_file_shape](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5359): documented config shape also covers nested attribute definition resolution.
 
 Missing coverage:
 - [ ] Add a top-level attribute test where the attribute is the first attribute on the message.
@@ -160,12 +162,12 @@ Missing coverage:
 ### Path: no-location and request-error outcomes
 
 Existing coverage:
-- [definition_rejects_non_file_uris_with_invalid_params](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:337)
-- [definition_rejects_files_outside_the_configured_workspace](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:360)
-- [goto_definition_from_origin_file_returns_no_location](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:394)
-- [goto_definition_returns_no_location_for_translation_key_missing_in_origin](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:417)
-- [goto_definition_returns_no_location_when_origin_counterpart_file_is_missing](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:452)
-- [goto_definition_returns_no_location_for_translation_attribute_missing_in_origin](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:480)
+- [definition_rejects_non_file_uris_with_invalid_params](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:337): non-file URIs are rejected with an invalid-params error on definition requests.
+- [definition_rejects_files_outside_the_configured_workspace](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:360): files outside the configured workspace are rejected with invalid params.
+- [goto_definition_from_origin_file_returns_no_location](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:394): origin-side definition requests return no location instead of pointing back into translations.
+- [goto_definition_returns_no_location_for_translation_key_missing_in_origin](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:417): missing origin top-level keys return no definition location.
+- [goto_definition_returns_no_location_when_origin_counterpart_file_is_missing](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:452): missing origin counterpart files return no definition location.
+- [goto_definition_returns_no_location_for_translation_attribute_missing_in_origin](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:480): missing origin attributes return no definition location.
 
 Missing coverage:
 - [ ] Add a test where `Go to Definition` from an origin top-level key returns no location.
@@ -184,8 +186,8 @@ Missing coverage:
 ### Path: origin top-level key -> translation top-level key references
 
 Existing coverage:
-- [references_from_origin_resolve_to_translated_fluent_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:576)
-- [indexed_references_pick_up_disk_file_adds_and_deletes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1332)
+- [references_from_origin_resolve_to_translated_fluent_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:576): origin top-level keys return matching translation-key references across counterpart files.
+- [indexed_references_pick_up_disk_file_adds_and_deletes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1332): reference results refresh when translation files are added or removed on disk.
 
 Missing coverage:
 - [ ] Add a test where the origin key is the first non-empty line in the file.
@@ -202,7 +204,7 @@ Missing coverage:
 ### Path: origin term -> translation term references
 
 Existing coverage:
-- [references_from_origin_resolve_to_translated_fluent_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:576)
+- [references_from_origin_resolve_to_translated_fluent_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:576): origin terms return matching translation-term references in the shared fixture.
 
 Missing coverage:
 - [ ] Add a test where the origin term is the first non-empty line in the file.
@@ -219,7 +221,7 @@ Missing coverage:
 ### Path: origin attribute -> translation attribute references
 
 Existing coverage:
-- [references_from_origin_resolve_to_translated_fluent_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:576)
+- [references_from_origin_resolve_to_translated_fluent_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:576): origin attributes return matching translation-attribute references in the shared fixture.
 
 Missing coverage:
 - [ ] Add a top-level attribute test where the attribute is the first attribute on the message.
@@ -236,11 +238,11 @@ Missing coverage:
 ### Path: no-match and caller-side no-result outcomes
 
 Existing coverage:
-- [references_from_origin_return_empty_list_when_no_translation_matches](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:755)
-- [references_from_origin_attribute_return_empty_list_when_no_translation_matches](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:795)
-- [references_from_translation_file_return_no_result](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:834)
-- [references_reject_non_file_uris_with_invalid_params](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:858)
-- [references_reject_files_outside_the_configured_workspace](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:882)
+- [references_from_origin_return_empty_list_when_no_translation_matches](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:755): unmatched origin top-level keys return an empty reference array.
+- [references_from_origin_attribute_return_empty_list_when_no_translation_matches](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:795): unmatched origin attributes return an empty reference array.
+- [references_from_translation_file_return_no_result](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:834): translation-side reference requests return no result instead of searching outward.
+- [references_reject_non_file_uris_with_invalid_params](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:858): non-file URIs are rejected for reference requests.
+- [references_reject_files_outside_the_configured_workspace](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:882): outside-workspace files are rejected for reference requests.
 
 Missing coverage:
 - [ ] Add a test where an origin top-level key has no translation matches and returns an exact empty array.
@@ -257,8 +259,8 @@ Missing coverage:
 ### Path: indexed references with dirty overlays and background refresh
 
 Existing coverage:
-- [indexed_requests_reflect_live_translation_changes_and_dirty_close_reverts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1259)
-- [indexed_references_pick_up_disk_file_adds_and_deletes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1332)
+- [indexed_requests_reflect_live_translation_changes_and_dirty_close_reverts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1259): open translation overlays immediately affect reference results and `didClose` restores disk-backed references.
+- [indexed_references_pick_up_disk_file_adds_and_deletes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1332): background indexing updates reference results after on-disk translation file adds and deletes.
 
 Missing coverage:
 - [ ] Add a dirty-overlay test where opening a translation file introduces a new top-level key reference immediately.
@@ -277,11 +279,11 @@ Missing coverage:
 ### Path: top-level key hover
 
 Existing coverage:
-- [hover_key_and_attribute_show_comment_context_across_locale_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4016)
-- [hover_key_with_origin_comments_only_shows_one_origin_comment_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4212)
-- [hover_key_with_local_comments_only_shows_one_local_comment_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4265)
-- [hover_key_without_comments_returns_no_hover](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4318)
-- [hover_on_uncommented_key_does_not_fall_back_to_body_preview](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4776)
+- [hover_key_and_attribute_show_comment_context_across_locale_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4016): top-level key hover can show ordered comment blocks across origin and local locale files.
+- [hover_key_with_origin_comments_only_shows_one_origin_comment_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4212): origin-only key comments produce exactly one hover comment block.
+- [hover_key_with_local_comments_only_shows_one_local_comment_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4265): local-only key comments produce exactly one hover comment block.
+- [hover_key_without_comments_returns_no_hover](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4318): uncommented keys return no hover at all.
+- [hover_on_uncommented_key_does_not_fall_back_to_body_preview](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4776): key hover does not silently degrade into message-body preview when comment hover is absent.
 
 Missing coverage:
 - [ ] Add a test where origin-only top-level key comments render as one exact block.
@@ -298,10 +300,10 @@ Missing coverage:
 ### Path: top-level message body hover
 
 Existing coverage:
-- [hover_from_translation_shows_local_formatted_messages](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3041)
-- [hover_from_origin_file_shows_one_body_preview_block_for_top_level_message](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3931)
-- [hover_body_without_origin_message_shows_one_local_preview_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4352)
-- [hover_body_preview_stays_semantic_across_translation_locales](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4715)
+- [hover_from_translation_shows_local_formatted_messages](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3041): translation-side body hover shows formatted origin and local preview blocks.
+- [hover_from_origin_file_shows_one_body_preview_block_for_top_level_message](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3931): origin-side body hover returns one preview block for the origin message only.
+- [hover_body_without_origin_message_shows_one_local_preview_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4352): missing origin counterparts still yield one local preview block instead of failing hover entirely.
+- [hover_body_preview_stays_semantic_across_translation_locales](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4715): body hover preserves semantic preview rendering across multiple translation locales.
 
 Missing coverage:
 - [ ] Add a translation-file body hover test where origin and local previews both render exactly.
@@ -318,7 +320,7 @@ Missing coverage:
 ### Path: attribute key hover
 
 Existing coverage:
-- [hover_key_and_attribute_show_comment_context_across_locale_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4016)
+- [hover_key_and_attribute_show_comment_context_across_locale_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4016): attribute-key hover can show ordered comment blocks across origin and local locale files.
 
 Missing coverage:
 - [ ] Add an origin-only attribute-key comment test where one exact origin comment block is returned.
@@ -335,9 +337,9 @@ Missing coverage:
 ### Path: attribute body hover
 
 Existing coverage:
-- [hover_from_translation_shows_local_formatted_messages](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3041)
-- [hover_from_origin_file_shows_formatted_attribute_text](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3832)
-- [hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2486)
+- [hover_from_translation_shows_local_formatted_messages](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3041): translation-side attribute body hover shows formatted origin and local previews.
+- [hover_from_origin_file_shows_formatted_attribute_text](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3832): origin-side attribute body hover returns the formatted origin attribute preview.
+- [hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2486): copied-attribute hover excludes injected `LSP-COPY` marker comments from attribute-body preview.
 
 Missing coverage:
 - [ ] Add an origin-file attribute-body hover test where one exact origin preview block is returned.
@@ -354,10 +356,10 @@ Missing coverage:
 ### Path: selector hover on selector expression
 
 Existing coverage:
-- [hover_from_translation_matches_available_selector_variables_across_source_and_local](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3510)
-- [hover_from_latvian_translation_preserves_zero_category_selectors](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3695)
-- [hover_selector_without_origin_selectors_leaves_origin_block_headerless](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4403)
-- [hover_selector_without_origin_message_shows_one_local_selector_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4472)
+- [hover_from_translation_matches_available_selector_variables_across_source_and_local](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3510): selector-expression hover aligns source and local selector variables and previews the chosen branch.
+- [hover_from_latvian_translation_preserves_zero_category_selectors](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3695): selector hover preserves locale-specific categories such as Latvian `zero`.
+- [hover_selector_without_origin_selectors_leaves_origin_block_headerless](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4403): origin preview stays headerless when the origin side has no selector headers to show.
+- [hover_selector_without_origin_message_shows_one_local_selector_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4472): missing origin selectors still yield one local selector preview block.
 
 Missing coverage:
 - [ ] Add a matching-selector test where origin and local selector headers list the same chosen variable values.
@@ -374,8 +376,8 @@ Missing coverage:
 ### Path: selector hover on variant branch text
 
 Existing coverage:
-- [hover_selector_preserves_unresolved_term_references_inside_selected_branch](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4529)
-- [hover_selector_preserves_unresolved_non_selector_inline_references_inside_selected_branch](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4622)
+- [hover_selector_preserves_unresolved_term_references_inside_selected_branch](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4529): selector-branch hover keeps unresolved term references verbatim in the rendered branch preview.
+- [hover_selector_preserves_unresolved_non_selector_inline_references_inside_selected_branch](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4622): selector-branch hover also preserves unresolved non-selector inline references verbatim.
 
 Missing coverage:
 - [ ] Add a test where an unresolved term reference in the selected origin branch is preserved verbatim.
@@ -394,8 +396,8 @@ Missing coverage:
 ### Path: top-level message completion list
 
 Existing coverage:
-- [completion_from_translation_uses_origin_language_keys_and_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1629)
-- [completion_omits_already_present_top_level_keys](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1731)
+- [completion_from_translation_uses_origin_language_keys_and_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1629): top-level completion in translation files is sourced from origin-language keys.
+- [completion_omits_already_present_top_level_keys](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1731): top-level completion excludes keys already present in the translation file.
 
 Missing coverage:
 - [ ] Add a test where completion at the first message in a translation file returns the exact top-level key list.
@@ -412,9 +414,9 @@ Missing coverage:
 ### Path: attribute completion list
 
 Existing coverage:
-- [completion_from_translation_uses_origin_language_keys_and_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1629)
-- [completion_omits_already_present_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1768)
-- [completion_uses_nested_origin_counterpart_and_skips_origin_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1806)
+- [completion_from_translation_uses_origin_language_keys_and_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1629): attribute completion in translation files is sourced from origin-language attributes.
+- [completion_omits_already_present_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1768): attribute completion excludes attributes already present on the message.
+- [completion_uses_nested_origin_counterpart_and_skips_origin_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1806): nested translation files use nested origin counterparts, while origin files themselves do not offer completion.
 
 Missing coverage:
 - [ ] Add a test where bare-dot completion on a message with two missing attributes returns the exact ordered attribute list.
@@ -431,7 +433,7 @@ Missing coverage:
 ### Path: completion documentation payload
 
 Existing coverage:
-- [completion_items_include_origin_documentation_for_keys_and_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2011)
+- [completion_items_include_origin_documentation_for_keys_and_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2011): completion items include origin-derived documentation for both message and attribute suggestions.
 
 Missing coverage:
 - [ ] Add a message-completion-doc test where origin-only comments render as one exact markdown block.
@@ -448,13 +450,13 @@ Missing coverage:
 ### Path: empty-result and request-error outcomes
 
 Existing coverage:
-- [completion_returns_empty_results_for_nested_origin_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1874)
-- [completion_returns_empty_results_for_unmatched_prefixes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1910)
-- [completion_returns_empty_results_inside_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1947)
-- [completion_returns_empty_results_without_origin_counterpart_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1972)
-- [completion_rejects_non_file_uris_with_invalid_params](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:553)
-- [completion_rejects_files_outside_the_configured_workspace](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:518)
-- [completion_uses_nested_origin_counterpart_and_skips_origin_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1806)
+- [completion_returns_empty_results_for_nested_origin_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1874): nested origin files themselves return an empty completion result.
+- [completion_returns_empty_results_for_unmatched_prefixes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1910): unmatched completion prefixes return an empty completion result.
+- [completion_returns_empty_results_inside_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1947): comment positions return an empty completion result instead of suggestions.
+- [completion_returns_empty_results_without_origin_counterpart_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1972): missing origin counterpart files produce an empty completion result.
+- [completion_rejects_non_file_uris_with_invalid_params](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:553): non-file URIs are rejected for completion requests.
+- [completion_rejects_files_outside_the_configured_workspace](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:518): outside-workspace files are rejected for completion requests.
+- [completion_uses_nested_origin_counterpart_and_skips_origin_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1806): origin files are explicitly excluded from nested completion results.
 
 Missing coverage:
 - [ ] Add a top-level origin-file completion test that asserts the exact empty completion payload.
@@ -473,10 +475,10 @@ Missing coverage:
 ### Path: file-wide missing-string quick fix
 
 Existing coverage:
-- [code_action_file_wide_copy_uses_spec_title_for_whole_missing_string_example](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2124)
-- [code_action_file_wide_copy_uses_spec_title_for_whole_missing_message_with_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2207)
-- [whole_file_missing_entry_actions_are_absent_when_translation_is_complete](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2294)
-- [whole_file_missing_entry_actions_are_absent_without_origin_counterpart_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2341)
+- [code_action_file_wide_copy_uses_spec_title_for_whole_missing_string_example](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2124): file-wide quick fix can copy one whole missing message with the spec title and exact resulting source.
+- [code_action_file_wide_copy_uses_spec_title_for_whole_missing_message_with_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2207): file-wide quick fix can copy a whole missing message that includes attributes.
+- [whole_file_missing_entry_actions_are_absent_when_translation_is_complete](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2294): complete translation files do not offer file-wide missing-entry quick fixes.
+- [whole_file_missing_entry_actions_are_absent_without_origin_counterpart_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2341): missing origin counterpart files do not offer file-wide missing-entry quick fixes.
 
 Missing coverage:
 - [ ] Add a file-wide copy test where one whole missing top-level message is added with the exact `LSP-COPY` marker placement.
@@ -493,9 +495,9 @@ Missing coverage:
 ### Path: single-message missing-string quick fix
 
 Existing coverage:
-- [code_action_copies_single_stub_message_without_touching_other_entries](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2557)
-- [single_message_copy_actions_are_absent_for_complete_entries](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2831)
-- [single_message_copy_action_is_absent_when_selected_key_has_no_origin_counterpart](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2900)
+- [code_action_copies_single_stub_message_without_touching_other_entries](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2557): single-message quick fix fills one stub message and leaves unrelated entries unchanged.
+- [single_message_copy_actions_are_absent_for_complete_entries](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2831): complete messages do not offer single-message copy actions.
+- [single_message_copy_action_is_absent_when_selected_key_has_no_origin_counterpart](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2900): local-only selected keys do not offer single-message copy actions.
 
 Missing coverage:
 - [ ] Add a single-message copy test where the selected stub message is the first entry in the file.
@@ -512,9 +514,9 @@ Missing coverage:
 ### Path: single-attribute missing-attribute quick fix
 
 Existing coverage:
-- [code_action_copies_missing_attributes_for_selected_message_only](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2692)
-- [missing_attribute_copy_action_is_absent_when_selected_message_has_no_origin_counterpart](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2948)
-- [hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2486)
+- [code_action_copies_missing_attributes_for_selected_message_only](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2692): missing-attribute quick fix copies only the selected message's missing attributes.
+- [missing_attribute_copy_action_is_absent_when_selected_message_has_no_origin_counterpart](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2948): local-only messages do not offer missing-attribute copy actions.
+- [hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2486): copied attributes remain hover-clean even after the quick fix inserts marker comments.
 
 Missing coverage:
 - [ ] Add a missing-attribute copy test where the selected message is the first message in the file.
@@ -531,10 +533,10 @@ Missing coverage:
 ### Path: selector generation from a variable occurrence
 
 Existing coverage:
-- [code_action_generates_prefix_selector_by_default](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5183)
-- [code_action_returns_all_styles_for_variable_occurrence](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5247)
-- [code_action_uses_client_selector_style_setting](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5295)
-- [code_action_keeps_punctuation_attached_in_prefix_generation](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6040)
+- [code_action_generates_prefix_selector_by_default](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5183): selector generation defaults to prefix style when no preference overrides it.
+- [code_action_returns_all_styles_for_variable_occurrence](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5247): variable-occurrence generation can return the full set of selector-style rewrites.
+- [code_action_uses_client_selector_style_setting](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5295): client selector-style settings change which generation action is preferred.
+- [code_action_keeps_punctuation_attached_in_prefix_generation](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6040): generated prefix selectors keep surrounding punctuation attached correctly in the edit.
 
 Missing coverage:
 - [ ] Add a generation test where the variable occurrence is in top-level body text and the exact returned rewrite-title set is asserted.
@@ -551,11 +553,11 @@ Missing coverage:
 ### Path: selector generation from non-default anchors
 
 Existing coverage:
-- [code_action_uses_snippet_text_edit_when_supported](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5668)
-- [code_action_generates_whole_snippet_when_no_variable_exists](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5730)
-- [code_action_supports_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5791)
-- [code_action_uses_enclosing_function_placeable_as_generation_anchor](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5837)
-- [code_action_preserves_nested_selector_when_generating_inside_variant](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7345)
+- [code_action_uses_snippet_text_edit_when_supported](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5668): selector generation uses snippet text edits when the client advertises snippet support.
+- [code_action_generates_whole_snippet_when_no_variable_exists](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5730): generation falls back to a whole-form snippet when no variable anchor exists.
+- [code_action_supports_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5791): selector generation works inside attribute values, not just top-level message bodies.
+- [code_action_uses_enclosing_function_placeable_as_generation_anchor](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5837): enclosing function placeables can act as the generation anchor.
+- [code_action_preserves_nested_selector_when_generating_inside_variant](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7345): generation inside a selector variant preserves nested selectors already present in the text.
 
 Missing coverage:
 - [ ] Add a generation test where the enclosing anchor is a function placeable and the exact edit is asserted.
@@ -572,16 +574,16 @@ Missing coverage:
 ### Path: selector rewrite
 
 Existing coverage:
-- [code_action_rewrites_whole_selector_to_prefix_and_suffix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6181)
-- [code_action_rewrites_prefix_selector_to_whole](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6254)
-- [code_action_selector_rewrite_preserves_assignment_spacing](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6303)
-- [code_action_rewrites_suffix_selector_to_whole_and_prefix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6367)
-- [code_action_bare_suffix_like_selector_only_offers_prefix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6402)
-- [code_action_rewrites_nested_whole_selector_inside_variant](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6456)
-- [code_action_rewrites_selector_inside_attribute_value](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6599)
-- [attribute_rewrite_range_does_not_consume_comments_or_attribute_key](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6666)
-- [code_action_rewrites_selected_count_selector_with_trailing_suffix_text](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6708)
-- [code_action_rewrites_selected_gender_selector_to_whole_with_nested_count_preserved](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6763)
+- [code_action_rewrites_whole_selector_to_prefix_and_suffix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6181): whole-style selectors can be rewritten into prefix and suffix forms.
+- [code_action_rewrites_prefix_selector_to_whole](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6254): prefix-style selectors can be rewritten back into whole form.
+- [code_action_selector_rewrite_preserves_assignment_spacing](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6303): rewrite edits preserve assignment spacing exactly.
+- [code_action_rewrites_suffix_selector_to_whole_and_prefix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6367): suffix-style selectors can be rewritten into whole and prefix forms.
+- [code_action_bare_suffix_like_selector_only_offers_prefix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6402): suffix-like selectors that cannot support every rewrite only offer the valid prefix rewrite.
+- [code_action_rewrites_nested_whole_selector_inside_variant](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6456): nested selectors inside variants can be rewritten without disturbing the surrounding selector.
+- [code_action_rewrites_selector_inside_attribute_value](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6599): selector rewrites also work inside attribute values.
+- [attribute_rewrite_range_does_not_consume_comments_or_attribute_key](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6666): attribute selector rewrite ranges stay inside the attribute value and do not eat comments or keys.
+- [code_action_rewrites_selected_count_selector_with_trailing_suffix_text](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6708): rewrite edits preserve trailing suffix text after the selected count selector.
+- [code_action_rewrites_selected_gender_selector_to_whole_with_nested_count_preserved](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6763): rewriting a gender selector to whole form preserves nested count selectors inside it.
 
 Missing coverage:
 - [ ] Add a whole->prefix rewrite test where the exact returned rewrite-title set is asserted.
@@ -598,12 +600,12 @@ Missing coverage:
 ### Path: absence and hiding outcomes
 
 Existing coverage:
-- [origin_files_do_not_offer_translation_only_missing_entry_quick_fixes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2999)
-- [code_action_generation_is_absent_when_message_already_has_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6091)
-- [code_action_generation_is_absent_when_attribute_already_has_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6136)
-- [code_action_rewrite_is_absent_when_message_has_no_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6507)
-- [code_action_rewrite_is_absent_when_attribute_has_no_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6553)
-- [code_action_is_hidden_for_ambiguous_message_keys](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6824)
+- [origin_files_do_not_offer_translation_only_missing_entry_quick_fixes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2999): origin files do not offer translation-only copy quick fixes.
+- [code_action_generation_is_absent_when_message_already_has_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6091): messages that already contain selectors do not offer generation actions.
+- [code_action_generation_is_absent_when_attribute_already_has_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6136): attributes that already contain selectors do not offer generation actions.
+- [code_action_rewrite_is_absent_when_message_has_no_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6507): messages without selectors do not offer rewrite actions.
+- [code_action_rewrite_is_absent_when_attribute_has_no_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6553): attributes without selectors do not offer rewrite actions.
+- [code_action_is_hidden_for_ambiguous_message_keys](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6824): ambiguous message keys suppress selector-related code actions instead of guessing.
 
 Missing coverage:
 - [ ] Add a generation-absence test where a message that already has a selector returns no generation actions.
@@ -622,7 +624,7 @@ Missing coverage:
 ### Path: positive selector-combination lens
 
 Existing coverage:
-- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826)
+- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826): positive code lens requests return selector-combination lenses that can open the generated document.
 
 Missing coverage:
 - [ ] Add a test where a message with one selector returns the exact title with the correct combination count.
@@ -639,7 +641,7 @@ Missing coverage:
 ### Path: no-lens outcomes
 
 Existing coverage:
-- [code_lens_returns_empty_list_for_files_without_selector_combinations](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5056)
+- [code_lens_returns_empty_list_for_files_without_selector_combinations](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5056): files without selector-combination expansion opportunities return an empty lens array.
 
 Missing coverage:
 - [ ] Add a test where a plain message with no selectors returns an exact empty lens array.
@@ -656,7 +658,7 @@ Missing coverage:
 ### Path: lens contract shape
 
 Existing coverage:
-- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826)
+- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826): the positive lens test also exercises the returned command title, command name, and follow-up execution flow for one representative lens.
 
 Missing coverage:
 - [ ] Add a contract test that asserts the full returned lens array exactly for the main fixture file.
@@ -675,7 +677,7 @@ Missing coverage:
 ### Path: `window/showDocument` success path
 
 Existing coverage:
-- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826)
+- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826): successful execute-command flow already proves one `window/showDocument` path from a code lens.
 
 Missing coverage:
 - [ ] Add a test where a valid command request opens a temp markdown document through `window/showDocument`.
@@ -692,7 +694,7 @@ Missing coverage:
 ### Path: generated selector-combinations markdown document
 
 Existing coverage:
-- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826)
+- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826): current positive coverage includes one generated selector-combinations markdown document and its main content blocks.
 
 Missing coverage:
 - [ ] Add a test where the markdown document starts with the exact expected heading for the selected key.
@@ -709,10 +711,10 @@ Missing coverage:
 ### Path: invalid-params and malformed-argument outcomes
 
 Existing coverage:
-- [execute_command_rejects_unknown_command](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5089)
-- [execute_command_rejects_missing_document_uri_argument](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5112)
-- [execute_command_rejects_missing_fluent_key_argument](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5135)
-- [execute_command_rejects_non_file_document_uris](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5160)
+- [execute_command_rejects_unknown_command](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5089): unknown execute-command names are rejected.
+- [execute_command_rejects_missing_document_uri_argument](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5112): missing document URI arguments are rejected.
+- [execute_command_rejects_missing_fluent_key_argument](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5135): missing Fluent key arguments are rejected.
+- [execute_command_rejects_non_file_document_uris](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5160): non-file document URIs are rejected for command execution.
 
 Missing coverage:
 - [ ] Add a test where an unknown command returns the exact invalid-params error.
@@ -748,7 +750,7 @@ Missing coverage:
 ### Path: parse-error diagnostics
 
 Existing coverage:
-- [parse_error_diagnostics_publish_on_save_and_clear_after_fix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7175)
+- [parse_error_diagnostics_publish_on_save_and_clear_after_fix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7175): parse errors publish on save and clear after the syntax is fixed and saved again.
 
 Missing coverage:
 - [ ] Add a parse-error test where the invalid token is on the first non-empty line in the file.
@@ -765,8 +767,8 @@ Missing coverage:
 ### Path: `LSP-COPY` marker diagnostics
 
 Existing coverage:
-- [lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2386)
-- [hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2486)
+- [lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2386): `LSP-COPY` markers publish diagnostics on save and those diagnostics clear after marker removal.
+- [hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2486): copied-marker diagnostics do not leak marker comment text into hover output.
 
 Missing coverage:
 - [ ] Add a whole-message marker test where the exact warning message is asserted.
@@ -783,7 +785,7 @@ Missing coverage:
 ### Path: missing origin counterpart file diagnostics
 
 Existing coverage:
-- [local_only_file_warning_updates_when_origin_counterpart_appears](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1401)
+- [local_only_file_warning_updates_when_origin_counterpart_appears](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1401): missing-origin-file warnings clear once the origin counterpart file appears on disk.
 
 Missing coverage:
 - [ ] Add a top-level translation file test where the exact missing-origin-file warning message is asserted.
@@ -800,8 +802,8 @@ Missing coverage:
 ### Path: translation-only entry and attribute diagnostics
 
 Existing coverage:
-- [translation_only_keys_warn_and_clear_when_origin_adds_counterparts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1471)
-- [translation_only_warnings_are_absent_for_matching_translation_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1594)
+- [translation_only_keys_warn_and_clear_when_origin_adds_counterparts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1471): translation-only entry and attribute warnings clear when matching origin counterparts are added.
+- [translation_only_warnings_are_absent_for_matching_translation_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1594): matching translation files do not publish translation-only warnings.
 
 Missing coverage:
 - [ ] Add a translation-only top-level entry test where the exact warning message is asserted.
@@ -818,8 +820,8 @@ Missing coverage:
 ### Path: unsupported numeric selector key diagnostics
 
 Existing coverage:
-- [diagnostics_report_invalid_numeric_identifier_keys_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7062)
-- [diagnostics_ignore_non_numeric_admin_other_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7103)
+- [diagnostics_report_invalid_numeric_identifier_keys_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7062): unsupported numeric-identifier selector keys publish diagnostics when the setting is enabled.
+- [diagnostics_ignore_non_numeric_admin_other_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7103): non-numeric semantic selector keys do not trigger the numeric-identifier diagnostic.
 
 Missing coverage:
 - [ ] Add an English invalid-selector-key test where the exact message is asserted.
@@ -836,10 +838,10 @@ Missing coverage:
 ### Path: plural-category diagnostics
 
 Existing coverage:
-- [diagnostics_are_absent_by_default](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6886)
-- [diagnostics_report_unsupported_and_missing_categories_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6896)
-- [diagnostics_use_unicode_plural_categories_for_ukrainian](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7276)
-- [did_close_clears_document_diagnostics](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7312)
+- [diagnostics_are_absent_by_default](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6886): plural-category diagnostics stay off by default.
+- [diagnostics_report_unsupported_and_missing_categories_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6896): enabling plural-category checks reports unsupported and missing categories.
+- [diagnostics_use_unicode_plural_categories_for_ukrainian](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7276): plural diagnostics use the locale-specific Ukrainian category set.
+- [did_close_clears_document_diagnostics](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7312): closing a document clears its published diagnostics.
 
 Missing coverage:
 - [ ] Add an English `[zero]` test where the exact unsupported-category message is asserted.
@@ -856,10 +858,10 @@ Missing coverage:
 ### Path: selector-style mismatch diagnostics
 
 Existing coverage:
-- [diagnostics_report_selector_style_mismatches_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6967)
-- [file_config_overrides_client_style_diagnostic_settings](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7009)
-- [diagnostics_do_not_warn_for_complete_numeric_selectors_or_matching_style](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7135)
-- [diagnostics_report_local_selector_style_mismatches_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7233)
+- [diagnostics_report_selector_style_mismatches_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6967): selector-style mismatch diagnostics appear when the feature is enabled.
+- [file_config_overrides_client_style_diagnostic_settings](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7009): file config overrides client selector-style diagnostic settings.
+- [diagnostics_do_not_warn_for_complete_numeric_selectors_or_matching_style](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7135): complete numeric selectors and already matching styles do not produce selector-style diagnostics.
+- [diagnostics_report_local_selector_style_mismatches_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7233): local-only selector style mismatches are also diagnosed when enabled.
 
 Missing coverage:
 - [ ] Add a translation-file whole-style mismatch test where the exact message is asserted.
