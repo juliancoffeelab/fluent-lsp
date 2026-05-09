@@ -14,6 +14,7 @@
 - Every user-visible change should have JSON-RPC integration test.
 - In tests, `contains`-style assertions are banned for user-visible results. Use direct comparisons instead.
 - When validating rendered Fluent output in tests, each test must validate the result with bundle message formatting and assert it with a direct `assert_eq!`.
+- In tests, prefer raw string literals like `r#"..."#` for multiline or quote-heavy user-visible text instead of `concat!` chains or escaped-quote-heavy string literals.
 
 ## Test Helper Policy
 

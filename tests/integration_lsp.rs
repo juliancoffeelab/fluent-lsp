@@ -151,7 +151,8 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
 
     open_document(&mut lsp, source_path.as_path(), &source_text);
 
-    let welcome_title_position = position_of(&source_text, "welcome-title");
+    let welcome_title_position =
+        position_of_nth(&source_text, "welcome-title", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 2,
@@ -178,7 +179,7 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
         Value::from(0)
     );
 
-    let brand_name_position = position_of(&source_text, "brand-name =");
+    let brand_name_position = position_of_nth(&source_text, "brand-name =", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 3,
@@ -205,7 +206,8 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
         Value::from(1)
     );
 
-    let launch_label_position = position_of(&source_text, "label = Lanzar");
+    let launch_label_position =
+        position_of_nth(&source_text, "label = Lanzar", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 4,
@@ -236,7 +238,8 @@ fn goto_definition_from_translation_resolves_to_origin_fluent_file() {
     let nested_text = std::fs::read_to_string(&nested_path).unwrap();
     open_document(&mut lsp, &nested_path, &nested_text);
 
-    let save_label_position = position_of(&nested_text, "label = Guardar");
+    let save_label_position =
+        position_of_nth(&nested_text, "label = Guardar", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 5,
@@ -359,7 +362,12 @@ fn definition_rejects_files_outside_the_configured_workspace() {
     let mut lsp = initialized_lsp(&root, 6_006);
     let temp = tempdir().unwrap();
     let outside_path = temp.path().join("outside.ftl");
-    std::fs::write(&outside_path, "hello = Outside\n").unwrap();
+    std::fs::write(
+        &outside_path,
+        r#"hello = Outside
+"#,
+    )
+    .unwrap();
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -391,7 +399,7 @@ fn goto_definition_from_origin_file_returns_no_location() {
     let mut lsp = initialized_lsp(&root, 6_100);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "welcome-title");
+    let position = position_of_nth(&source_text, "welcome-title", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_101,
@@ -408,10 +416,16 @@ fn goto_definition_from_origin_file_returns_no_location() {
 #[test]
 fn goto_definition_returns_no_location_for_translation_key_missing_in_origin() {
     let workspace = temp_workspace(&[
-        ("locales/en/app.ftl", "welcome-title = Welcome\n"),
+        (
+            "locales/en/app.ftl",
+            r#"welcome-title = Welcome
+"#,
+        ),
         (
             "locales/es/app.ftl",
-            "welcome-title = Bienvenido\nlocal-only = Solo local\n",
+            r#"welcome-title = Bienvenido
+local-only = Solo local
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -420,7 +434,7 @@ fn goto_definition_returns_no_location_for_translation_key_missing_in_origin() {
     let mut lsp = initialized_lsp(workspace.path(), 6_102);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "local-only");
+    let position = position_of_nth(&source_text, "local-only", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_103,
@@ -437,15 +451,18 @@ fn goto_definition_returns_no_location_for_translation_key_missing_in_origin() {
 #[test]
 fn goto_definition_returns_no_location_when_origin_counterpart_file_is_missing()
 {
-    let workspace =
-        temp_workspace(&[("locales/es/only.ftl", "orphan-title = Huerfano\n")]);
+    let workspace = temp_workspace(&[(
+        "locales/es/only.ftl",
+        r#"orphan-title = Huerfano
+"#,
+    )]);
     let source_path = workspace.path().join("locales/es/only.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = initialized_lsp(workspace.path(), 6_104);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "orphan-title");
+    let position = position_of_nth(&source_text, "orphan-title", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_105,
@@ -465,11 +482,16 @@ fn goto_definition_returns_no_location_for_translation_attribute_missing_in_orig
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            "download-action =\n    .label = Download\n",
+            r#"download-action =
+    .label = Download
+"#,
         ),
         (
             "locales/es/app.ftl",
-            "download-action =\n    .label = Descargar\n    .tooltip = Descarga esta build\n",
+            r#"download-action =
+    .label = Descargar
+    .tooltip = Descarga esta build
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -478,7 +500,7 @@ fn goto_definition_returns_no_location_for_translation_attribute_missing_in_orig
     let mut lsp = initialized_lsp(workspace.path(), 6_130);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, ".tooltip =");
+    let position = position_of_nth(&source_text, ".tooltip =", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_131,
@@ -498,7 +520,12 @@ fn completion_rejects_files_outside_the_configured_workspace() {
     let mut lsp = initialized_lsp(&root, 8);
     let temp = tempdir().unwrap();
     let outside_path = temp.path().join("outside.ftl");
-    std::fs::write(&outside_path, "hello = Outside\n").unwrap();
+    std::fs::write(
+        &outside_path,
+        r#"hello = Outside
+"#,
+    )
+    .unwrap();
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -581,7 +608,8 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
 
     open_document(&mut lsp, &source_path, &source_text);
 
-    let welcome_title_position = position_of(&source_text, "welcome-title");
+    let welcome_title_position =
+        position_of_nth(&source_text, "welcome-title", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 11,
@@ -613,7 +641,7 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
         ])
     );
 
-    let brand_name_position = position_of(&source_text, "brand-name =");
+    let brand_name_position = position_of_nth(&source_text, "brand-name =", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 12,
@@ -645,7 +673,8 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
         ])
     );
 
-    let launch_label_position = position_of(&source_text, "label = Launch");
+    let launch_label_position =
+        position_of_nth(&source_text, "label = Launch", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 13,
@@ -682,7 +711,7 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
 
     open_document(&mut lsp, &nested_path, &nested_text);
 
-    let save_label_position = position_of(&nested_text, "label = Save");
+    let save_label_position = position_of_nth(&nested_text, "label = Save", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 14,
@@ -725,9 +754,21 @@ fn references_from_origin_resolve_to_translated_fluent_files() {
 #[test]
 fn references_from_origin_return_empty_list_when_no_translation_matches() {
     let workspace = temp_workspace(&[
-        ("locales/en/app.ftl", "orphan-title = Welcome\n"),
-        ("locales/es/app.ftl", "welcome-title = Bienvenido\n"),
-        ("locales/fr/app.ftl", "welcome-title = Bienvenue\n"),
+        (
+            "locales/en/app.ftl",
+            r#"orphan-title = Welcome
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"welcome-title = Bienvenido
+"#,
+        ),
+        (
+            "locales/fr/app.ftl",
+            r#"welcome-title = Bienvenue
+"#,
+        ),
     ]);
     let source_path = workspace.path().join("locales/en/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
@@ -735,7 +776,7 @@ fn references_from_origin_return_empty_list_when_no_translation_matches() {
     let mut lsp = initialized_lsp(workspace.path(), 6_106);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "orphan-title");
+    let position = position_of_nth(&source_text, "orphan-title", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_107,
@@ -756,11 +797,16 @@ fn references_from_origin_attribute_return_empty_list_when_no_translation_matche
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            "download-action =\n    .label = Download\n    .tooltip = Download this build\n",
+            r#"download-action =
+    .label = Download
+    .tooltip = Download this build
+"#,
         ),
         (
             "locales/es/app.ftl",
-            "download-action =\n    .label = Descargar\n",
+            r#"download-action =
+    .label = Descargar
+"#,
         ),
     ]);
     let origin_path = workspace.path().join("locales/en/app.ftl");
@@ -769,7 +815,7 @@ fn references_from_origin_attribute_return_empty_list_when_no_translation_matche
     let mut lsp = initialized_lsp(workspace.path(), 6_132);
     open_document(&mut lsp, &origin_path, &origin_text);
 
-    let position = position_of(&origin_text, ".tooltip =");
+    let position = position_of_nth(&origin_text, ".tooltip =", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_133,
@@ -793,7 +839,7 @@ fn references_from_translation_file_return_no_result() {
     let mut lsp = initialized_lsp(&root, 6_108);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "welcome-title");
+    let position = position_of_nth(&source_text, "welcome-title", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_109,
@@ -838,7 +884,12 @@ fn references_reject_files_outside_the_configured_workspace() {
     let mut lsp = initialized_lsp(&root, 6_122);
     let temp = tempdir().unwrap();
     let outside_path = temp.path().join("outside.ftl");
-    std::fs::write(&outside_path, "hello = Outside\n").unwrap();
+    std::fs::write(
+        &outside_path,
+        r#"hello = Outside
+"#,
+    )
+    .unwrap();
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -1122,19 +1173,21 @@ fn indexed_requests_reflect_live_origin_changes_without_restart() {
     let workspace = completion_workspace();
     let origin_path = workspace.path().join("locales/en/app.ftl");
     let translation_path = workspace.path().join("locales/es/app.ftl");
-    let translation_text = "hello = Hola\n\nfresh-key = Fresco\n";
-    let updated_origin = concat!(
-        "hello = Hello\n",
-        "\n",
-        "# Fresh origin docs\n",
-        "fresh-key = Fresh origin value\n",
-    );
+    let translation_text = r#"hello = Hola
+
+fresh-key = Fresco
+"#;
+    let updated_origin = r#"hello = Hello
+
+# Fresh origin docs
+fresh-key = Fresh origin value
+"#;
 
     let mut lsp = initialized_lsp(workspace.path(), 141);
     send_open_document(&mut lsp, &origin_path, updated_origin);
     send_open_document(&mut lsp, &translation_path, translation_text);
 
-    let fresh_key_position = position_of(translation_text, "fresh-key");
+    let fresh_key_position = position_of_nth(translation_text, "fresh-key", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 142,
@@ -1207,14 +1260,16 @@ fn indexed_requests_reflect_live_translation_changes_and_dirty_close_reverts() {
     let workspace = completion_workspace();
     let origin_path = workspace.path().join("locales/en/app.ftl");
     let translation_path = workspace.path().join("locales/es/app.ftl");
-    let disk_translation = "hello-world = Hola\n";
+    let disk_translation = r#"hello-world = Hola
+"#;
     std::fs::write(&translation_path, disk_translation).unwrap();
     let origin_text = std::fs::read_to_string(&origin_path).unwrap();
 
     let mut lsp = initialized_lsp(workspace.path(), 145);
     open_document(&mut lsp, &origin_path, &origin_text);
 
-    let download_action_position = position_of(&origin_text, "download-action");
+    let download_action_position =
+        position_of_nth(&origin_text, "download-action", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 146,
@@ -1229,7 +1284,10 @@ fn indexed_requests_reflect_live_translation_changes_and_dirty_close_reverts() {
     assert_eq!(references["result"], Value::Array(Vec::new()));
 
     send_open_document(&mut lsp, &translation_path, disk_translation);
-    let dirty_translation = "hello = Hola\n\ndownload-action = Descargar\n";
+    let dirty_translation = r#"hello = Hola
+
+download-action = Descargar
+"#;
     send_change_document(&mut lsp, &translation_path, 2, dirty_translation);
 
     lsp.send(&json!({
@@ -1279,7 +1337,7 @@ fn indexed_references_pick_up_disk_file_adds_and_deletes() {
 
     let mut lsp = initialized_lsp(workspace.path(), 149);
     open_document(&mut lsp, &origin_path, &origin_text);
-    let hello_world_position = position_of(&origin_text, "hello-world");
+    let hello_world_position = position_of_nth(&origin_text, "hello-world", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 150,
@@ -1294,7 +1352,12 @@ fn indexed_references_pick_up_disk_file_adds_and_deletes() {
     assert_eq!(references["result"], Value::Array(Vec::new()));
 
     std::fs::create_dir_all(new_translation.parent().unwrap()).unwrap();
-    std::fs::write(&new_translation, "hello-world = Bonjour\n").unwrap();
+    std::fs::write(
+        &new_translation,
+        r#"hello-world = Bonjour
+"#,
+    )
+    .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -1340,12 +1403,15 @@ fn local_only_file_warning_updates_when_origin_counterpart_appears() {
     std::fs::create_dir_all(workspace.path().join("locales/es")).unwrap();
     std::fs::write(
         workspace.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
     )
     .unwrap();
     let mut lsp = initialized_lsp(workspace.path(), 152);
     let local_path = workspace.path().join("locales/es/only.ftl");
-    let local_text = "local-only = Solo local\n";
+    let local_text = r#"local-only = Solo local
+"#;
     std::fs::write(&local_path, local_text).unwrap();
     send_open_document(&mut lsp, &local_path, local_text);
     send_save_document(&mut lsp, &local_path, Some(local_text));
@@ -1374,7 +1440,8 @@ fn local_only_file_warning_updates_when_origin_counterpart_appears() {
     std::fs::create_dir_all(workspace.path().join("locales/en")).unwrap();
     std::fs::write(
         workspace.path().join("locales/en/only.ftl"),
-        "local-only = Origin now exists\n",
+        r#"local-only = Origin now exists
+"#,
     )
     .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));
@@ -1407,14 +1474,24 @@ fn translation_only_keys_warn_and_clear_when_origin_adds_counterparts() {
     std::fs::create_dir_all(workspace.path().join("locales/es")).unwrap();
     std::fs::write(
         workspace.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
     )
     .unwrap();
 
     let origin_path = workspace.path().join("locales/en/app.ftl");
     let translation_path = workspace.path().join("locales/es/app.ftl");
-    let origin_text = "shared = Hello\nmenu =\n    .label = Save\n";
-    let translation_text = "shared = Hola\nextra = Solo local\nmenu =\n    .label = Guardar\n    .tooltip = Solo aqui\n";
+    let origin_text = r#"shared = Hello
+menu =
+    .label = Save
+"#;
+    let translation_text = r#"shared = Hola
+extra = Solo local
+menu =
+    .label = Guardar
+    .tooltip = Solo aqui
+"#;
     std::fs::write(&origin_path, origin_text).unwrap();
     std::fs::write(&translation_path, translation_text).unwrap();
 
@@ -1479,7 +1556,12 @@ fn translation_only_keys_warn_and_clear_when_origin_adds_counterparts() {
 
     std::fs::write(
         &origin_path,
-        "shared = Hello\nextra = Origin now exists\nmenu =\n    .label = Save\n    .tooltip = Origin tooltip\n",
+        r#"shared = Hello
+extra = Origin now exists
+menu =
+    .label = Save
+    .tooltip = Origin tooltip
+"#,
     )
     .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));
@@ -1513,11 +1595,19 @@ fn translation_only_warnings_are_absent_for_matching_translation_files() {
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            "shared = Hello\nmenu =\n    .label = Save\n    .tooltip = Origin tooltip\n",
+            r#"shared = Hello
+menu =
+    .label = Save
+    .tooltip = Origin tooltip
+"#,
         ),
         (
             "locales/es/app.ftl",
-            "shared = Hola\nmenu =\n    .label = Guardar\n    .tooltip = Tooltip local\n",
+            r#"shared = Hola
+menu =
+    .label = Guardar
+    .tooltip = Tooltip local
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -1543,7 +1633,9 @@ fn completion_from_translation_uses_origin_language_keys_and_attributes() {
 
     let mut lsp = initialized_lsp(workspace.path(), 14);
 
-    let top_level_text = "welcome-title = Bienvenido\n\ndown";
+    let top_level_text = r#"welcome-title = Bienvenido
+
+down"#;
     send_open_document(&mut lsp, &app_path, top_level_text);
     let top_level_position = position_after(top_level_text, "down");
     lsp.send(&json!({
@@ -1573,7 +1665,9 @@ fn completion_from_translation_uses_origin_language_keys_and_attributes() {
         vec!["download-action".to_string(), "download-count".to_string()]
     );
 
-    let attribute_text = "menu-save =\n    .l\n";
+    let attribute_text = r#"menu-save =
+    .l
+"#;
     send_open_document(&mut lsp, &menu_path, attribute_text);
     let attribute_position = position_after(attribute_text, ".l");
     lsp.send(&json!({
@@ -1600,7 +1694,9 @@ fn completion_from_translation_uses_origin_language_keys_and_attributes() {
     .collect::<Vec<_>>();
     assert_eq!(attribute_labels, vec![".label".to_string()]);
 
-    let bare_dot_text = "menu-save =\n    .\n";
+    let bare_dot_text = r#"menu-save =
+    .
+"#;
     send_open_document(&mut lsp, &menu_path, bare_dot_text);
     let bare_dot_position = position_after(bare_dot_text, ".");
     lsp.send(&json!({
@@ -1635,7 +1731,9 @@ fn completion_from_translation_uses_origin_language_keys_and_attributes() {
 fn completion_omits_already_present_top_level_keys() {
     let workspace = completion_workspace();
     let app_path = workspace.path().join("locales/es/app.ftl");
-    let source = "download-action = Descargar\n\ndown";
+    let source = r#"download-action = Descargar
+
+down"#;
 
     let mut lsp = initialized_lsp(workspace.path(), 17_100);
     send_open_document(&mut lsp, &app_path, source);
@@ -1670,7 +1768,10 @@ fn completion_omits_already_present_top_level_keys() {
 fn completion_omits_already_present_attributes() {
     let workspace = completion_workspace();
     let menu_path = workspace.path().join("locales/es/dialogs/menu.ftl");
-    let source = "menu-save =\n    .label = Guardar\n    .\n";
+    let source = r#"menu-save =
+    .label = Guardar
+    .
+"#;
 
     let mut lsp = initialized_lsp(workspace.path(), 17_102);
     send_open_document(&mut lsp, &menu_path, source);
@@ -1707,7 +1808,9 @@ fn completion_uses_nested_origin_counterpart_and_skips_origin_files() {
     let nested_translation =
         workspace.path().join("locales/es/dialogs/menu.ftl");
     let origin_app = workspace.path().join("locales/en/app.ftl");
-    let nested_text = "menu-save =\n    .t\n";
+    let nested_text = r#"menu-save =
+    .t
+"#;
 
     let mut lsp = initialized_lsp(workspace.path(), 18);
 
@@ -1737,8 +1840,11 @@ fn completion_uses_nested_origin_counterpart_and_skips_origin_files() {
     .collect::<Vec<_>>();
     assert_eq!(nested_labels, vec![".tooltip".to_string()]);
 
-    let origin_position =
-        position_after("download-action = Download\n", "download-action");
+    let origin_position = position_after(
+        r#"download-action = Download
+"#,
+        "download-action",
+    );
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 20,
@@ -1768,7 +1874,9 @@ fn completion_uses_nested_origin_counterpart_and_skips_origin_files() {
 fn completion_returns_empty_results_for_nested_origin_files() {
     let workspace = completion_workspace();
     let origin_menu = workspace.path().join("locales/en/dialogs/menu.ftl");
-    let source = "menu-save =\n    .t\n";
+    let source = r#"menu-save =
+    .t
+"#;
 
     let mut lsp = initialized_lsp(workspace.path(), 20_100);
     send_open_document(&mut lsp, &origin_menu, source);
@@ -1802,7 +1910,9 @@ fn completion_returns_empty_results_for_nested_origin_files() {
 fn completion_returns_empty_results_for_unmatched_prefixes() {
     let workspace = completion_workspace();
     let app_path = workspace.path().join("locales/es/app.ftl");
-    let source = "welcome-title = Bienvenido\n\nzzz";
+    let source = r#"welcome-title = Bienvenido
+
+zzz"#;
 
     let mut lsp = initialized_lsp(workspace.path(), 21);
     send_open_document(&mut lsp, &app_path, source);
@@ -1837,7 +1947,9 @@ fn completion_returns_empty_results_for_unmatched_prefixes() {
 fn completion_returns_empty_results_inside_comments() {
     let workspace = completion_workspace();
     let app_path = workspace.path().join("locales/es/app.ftl");
-    let source = "welcome-title = Bienvenido\n\n# down";
+    let source = r#"welcome-title = Bienvenido
+
+# down"#;
 
     let mut lsp = initialized_lsp(workspace.path(), 22_102);
     send_open_document(&mut lsp, &app_path, source);
@@ -1858,7 +1970,11 @@ fn completion_returns_empty_results_inside_comments() {
 
 #[test]
 fn completion_returns_empty_results_without_origin_counterpart_file() {
-    let workspace = temp_workspace(&[("locales/es/only.ftl", "fresh\n")]);
+    let workspace = temp_workspace(&[(
+        "locales/es/only.ftl",
+        r#"fresh
+"#,
+    )]);
     let source_path = workspace.path().join("locales/es/only.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
@@ -1899,7 +2015,9 @@ fn completion_items_include_origin_documentation_for_keys_and_attributes() {
 
     let mut lsp = initialized_lsp(workspace.path(), 23);
 
-    let commented_text = "welcome-title = Bienvenido\n\ncommented";
+    let commented_text = r#"welcome-title = Bienvenido
+
+commented"#;
     send_open_document(&mut lsp, &app_path, commented_text);
     let key_position = position_after(commented_text, "commented");
     lsp.send(&json!({
@@ -1938,10 +2056,21 @@ fn completion_items_include_origin_documentation_for_keys_and_attributes() {
         .expect("expected markdown completion docs");
     assert_eq!(
         key_docs,
-        "```ftl\n# Completion doc coverage\n# Keep this note in completion hover\n```\n\n---\n\n```ftl\ncommented-preview = Preview text for completion docs.\n```"
+        r#"```ftl
+# Completion doc coverage
+# Keep this note in completion hover
+```
+
+---
+
+```ftl
+commented-preview = Preview text for completion docs.
+```"#
     );
 
-    let attribute_text = "menu-save =\n    .t\n";
+    let attribute_text = r#"menu-save =
+    .t
+"#;
     send_open_document(&mut lsp, &menu_path, attribute_text);
     let attribute_position = position_after(attribute_text, ".t");
     lsp.send(&json!({
@@ -1978,7 +2107,16 @@ fn completion_items_include_origin_documentation_for_keys_and_attributes() {
         .expect("expected markdown attribute docs");
     assert_eq!(
         attribute_docs,
-        "```ftl\n# Menu completion documentation\n# Keep this entry visible in completion hover\n```\n\n---\n\n```ftl\n.tooltip = Save this file\n```"
+        r#"```ftl
+# Menu completion documentation
+# Keep this entry visible in completion hover
+```
+
+---
+
+```ftl
+.tooltip = Save this file
+```"#
     );
 }
 
@@ -1988,9 +2126,18 @@ fn code_action_file_wide_copy_uses_spec_title_for_whole_missing_string_example()
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            "menu-save =\n    .label = Save\n\nsync-status = Sync ready\n",
+            r#"menu-save =
+    .label = Save
+
+sync-status = Sync ready
+"#,
         ),
-        ("locales/es/app.ftl", "menu-save =\n    .label = Guardar\n"),
+        (
+            "locales/es/app.ftl",
+            r#"menu-save =
+    .label = Guardar
+"#,
+        ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
@@ -1998,7 +2145,7 @@ fn code_action_file_wide_copy_uses_spec_title_for_whole_missing_string_example()
     let mut lsp = initialized_lsp(workspace.path(), 30);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "menu-save =");
+    let position = position_of_nth(&source_text, "menu-save =", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 31,
@@ -2036,21 +2183,23 @@ fn code_action_file_wide_copy_uses_spec_title_for_whole_missing_string_example()
         .expect("missing code action: Copy missing strings in file");
     assert_eq!(action["kind"], Value::String("quickfix".to_string()));
 
-    let updated = apply_code_action_edit(
-        &source_text,
-        action,
-        &format!("file://{}", source_path.display()),
-    );
-    assert_fluent_parses(&updated);
+    let updated = Editor::new(&source_text)
+        .apply_code_action(action, &format!("file://{}", source_path.display()))
+        .source;
+    {
+        let source: &str = &updated;
+        if let Err((_, errors)) = parser::parse(source) {
+            panic!("failed to parse Fluent source with {errors:?}\n{source}");
+        }
+    };
     assert_eq!(
         updated,
-        concat!(
-            "menu-save =\n",
-            "    .label = Guardar\n",
-            "\n",
-            "# [LSP-COPY]\n",
-            "sync-status = Sync ready\n",
-        )
+        r#"menu-save =
+    .label = Guardar
+
+# [LSP-COPY]
+sync-status = Sync ready
+"#
     );
 }
 
@@ -2060,9 +2209,17 @@ fn code_action_file_wide_copy_uses_spec_title_for_whole_missing_message_with_att
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            "download-action =\n    .label = Install build\n    .accesskey = S\n    .tooltip = Download this build\n",
+            r#"download-action =
+    .label = Install build
+    .accesskey = S
+    .tooltip = Download this build
+"#,
         ),
-        ("locales/es/app.ftl", "hello = Hola Mundo\n"),
+        (
+            "locales/es/app.ftl",
+            r#"hello = Hola Mundo
+"#,
+        ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
@@ -2070,7 +2227,7 @@ fn code_action_file_wide_copy_uses_spec_title_for_whole_missing_message_with_att
     let mut lsp = initialized_lsp(workspace.path(), 40);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "hello = Hola Mundo");
+    let position = position_of_nth(&source_text, "hello = Hola Mundo", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 41,
@@ -2108,25 +2265,27 @@ fn code_action_file_wide_copy_uses_spec_title_for_whole_missing_message_with_att
         .expect("missing code action: Copy missing strings in file");
     assert_eq!(action["kind"], Value::String("quickfix".to_string()));
 
-    let updated = apply_code_action_edit(
-        &source_text,
-        action,
-        &format!("file://{}", source_path.display()),
-    );
-    assert_fluent_parses(&updated);
+    let updated = Editor::new(&source_text)
+        .apply_code_action(action, &format!("file://{}", source_path.display()))
+        .source;
+    {
+        let source: &str = &updated;
+        if let Err((_, errors)) = parser::parse(source) {
+            panic!("failed to parse Fluent source with {errors:?}\n{source}");
+        }
+    };
     assert_eq!(
         updated,
-        concat!(
-            "hello = Hola Mundo\n",
-            "\n",
-            "# [LSP-COPY .label]\n",
-            "# [LSP-COPY .accesskey]\n",
-            "# [LSP-COPY .tooltip]\n",
-            "download-action =\n",
-            "    .label = Install build\n",
-            "    .accesskey = S\n",
-            "    .tooltip = Download this build\n",
-        )
+        r#"hello = Hola Mundo
+
+# [LSP-COPY .label]
+# [LSP-COPY .accesskey]
+# [LSP-COPY .tooltip]
+download-action =
+    .label = Install build
+    .accesskey = S
+    .tooltip = Download this build
+"#
     );
     assert_eq!(updated.lines().next(), Some("hello = Hola Mundo"));
 }
@@ -2135,20 +2294,19 @@ fn code_action_file_wide_copy_uses_spec_title_for_whole_missing_message_with_att
 fn whole_file_missing_entry_actions_are_absent_when_translation_is_complete() {
     let workspace = missing_entry_workspace();
     let source_path = workspace.path().join("locales/es/app.ftl");
-    let source_text = concat!(
-        "hello = Hola Mundo\n",
-        "menu-save =\n",
-        "    .label = Guardar\n",
-        "    .tooltip = Guarda este archivo\n",
-        "\n",
-        "sync-status = Sincronizacion lista\n",
-    );
+    let source_text = r#"hello = Hola Mundo
+menu-save =
+    .label = Guardar
+    .tooltip = Guarda este archivo
+
+sync-status = Sincronizacion lista
+"#;
     std::fs::write(&source_path, source_text).unwrap();
 
     let mut lsp = initialized_lsp(workspace.path(), 50);
     open_document(&mut lsp, &source_path, source_text);
 
-    let position = position_of(source_text, "hello = Hola Mundo");
+    let position = position_of_nth(source_text, "hello = Hola Mundo", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 51,
@@ -2182,15 +2340,18 @@ fn whole_file_missing_entry_actions_are_absent_when_translation_is_complete() {
 #[test]
 fn whole_file_missing_entry_actions_are_absent_without_origin_counterpart_file()
 {
-    let workspace =
-        temp_workspace(&[("locales/es/only.ftl", "hello = Hola Mundo\n")]);
+    let workspace = temp_workspace(&[(
+        "locales/es/only.ftl",
+        r#"hello = Hola Mundo
+"#,
+    )]);
     let source_path = workspace.path().join("locales/es/only.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
     let mut lsp = initialized_lsp(workspace.path(), 5_200);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "hello = Hola Mundo");
+    let position = position_of_nth(&source_text, "hello = Hola Mundo", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 5_201,
@@ -2226,13 +2387,12 @@ fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
     let workspace = copy_marker_workspace();
     let source_path = workspace.path().join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
-    let cleaned = concat!(
-        "hello = Hola Mundo\n",
-        "\n",
-        "download-action =\n",
-        "    .label = Descargar\n",
-        "    .tooltip = Download this build\n",
-    );
+    let cleaned = r#"hello = Hola Mundo
+
+download-action =
+    .label = Descargar
+    .tooltip = Download this build
+"#;
 
     let mut lsp = initialized_lsp(workspace.path(), 60);
     open_document(&mut lsp, &source_path, &source_text);
@@ -2253,7 +2413,12 @@ fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
         })
         .collect::<Vec<_>>();
     assert_eq!(marker_diagnostics.len(), 2);
-    assert_fluent_parses(&source_text);
+    {
+        let source: &str = &source_text;
+        if let Err((_, errors)) = parser::parse(source) {
+            panic!("failed to parse Fluent source with {errors:?}\n{source}");
+        }
+    };
     assert_eq!(
         marker_diagnostics[0]["message"],
         Value::String(
@@ -2282,7 +2447,12 @@ fn lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal() {
     let cleared =
         recv_notification(&mut lsp, "textDocument/publishDiagnostics");
     assert_eq!(cleared["params"]["diagnostics"], Value::Array(Vec::new()));
-    assert_fluent_parses(cleaned);
+    {
+        let source: &str = cleaned;
+        if let Err((_, errors)) = parser::parse(source) {
+            panic!("failed to parse Fluent source with {errors:?}\n{source}");
+        }
+    };
     let resource = FluentResource::try_new(cleaned.to_string()).unwrap_or_else(
         |(_, errors)| {
             panic!("failed to build FluentResource with {errors:?}\n{cleaned}")
@@ -2324,7 +2494,8 @@ fn hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments() {
     let mut lsp = initialized_lsp(workspace.path(), 60_100);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, ".tooltip = Download this build");
+    let position =
+        position_of_nth(&source_text, ".tooltip = Download this build", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 60_101,
@@ -2352,7 +2523,7 @@ fn hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments() {
         ]
     );
 
-    let position = position_of(&source_text, "Download this build");
+    let position = position_of_nth(&source_text, "Download this build", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 60_102,
@@ -2393,7 +2564,7 @@ fn code_action_copies_single_stub_message_without_touching_other_entries() {
     let mut lsp = initialized_lsp(workspace.path(), 70);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "hello = { \"\" }");
+    let position = position_of_nth(&source_text, r#"hello = { "" }"#, 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 71,
@@ -2436,23 +2607,25 @@ fn code_action_copies_single_stub_message_without_touching_other_entries() {
                 == Value::String("Copy missing string `hello`".to_string())
         })
         .expect("missing code action: Copy missing string `hello`");
-    let updated = apply_code_action_edit(
-        &source_text,
-        action,
-        &format!("file://{}", source_path.display()),
-    );
+    let updated = Editor::new(&source_text)
+        .apply_code_action(action, &format!("file://{}", source_path.display()))
+        .source;
 
-    assert_fluent_parses(&updated);
+    {
+        let source: &str = &updated;
+        if let Err((_, errors)) = parser::parse(source) {
+            panic!("failed to parse Fluent source with {errors:?}\n{source}");
+        }
+    };
     assert_eq!(
         updated,
-        concat!(
-            "# [LSP-COPY]\n",
-            "hello = Hello World\n",
-            "download-action =\n",
-            "    .label = Descargar\n",
-            "\n",
-            "sync-status = { \"\" }\n",
-        )
+        r#"# [LSP-COPY]
+hello = Hello World
+download-action =
+    .label = Descargar
+
+sync-status = { "" }
+"#
     );
     let updated_resource = FluentResource::try_new(updated.clone())
         .unwrap_or_else(|(_, errors)| {
@@ -2526,7 +2699,7 @@ fn code_action_copies_missing_attributes_for_selected_message_only() {
     let mut lsp = initialized_lsp(workspace.path(), 80);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "download-action =");
+    let position = position_of_nth(&source_text, "download-action =", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 81,
@@ -2568,24 +2741,26 @@ fn code_action_copies_missing_attributes_for_selected_message_only() {
                 == Value::String("Copy missing attribute `download-action.tooltip`".to_string())
         })
         .expect("missing code action: Copy missing attribute `download-action.tooltip`");
-    let updated = apply_code_action_edit(
-        &source_text,
-        action,
-        &format!("file://{}", source_path.display()),
-    );
+    let updated = Editor::new(&source_text)
+        .apply_code_action(action, &format!("file://{}", source_path.display()))
+        .source;
 
-    assert_fluent_parses(&updated);
+    {
+        let source: &str = &updated;
+        if let Err((_, errors)) = parser::parse(source) {
+            panic!("failed to parse Fluent source with {errors:?}\n{source}");
+        }
+    };
     assert_eq!(
         updated,
-        concat!(
-            "hello = { \"\" }\n",
-            "# [LSP-COPY .tooltip]\n",
-            "download-action =\n",
-            "    .label = Descargar\n",
-            "    .tooltip = Download this build\n",
-            "\n",
-            "sync-status = { \"\" }\n",
-        )
+        r#"hello = { "" }
+# [LSP-COPY .tooltip]
+download-action =
+    .label = Descargar
+    .tooltip = Download this build
+
+sync-status = { "" }
+"#
     );
     let updated_resource = FluentResource::try_new(updated.clone())
         .unwrap_or_else(|(_, errors)| {
@@ -2656,20 +2831,19 @@ fn code_action_copies_missing_attributes_for_selected_message_only() {
 fn single_message_copy_actions_are_absent_for_complete_entries() {
     let workspace = single_key_copy_workspace();
     let source_path = workspace.path().join("locales/es/app.ftl");
-    let source_text = concat!(
-        "hello = Hola Mundo\n",
-        "download-action =\n",
-        "    .label = Descargar\n",
-        "    .tooltip = Descarga esta build\n",
-        "\n",
-        "sync-status = Sincronizacion lista\n",
-    );
+    let source_text = r#"hello = Hola Mundo
+download-action =
+    .label = Descargar
+    .tooltip = Descarga esta build
+
+sync-status = Sincronizacion lista
+"#;
     std::fs::write(&source_path, source_text).unwrap();
 
     let mut lsp = initialized_lsp(workspace.path(), 90);
     open_document(&mut lsp, &source_path, source_text);
 
-    let position = position_of(source_text, "hello = Hola Mundo");
+    let position = position_of_nth(source_text, "hello = Hola Mundo", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 91,
@@ -2694,7 +2868,7 @@ fn single_message_copy_actions_are_absent_for_complete_entries() {
             != Value::String("Copy missing string `hello`".to_string())
     }));
 
-    let position = position_of(source_text, "download-action =");
+    let position = position_of_nth(source_text, "download-action =", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 92,
@@ -2726,10 +2900,16 @@ fn single_message_copy_actions_are_absent_for_complete_entries() {
 fn single_message_copy_action_is_absent_when_selected_key_has_no_origin_counterpart()
  {
     let workspace = temp_workspace(&[
-        ("locales/en/app.ftl", "shared = Hello\n"),
+        (
+            "locales/en/app.ftl",
+            r#"shared = Hello
+"#,
+        ),
         (
             "locales/es/app.ftl",
-            "shared = Hola\nlocal-only = { \"\" }\n",
+            r#"shared = Hola
+local-only = { "" }
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -2738,7 +2918,7 @@ fn single_message_copy_action_is_absent_when_selected_key_has_no_origin_counterp
     let mut lsp = initialized_lsp(workspace.path(), 5_202);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "local-only = { \"\" }");
+    let position = position_of_nth(&source_text, "local-only = { \"\" }", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 5_203,
@@ -2768,10 +2948,17 @@ fn single_message_copy_action_is_absent_when_selected_key_has_no_origin_counterp
 fn missing_attribute_copy_action_is_absent_when_selected_message_has_no_origin_counterpart()
  {
     let workspace = temp_workspace(&[
-        ("locales/en/app.ftl", "shared = Hello\n"),
+        (
+            "locales/en/app.ftl",
+            r#"shared = Hello
+"#,
+        ),
         (
             "locales/es/app.ftl",
-            "shared = Hola\norphan =\n    .label = Huerfano\n",
+            r#"shared = Hola
+orphan =
+    .label = Huerfano
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -2780,7 +2967,7 @@ fn missing_attribute_copy_action_is_absent_when_selected_message_has_no_origin_c
     let mut lsp = initialized_lsp(workspace.path(), 5_204);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "orphan =");
+    let position = position_of_nth(&source_text, "orphan =", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 5_205,
@@ -2817,7 +3004,7 @@ fn origin_files_do_not_offer_translation_only_missing_entry_quick_fixes() {
     let mut lsp = initialized_lsp(workspace.path(), 9_300);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "hello = Hello World");
+    let position = position_of_nth(&source_text, "hello = Hello World", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 9_301,
@@ -2888,7 +3075,7 @@ fn hover_from_translation_shows_local_formatted_messages() {
 
     open_document(&mut lsp, &source_path, &source_text);
 
-    let key_position = position_of(&source_text, "commented-preview");
+    let key_position = position_of_nth(&source_text, "commented-preview", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 21,
@@ -2905,7 +3092,20 @@ fn hover_from_translation_shows_local_formatted_messages() {
     );
     assert_eq!(
         key_hover["result"]["contents"]["value"],
-        Value::String("```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```\n\n---\n\n```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```".to_string())
+        Value::String(
+            r#"```ftl
+# Comment-only hover coverage
+# Keep this translator guidance visible on key hover
+```
+
+---
+
+```ftl
+# Cobertura de hover con comentarios
+# Mantener visible esta nota para traduccion en el hover de clave
+```"#
+                .to_string()
+        )
     );
     assert_eq!(
         key_hover["result"]["range"]["start"]["line"],
@@ -2917,7 +3117,7 @@ fn hover_from_translation_shows_local_formatted_messages() {
     );
 
     let body_position =
-        position_of(&source_text, "Abre la build mas reciente de");
+        position_of_nth(&source_text, "Abre la build mas reciente de", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 22,
@@ -2934,7 +3134,15 @@ fn hover_from_translation_shows_local_formatted_messages() {
     assert_eq!(
         body_value,
         format!(
-            "```ftl\n{}\n```\n\n---\n\n```ftl\n{}\n```",
+            r#"```ftl
+{}
+```
+
+---
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "welcome-body",
@@ -2971,8 +3179,8 @@ fn hover_from_translation_shows_local_formatted_messages() {
         ]
     );
 
-    let empty_key_position = position_of(&source_text, "empty-preview");
-    let empty_position = position_of(&source_text, "\"\"");
+    let empty_key_position = position_of_nth(&source_text, "empty-preview", 1);
+    let empty_position = position_of_nth(&source_text, r#""""#, 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 221,
@@ -2989,7 +3197,15 @@ fn hover_from_translation_shows_local_formatted_messages() {
     assert_eq!(
         empty_hover_value,
         format!(
-            "```ftl\n{}\n```\n\n---\n\n```ftl\n{}\n```",
+            r#"```ftl
+{}
+```
+
+---
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "empty-preview",
@@ -3014,7 +3230,7 @@ fn hover_from_translation_shows_local_formatted_messages() {
         ]
     );
 
-    let selector_position = position_of(&source_text, "[female] ella");
+    let selector_position = position_of_nth(&source_text, "[female] ella", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 23,
@@ -3031,7 +3247,19 @@ fn hover_from_translation_shows_local_formatted_messages() {
     assert_eq!(
         selector_hover_value,
         format!(
-            "`$gender=female`, `$count=*`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\n{}\n```",
+            r#"`$gender=female`, `$count=*`
+
+```ftl
+{}
+```
+
+---
+
+`$gender=female`, `$count=*`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "install-hint",
@@ -3068,9 +3296,10 @@ fn hover_from_translation_shows_local_formatted_messages() {
         ]
     );
 
-    let attribute_position = position_of(
+    let attribute_position = position_of_nth(
         &source_text,
         "Instala la build recomendada para la cuenta de",
+        1,
     );
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -3088,7 +3317,19 @@ fn hover_from_translation_shows_local_formatted_messages() {
     assert_eq!(
         attribute_hover_value,
         format!(
-            "`$gender=*`, `$count=*`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=*`, `$count=*`\n\n```ftl\n{}\n```",
+            r#"`$gender=*`, `$count=*`
+
+```ftl
+{}
+```
+
+---
+
+`$gender=*`, `$count=*`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "download-action.tooltip",
@@ -3126,7 +3367,7 @@ fn hover_from_translation_shows_local_formatted_messages() {
     );
 
     let post_selector_position =
-        position_of(&source_text, "en { $count } { $count ->");
+        position_of_nth(&source_text, "en { $count } { $count ->", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 25,
@@ -3144,7 +3385,19 @@ fn hover_from_translation_shows_local_formatted_messages() {
     assert_eq!(
         post_selector_hover_value,
         format!(
-            "`$gender=other`, `$count=*`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=other`, `$count=*`\n\n```ftl\n{}\n```",
+            r#"`$gender=other`, `$count=*`
+
+```ftl
+{}
+```
+
+---
+
+`$gender=other`, `$count=*`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "install-hint",
@@ -3182,7 +3435,7 @@ fn hover_from_translation_shows_local_formatted_messages() {
     );
 
     let second_selector_position =
-        position_of(&source_text, "[one] dispositivo");
+        position_of_nth(&source_text, "[one] dispositivo", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 26,
@@ -3203,7 +3456,19 @@ fn hover_from_translation_shows_local_formatted_messages() {
     assert_eq!(
         second_selector_hover_value,
         format!(
-            "`$gender=other`, `$count=one`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=other`, `$count=one`\n\n```ftl\n{}\n```",
+            r#"`$gender=other`, `$count=one`
+
+```ftl
+{}
+```
+
+---
+
+`$gender=other`, `$count=one`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "install-hint",
@@ -3280,7 +3545,8 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
 
     open_document(&mut lsp, &source_path, &source_text);
 
-    let female_position = position_of(&source_text, "[female] ella misma");
+    let female_position =
+        position_of_nth(&source_text, "[female] ella misma", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 28,
@@ -3294,7 +3560,19 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
     assert_eq!(
         female_hover["result"]["contents"]["value"],
         Value::String(format!(
-            "`$platform=*`, `$count=*`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=female`, `$count=*`\n\n```ftl\n{}\n```",
+            r#"`$platform=*`, `$count=*`
+
+```ftl
+{}
+```
+
+---
+
+`$gender=female`, `$count=*`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "mismatch-rollout",
@@ -3316,7 +3594,7 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
         Value::from(0)
     );
 
-    let zero_position = position_of(&source_text, "[0] ningun paquete");
+    let zero_position = position_of_nth(&source_text, "[0] ningun paquete", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 29,
@@ -3330,7 +3608,19 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
     assert_eq!(
         zero_hover["result"]["contents"]["value"],
         Value::String(format!(
-            "`$platform=*`, `$count=0`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=other`, `$count=0`\n\n```ftl\n{}\n```",
+            r#"`$platform=*`, `$count=0`
+
+```ftl
+{}
+```
+
+---
+
+`$gender=other`, `$count=0`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "mismatch-rollout",
@@ -3352,7 +3642,7 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
         Value::from(0)
     );
 
-    let one_position = position_of(&source_text, "[1] un paquete");
+    let one_position = position_of_nth(&source_text, "[1] un paquete", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 30,
@@ -3366,7 +3656,19 @@ fn hover_from_translation_matches_available_selector_variables_across_source_and
     assert_eq!(
         one_hover["result"]["contents"]["value"],
         Value::String(format!(
-            "`$platform=*`, `$count=1`\n\n```ftl\n{}\n```\n\n---\n\n`$gender=other`, `$count=1`\n\n```ftl\n{}\n```",
+            r#"`$platform=*`, `$count=1`
+
+```ftl
+{}
+```
+
+---
+
+`$gender=other`, `$count=1`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "mismatch-rollout",
@@ -3428,7 +3730,7 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
     open_document(&mut lsp, &source_path, &source_text);
 
     let zero_position =
-        position_of(&source_text, "[zero] neviena pakotne nav gatava");
+        position_of_nth(&source_text, "[zero] neviena pakotne nav gatava", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 32,
@@ -3442,7 +3744,19 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
     assert_eq!(
         zero_hover["result"]["contents"]["value"],
         Value::String(format!(
-            "`$count=zero`\n\n```ftl\n{}\n```\n\n---\n\n`$count=zero`\n\n```ftl\n{}\n```",
+            r#"`$count=zero`
+
+```ftl
+{}
+```
+
+---
+
+`$count=zero`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "zero-rollout",
@@ -3465,7 +3779,7 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
     );
 
     let one_position =
-        position_of(&source_text, "[one] viena pakotne ir gatava");
+        position_of_nth(&source_text, "[one] viena pakotne ir gatava", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 33,
@@ -3479,7 +3793,19 @@ fn hover_from_latvian_translation_preserves_zero_category_selectors() {
     assert_eq!(
         one_hover["result"]["contents"]["value"],
         Value::String(format!(
-            "`$count=one`\n\n```ftl\n{}\n```\n\n---\n\n`$count=one`\n\n```ftl\n{}\n```",
+            r#"`$count=one`
+
+```ftl
+{}
+```
+
+---
+
+`$count=one`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "zero-rollout",
@@ -3534,7 +3860,7 @@ fn hover_from_origin_file_shows_formatted_attribute_text() {
 
     open_document(&mut lsp, &source_path, &source_text);
 
-    let key_position = position_of(&source_text, "label = Save");
+    let key_position = position_of_nth(&source_text, "label = Save", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 31,
@@ -3550,7 +3876,11 @@ fn hover_from_origin_file_shows_formatted_attribute_text() {
         .expect("expected hover markdown");
     assert_eq!(
         key_hover_value,
-        "```ftl\n### Shared menu copy\n## File menu\n# Primary action\n```"
+        r#"```ftl
+### Shared menu copy
+## File menu
+# Primary action
+```"#
     );
     assert_eq!(
         key_hover["result"]["range"]["start"]["line"],
@@ -3563,12 +3893,18 @@ fn hover_from_origin_file_shows_formatted_attribute_text() {
     assert_eq!(
         extract_ftl_blocks(key_hover_value),
         vec![
-            "### Shared menu copy\n## File menu\n# Primary action".to_string()
+            r#"### Shared menu copy
+## File menu
+# Primary action"#
+                .to_string()
         ]
     );
 
-    let body_position =
-        position_of(&source_text, "Save changes before closing the window");
+    let body_position = position_of_nth(
+        &source_text,
+        "Save changes before closing the window",
+        1,
+    );
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 32,
@@ -3601,7 +3937,7 @@ fn hover_from_origin_file_shows_one_body_preview_block_for_top_level_message() {
     open_document(&mut lsp, &source_path, &source_text);
 
     let position =
-        position_of(&source_text, "Preview text for hover comments.");
+        position_of_nth(&source_text, "Preview text for hover comments.", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_125,
@@ -3648,7 +3984,12 @@ fn hover_rejects_files_outside_the_configured_workspace() {
     let mut lsp = initialized_lsp(&root, 6_128);
     let temp = tempdir().unwrap();
     let outside_path = temp.path().join("outside.ftl");
-    std::fs::write(&outside_path, "hello = Outside\n").unwrap();
+    std::fs::write(
+        &outside_path,
+        r#"hello = Outside
+"#,
+    )
+    .unwrap();
 
     lsp.send(&json!({
         "jsonrpc": "2.0",
@@ -3678,40 +4019,47 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
         (
             "locales/en/app.ftl",
             "commented-preview",
-            &[
-                "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
-            ][..],
+            &[r#"# Comment-only hover coverage
+# Keep this translator guidance visible on key hover"#][..],
         ),
         (
             "locales/es/app.ftl",
             "commented-preview",
             &[
-                "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
-                "# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave",
+                r#"# Comment-only hover coverage
+# Keep this translator guidance visible on key hover"#,
+                r#"# Cobertura de hover con comentarios
+# Mantener visible esta nota para traduccion en el hover de clave"#,
             ][..],
         ),
         (
             "locales/fr/app.ftl",
             "commented-preview",
             &[
-                "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
-                "# Couverture hover pour les commentaires\n# Garder cette note visible sur le hover de cle",
+                r#"# Comment-only hover coverage
+# Keep this translator guidance visible on key hover"#,
+                r#"# Couverture hover pour les commentaires
+# Garder cette note visible sur le hover de cle"#,
             ][..],
         ),
         (
             "locales/lv/app.ftl",
             "commented-preview",
             &[
-                "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
-                "# Hover komentaru parklajums\n# Saglabat so piezimi redzamu atslegas hover skata",
+                r#"# Comment-only hover coverage
+# Keep this translator guidance visible on key hover"#,
+                r#"# Hover komentaru parklajums
+# Saglabat so piezimi redzamu atslegas hover skata"#,
             ][..],
         ),
         (
             "locales/uk/app.ftl",
             "commented-preview",
             &[
-                "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover",
-                "# Перевірка hover-коментарів\n# Тримайте цю примітку видимою у hover для ключа",
+                r#"# Comment-only hover coverage
+# Keep this translator guidance visible on key hover"#,
+                r#"# Перевірка hover-коментарів
+# Тримайте цю примітку видимою у hover для ключа"#,
             ][..],
         ),
     ];
@@ -3719,24 +4067,27 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
         (
             "locales/en/dialogs/menu.ftl",
             "commented-menu =",
-            &[
-                "# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover",
-            ][..],
+            &[r#"# Attribute hover comment coverage
+# Keep this menu note visible on attribute key hover"#][..],
         ),
         (
             "locales/es/dialogs/menu.ftl",
             "commented-menu =",
             &[
-                "# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover",
-                "# Cobertura de comentarios para hover de atributo\n# Mantener visible esta nota en el hover de la clave del atributo",
+                r#"# Attribute hover comment coverage
+# Keep this menu note visible on attribute key hover"#,
+                r#"# Cobertura de comentarios para hover de atributo
+# Mantener visible esta nota en el hover de la clave del atributo"#,
             ][..],
         ),
         (
             "locales/fr/dialogs/menu.ftl",
             "commented-menu =",
             &[
-                "# Attribute hover comment coverage\n# Keep this menu note visible on attribute key hover",
-                "# Couverture de commentaire pour hover d attribut\n# Garder cette note visible sur le hover de la cle d attribut",
+                r#"# Attribute hover comment coverage
+# Keep this menu note visible on attribute key hover"#,
+                r#"# Couverture de commentaire pour hover d attribut
+# Garder cette note visible sur le hover de la cle d attribut"#,
             ][..],
         ),
     ];
@@ -3751,7 +4102,7 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
         let source = std::fs::read_to_string(&path).unwrap();
         open_document(&mut lsp, &path, &source);
         let request_id = 35 + i64::try_from(index).unwrap();
-        let position = position_of(&source, needle);
+        let position = position_of_nth(&source, needle, 1);
         lsp.send(&json!({
             "jsonrpc": "2.0",
             "id": request_id,
@@ -3769,9 +4120,19 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
             hover_value,
             expected_blocks
                 .iter()
-                .map(|block| format!("```ftl\n{block}\n```"))
+                .map(|block| format!(
+                    r#"```ftl
+{block}
+```"#
+                ))
                 .collect::<Vec<_>>()
-                .join("\n\n---\n\n")
+                .join(
+                    r#"
+
+---
+
+"#,
+                )
         );
         assert_eq!(
             hover["result"]["range"]["start"]["line"],
@@ -3797,7 +4158,7 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
         let source = std::fs::read_to_string(&path).unwrap();
         open_document(&mut lsp, &path, &source);
         let request_id = 45 + i64::try_from(index).unwrap();
-        let position = position_of(&source, needle);
+        let position = position_of_nth(&source, needle, 1);
         lsp.send(&json!({
             "jsonrpc": "2.0",
             "id": request_id,
@@ -3815,9 +4176,19 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
             hover_value,
             expected_blocks
                 .iter()
-                .map(|block| format!("```ftl\n{block}\n```"))
+                .map(|block| format!(
+                    r#"```ftl
+{block}
+```"#
+                ))
                 .collect::<Vec<_>>()
-                .join("\n\n---\n\n")
+                .join(
+                    r#"
+
+---
+
+"#,
+                )
         );
         assert_eq!(
             hover["result"]["range"]["start"]["line"],
@@ -3842,11 +4213,15 @@ fn hover_key_with_origin_comments_only_shows_one_origin_comment_block() {
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            "# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\ncommented-preview = Preview text for hover comments.\n",
+            r#"# Comment-only hover coverage
+# Keep this translator guidance visible on key hover
+commented-preview = Preview text for hover comments.
+"#,
         ),
         (
             "locales/es/app.ftl",
-            "commented-preview = Texto de vista previa para comentarios de hover.\n",
+            r#"commented-preview = Texto de vista previa para comentarios de hover.
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -3855,7 +4230,7 @@ fn hover_key_with_origin_comments_only_shows_one_origin_comment_block() {
     let mut lsp = initialized_lsp(workspace.path(), 6_110);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let key_position = position_of(&source_text, "commented-preview");
+    let key_position = position_of_nth(&source_text, "commented-preview", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_111,
@@ -3869,7 +4244,10 @@ fn hover_key_with_origin_comments_only_shows_one_origin_comment_block() {
     assert_eq!(
         hover["result"]["contents"]["value"],
         Value::String(
-            "```ftl\n# Comment-only hover coverage\n# Keep this translator guidance visible on key hover\n```"
+            r#"```ftl
+# Comment-only hover coverage
+# Keep this translator guidance visible on key hover
+```"#
                 .to_string()
         )
     );
@@ -3888,11 +4266,15 @@ fn hover_key_with_local_comments_only_shows_one_local_comment_block() {
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            "local-note = Preview text for hover comments.\n",
+            r#"local-note = Preview text for hover comments.
+"#,
         ),
         (
             "locales/es/app.ftl",
-            "# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\nlocal-note = Texto de vista previa para comentarios de hover.\n",
+            r#"# Cobertura de hover con comentarios
+# Mantener visible esta nota para traduccion en el hover de clave
+local-note = Texto de vista previa para comentarios de hover.
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -3901,7 +4283,7 @@ fn hover_key_with_local_comments_only_shows_one_local_comment_block() {
     let mut lsp = initialized_lsp(workspace.path(), 6_112);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let key_position = position_of(&source_text, "local-note");
+    let key_position = position_of_nth(&source_text, "local-note", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_113,
@@ -3915,7 +4297,10 @@ fn hover_key_with_local_comments_only_shows_one_local_comment_block() {
     assert_eq!(
         hover["result"]["contents"]["value"],
         Value::String(
-            "```ftl\n# Cobertura de hover con comentarios\n# Mantener visible esta nota para traduccion en el hover de clave\n```"
+            r#"```ftl
+# Cobertura de hover con comentarios
+# Mantener visible esta nota para traduccion en el hover de clave
+```"#
                 .to_string()
         )
     );
@@ -3934,11 +4319,13 @@ fn hover_key_without_comments_returns_no_hover() {
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            "plain-note = Preview text for hover comments.\n",
+            r#"plain-note = Preview text for hover comments.
+"#,
         ),
         (
             "locales/es/app.ftl",
-            "plain-note = Texto de vista previa para comentarios de hover.\n",
+            r#"plain-note = Texto de vista previa para comentarios de hover.
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -3947,7 +4334,7 @@ fn hover_key_without_comments_returns_no_hover() {
     let mut lsp = initialized_lsp(workspace.path(), 6_114);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "plain-note");
+    let position = position_of_nth(&source_text, "plain-note", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_115,
@@ -3966,9 +4353,14 @@ fn hover_body_without_origin_message_shows_one_local_preview_block() {
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            "welcome-body = Open the latest build.\n",
+            r#"welcome-body = Open the latest build.
+"#,
         ),
-        ("locales/es/app.ftl", "local-only = Texto solo local.\n"),
+        (
+            "locales/es/app.ftl",
+            r#"local-only = Texto solo local.
+"#,
+        ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
@@ -3976,7 +4368,7 @@ fn hover_body_without_origin_message_shows_one_local_preview_block() {
     let mut lsp = initialized_lsp(workspace.path(), 6_116);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "Texto solo local.");
+    let position = position_of_nth(&source_text, "Texto solo local.", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_117,
@@ -3990,7 +4382,9 @@ fn hover_body_without_origin_message_shows_one_local_preview_block() {
     assert_eq!(
         hover["result"]["contents"]["value"],
         Value::String(format!(
-            "```ftl\n{}\n```",
+            r#"```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &source_text,
                 "local-only",
@@ -4008,10 +4402,19 @@ fn hover_body_without_origin_message_shows_one_local_preview_block() {
 #[test]
 fn hover_selector_without_origin_selectors_leaves_origin_block_headerless() {
     let workspace = temp_workspace(&[
-        ("locales/en/app.ftl", "download-state = Download ready.\n"),
+        (
+            "locales/en/app.ftl",
+            r#"download-state = Download ready.
+"#,
+        ),
         (
             "locales/es/app.ftl",
-            "download-state =\n    { $count ->\n        [one] Descarga lista.\n       *[other] Descargas listas.\n    }\n",
+            r#"download-state =
+    { $count ->
+        [one] Descarga lista.
+       *[other] Descargas listas.
+    }
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -4020,7 +4423,7 @@ fn hover_selector_without_origin_selectors_leaves_origin_block_headerless() {
     let mut lsp = initialized_lsp(workspace.path(), 6_118);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "[one] Descarga lista.");
+    let position = position_of_nth(&source_text, "[one] Descarga lista.", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_119,
@@ -4034,9 +4437,20 @@ fn hover_selector_without_origin_selectors_leaves_origin_block_headerless() {
     assert_eq!(
         hover["result"]["contents"]["value"],
         Value::String(format!(
-            "```ftl\n{}\n```\n\n---\n\n`$count=one`\n\n```ftl\n{}\n```",
+            r#"```ftl
+{}
+```
+
+---
+
+`$count=one`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
-                "download-state = Download ready.\n",
+                r#"download-state = Download ready.
+"#,
                 "download-state",
                 &[],
             ),
@@ -4057,10 +4471,19 @@ fn hover_selector_without_origin_selectors_leaves_origin_block_headerless() {
 #[test]
 fn hover_selector_without_origin_message_shows_one_local_selector_block() {
     let workspace = temp_workspace(&[
-        ("locales/en/app.ftl", "welcome = Hello.\n"),
+        (
+            "locales/en/app.ftl",
+            r#"welcome = Hello.
+"#,
+        ),
         (
             "locales/es/app.ftl",
-            "download-state =\n    { $count ->\n        [one] Descarga lista.\n       *[other] Descargas listas.\n    }\n",
+            r#"download-state =
+    { $count ->
+        [one] Descarga lista.
+       *[other] Descargas listas.
+    }
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -4069,7 +4492,7 @@ fn hover_selector_without_origin_message_shows_one_local_selector_block() {
     let mut lsp = initialized_lsp(workspace.path(), 6_134);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "[one] Descarga lista.");
+    let position = position_of_nth(&source_text, "[one] Descarga lista.", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_135,
@@ -4083,7 +4506,11 @@ fn hover_selector_without_origin_message_shows_one_local_selector_block() {
     assert_eq!(
         hover["result"]["contents"]["value"],
         Value::String(format!(
-            "`$count=one`\n\n```ftl\n{}\n```",
+            r#"`$count=one`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &source_text,
                 "download-state",
@@ -4104,11 +4531,21 @@ fn hover_selector_preserves_unresolved_term_references_inside_selected_branch()
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            "branch-note =\n    { $platform ->\n        [desktop] Open { -missing-brand } now.\n       *[mobile] Open later.\n    }\n",
+            r#"branch-note =
+    { $platform ->
+        [desktop] Open { -missing-brand } now.
+       *[mobile] Open later.
+    }
+"#,
         ),
         (
             "locales/es/app.ftl",
-            "branch-note =\n    { $platform ->\n        [desktop] Abre { -missing-brand } ahora.\n       *[mobile] Abre despues.\n    }\n",
+            r#"branch-note =
+    { $platform ->
+        [desktop] Abre { -missing-brand } ahora.
+       *[mobile] Abre despues.
+    }
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -4120,8 +4557,11 @@ fn hover_selector_preserves_unresolved_term_references_inside_selected_branch()
     let mut lsp = initialized_lsp(workspace.path(), 6_136);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position =
-        position_of(&source_text, "[desktop] Abre { -missing-brand } ahora.");
+    let position = position_of_nth(
+        &source_text,
+        "[desktop] Abre { -missing-brand } ahora.",
+        1,
+    );
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_137,
@@ -4139,7 +4579,19 @@ fn hover_selector_preserves_unresolved_term_references_inside_selected_branch()
     assert_eq!(
         hover_value,
         format!(
-            "`$platform=desktop`\n\n```ftl\n{}\n```\n\n---\n\n`$platform=desktop`\n\n```ftl\n{}\n```",
+            r#"`$platform=desktop`
+
+```ftl
+{}
+```
+
+---
+
+`$platform=desktop`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "branch-note",
@@ -4172,11 +4624,21 @@ fn hover_selector_preserves_unresolved_non_selector_inline_references_inside_sel
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            "selector-copy =\n    { $count ->\n        [one] Show { missing-copy } now.\n       *[other] Show later.\n    }\n",
+            r#"selector-copy =
+    { $count ->
+        [one] Show { missing-copy } now.
+       *[other] Show later.
+    }
+"#,
         ),
         (
             "locales/es/app.ftl",
-            "selector-copy =\n    { $count ->\n        [one] Muestra { missing-copy } ahora.\n       *[other] Muestra despues.\n    }\n",
+            r#"selector-copy =
+    { $count ->
+        [one] Muestra { missing-copy } ahora.
+       *[other] Muestra despues.
+    }
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -4188,8 +4650,11 @@ fn hover_selector_preserves_unresolved_non_selector_inline_references_inside_sel
     let mut lsp = initialized_lsp(workspace.path(), 6_138);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position =
-        position_of(&source_text, "[one] Muestra { missing-copy } ahora.");
+    let position = position_of_nth(
+        &source_text,
+        "[one] Muestra { missing-copy } ahora.",
+        1,
+    );
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 6_139,
@@ -4207,7 +4672,19 @@ fn hover_selector_preserves_unresolved_non_selector_inline_references_inside_sel
     assert_eq!(
         hover_value,
         format!(
-            "`$count=one`\n\n```ftl\n{}\n```\n\n---\n\n`$count=one`\n\n```ftl\n{}\n```",
+            r#"`$count=one`
+
+```ftl
+{}
+```
+
+---
+
+`$count=one`
+
+```ftl
+{}
+```"#,
             preview_message_text_with_overrides(
                 &origin_text,
                 "selector-copy",
@@ -4265,7 +4742,7 @@ fn hover_body_preview_stays_semantic_across_translation_locales() {
         let source = std::fs::read_to_string(&path).unwrap();
         open_document(&mut lsp, &path, &source);
         let request_id = 61 + i64::try_from(index).unwrap();
-        let position = position_of(&source, body_needle);
+        let position = position_of_nth(&source, body_needle, 1);
         lsp.send(&json!({
             "jsonrpc": "2.0",
             "id": request_id,
@@ -4305,7 +4782,7 @@ fn hover_on_uncommented_key_does_not_fall_back_to_body_preview() {
     initialize_lsp(&mut lsp, &root, 62);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let key_position = position_of(&source_text, "zero-rollout");
+    let key_position = position_of_nth(&source_text, "zero-rollout", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 63,
@@ -4322,7 +4799,7 @@ fn hover_on_uncommented_key_does_not_fall_back_to_body_preview() {
         "key hover should not degrade into body preview: {key_hover:?}"
     );
 
-    let body_position = position_of(&source_text, "Zero summary");
+    let body_position = position_of_nth(&source_text, "Zero summary", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 64,
@@ -4469,66 +4946,98 @@ fn code_lens_opens_full_selector_combinations_document() {
         .expect("expected file uri for temp document");
     let document_text =
         std::fs::read_to_string(document_path).expect("read temp document");
-    let expected_document = concat!(
-        "# Selector combinations for `install-hint`\n\n",
-        "Current language: `es`\n\n",
-        "Source language: `en`\n\n",
-        "Logical file: `app`\n\n",
-        "Source text:\n\n",
-        "```ftl\n",
-        "# Shortcut reminder near the download button\n",
-        "```\n\n",
-        "```ftl\n",
-        "install-hint =\n",
-        "    Copy the download link for { $gender ->\n",
-        "        [female] her\n",
-        "        [male] his\n",
-        "       *[other] their\n",
-        "    } account on { $count } { $count ->\n",
-        "        [one] device\n",
-        "       *[other] devices\n",
-        "    } now.\n",
-        "\n",
-        "```\n\n",
-        "Source language combinations:\n",
-        "`$gender=female`, `$count=one`\n",
-        "```ftl\nCopy the download link for her account on { $count } device now.\n```\n",
-        "`$gender=female`, `$count=other`\n",
-        "```ftl\nCopy the download link for her account on { $count } devices now.\n```\n",
-        "`$gender=male`, `$count=one`\n",
-        "```ftl\nCopy the download link for his account on { $count } device now.\n```\n",
-        "`$gender=male`, `$count=other`\n",
-        "```ftl\nCopy the download link for his account on { $count } devices now.\n```\n",
-        "`$gender=other`, `$count=one`\n",
-        "```ftl\nCopy the download link for their account on { $count } device now.\n```\n",
-        "`$gender=other`, `$count=other`\n",
-        "```ftl\nCopy the download link for their account on { $count } devices now.\n```\n\n",
-        "Current text:\n\n",
-        "```ftl\n",
-        "install-hint =\n",
-        "    Copia el enlace de descarga para la cuenta de { $gender ->\n",
-        "        [female] ella\n",
-        "        [male] el\n",
-        "       *[other] elle\n",
-        "    } en { $count } { $count ->\n",
-        "        [one] dispositivo\n",
-        "       *[other] dispositivos\n",
-        "    } ahora.\n",
-        "```\n\n",
-        "Current language combinations:\n",
-        "`$gender=female`, `$count=one`\n",
-        "```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivo ahora.\n```\n",
-        "`$gender=female`, `$count=other`\n",
-        "```ftl\nCopia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.\n```\n",
-        "`$gender=male`, `$count=one`\n",
-        "```ftl\nCopia el enlace de descarga para la cuenta de el en { $count } dispositivo ahora.\n```\n",
-        "`$gender=male`, `$count=other`\n",
-        "```ftl\nCopia el enlace de descarga para la cuenta de el en { $count } dispositivos ahora.\n```\n",
-        "`$gender=other`, `$count=one`\n",
-        "```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.\n```\n",
-        "`$gender=other`, `$count=other`\n",
-        "```ftl\nCopia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.\n```",
-    );
+    let expected_document = r#"# Selector combinations for `install-hint`
+
+Current language: `es`
+
+Source language: `en`
+
+Logical file: `app`
+
+Source text:
+
+```ftl
+# Shortcut reminder near the download button
+```
+
+```ftl
+install-hint =
+    Copy the download link for { $gender ->
+        [female] her
+        [male] his
+       *[other] their
+    } account on { $count } { $count ->
+        [one] device
+       *[other] devices
+    } now.
+
+```
+
+Source language combinations:
+`$gender=female`, `$count=one`
+```ftl
+Copy the download link for her account on { $count } device now.
+```
+`$gender=female`, `$count=other`
+```ftl
+Copy the download link for her account on { $count } devices now.
+```
+`$gender=male`, `$count=one`
+```ftl
+Copy the download link for his account on { $count } device now.
+```
+`$gender=male`, `$count=other`
+```ftl
+Copy the download link for his account on { $count } devices now.
+```
+`$gender=other`, `$count=one`
+```ftl
+Copy the download link for their account on { $count } device now.
+```
+`$gender=other`, `$count=other`
+```ftl
+Copy the download link for their account on { $count } devices now.
+```
+
+Current text:
+
+```ftl
+install-hint =
+    Copia el enlace de descarga para la cuenta de { $gender ->
+        [female] ella
+        [male] el
+       *[other] elle
+    } en { $count } { $count ->
+        [one] dispositivo
+       *[other] dispositivos
+    } ahora.
+```
+
+Current language combinations:
+`$gender=female`, `$count=one`
+```ftl
+Copia el enlace de descarga para la cuenta de ella en { $count } dispositivo ahora.
+```
+`$gender=female`, `$count=other`
+```ftl
+Copia el enlace de descarga para la cuenta de ella en { $count } dispositivos ahora.
+```
+`$gender=male`, `$count=one`
+```ftl
+Copia el enlace de descarga para la cuenta de el en { $count } dispositivo ahora.
+```
+`$gender=male`, `$count=other`
+```ftl
+Copia el enlace de descarga para la cuenta de el en { $count } dispositivos ahora.
+```
+`$gender=other`, `$count=one`
+```ftl
+Copia el enlace de descarga para la cuenta de elle en { $count } dispositivo ahora.
+```
+`$gender=other`, `$count=other`
+```ftl
+Copia el enlace de descarga para la cuenta de elle en { $count } dispositivos ahora.
+```"#;
     assert_eq!(document_text, expected_document);
 
     lsp.send(&json!({
@@ -4546,8 +5055,16 @@ fn code_lens_opens_full_selector_combinations_document() {
 #[test]
 fn code_lens_returns_empty_list_for_files_without_selector_combinations() {
     let workspace = temp_workspace(&[
-        ("locales/en/app.ftl", "hello = Hello\n"),
-        ("locales/es/app.ftl", "hello = Hola\n"),
+        (
+            "locales/en/app.ftl",
+            r#"hello = Hello
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"hello = Hola
+"#,
+        ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
@@ -4671,7 +5188,7 @@ fn code_action_generates_prefix_selector_by_default() {
     let mut lsp = initialized_lsp(&root, 70);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "coins-line");
+    let position = position_of_nth(&source_text, "coins-line", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 71,
@@ -4691,7 +5208,10 @@ fn code_action_generates_prefix_selector_by_default() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let actions = rewrite_actions_only(actions);
+    let actions = actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     assert_eq!(actions.len(), 3);
     let action = actions
         .iter()
@@ -4711,10 +5231,14 @@ fn code_action_generates_prefix_selector_by_default() {
         Value::String("refactor.rewrite".to_string())
     );
     assert_eq!(
-        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        action["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            "Tienes { $coins } { $coins ->\n    [one] monedas.\n    *[other] monedas.\n}"
-                .to_string()
+            r#"Tienes { $coins } { $coins ->
+    [one] monedas.
+    *[other] monedas.
+}"#
+            .to_string()
         )
     );
 }
@@ -4728,7 +5252,7 @@ fn code_action_returns_all_styles_for_variable_occurrence() {
     let mut lsp = initialized_lsp(&root, 72);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "{ $coins }");
+    let position = position_of_nth(&source_text, "{ $coins }", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 73,
@@ -4748,7 +5272,10 @@ fn code_action_returns_all_styles_for_variable_occurrence() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let actions = rewrite_actions_only(actions);
+    let actions = actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     assert_eq!(actions.len(), 3);
     assert!(actions.iter().any(|action| action["title"]
         == Value::String(
@@ -4784,7 +5311,7 @@ fn code_action_uses_client_selector_style_setting() {
     }));
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "{ $coins }");
+    let position = position_of_nth(&source_text, "{ $coins }", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 75,
@@ -4804,7 +5331,10 @@ fn code_action_uses_client_selector_style_setting() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let actions = rewrite_actions_only(actions);
+    let actions = actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     let action = &actions[0];
     assert_eq!(
         action["title"],
@@ -4813,10 +5343,14 @@ fn code_action_uses_client_selector_style_setting() {
         )
     );
     assert_eq!(
-        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        action["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            "{ $coins ->\n    [one] Tienes { $coins } monedas.\n    *[other] Tienes { $coins } monedas.\n}"
-                .to_string()
+            r#"{ $coins ->
+    [one] Tienes { $coins } monedas.
+    *[other] Tienes { $coins } monedas.
+}"#
+            .to_string()
         )
     );
 }
@@ -4830,27 +5364,35 @@ fn documented_config_contract_resolves_counterparts_from_exact_file_shape() {
         .unwrap();
     std::fs::write(
         workspace.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
     )
     .unwrap();
     std::fs::write(
         workspace.path().join("locales/en/app.ftl"),
-        "welcome-title = Welcome\n",
+        r#"welcome-title = Welcome
+"#,
     )
     .unwrap();
     std::fs::write(
         workspace.path().join("locales/es/app.ftl"),
-        "welcome-title = Bienvenido\n",
+        r#"welcome-title = Bienvenido
+"#,
     )
     .unwrap();
     std::fs::write(
         workspace.path().join("locales/en/dialogs/menu.ftl"),
-        "button-copy =\n    .label = Launch\n",
+        r#"button-copy =
+    .label = Launch
+"#,
     )
     .unwrap();
     std::fs::write(
         workspace.path().join("locales/es/dialogs/menu.ftl"),
-        "button-copy =\n    .label = Abrir\n",
+        r#"button-copy =
+    .label = Abrir
+"#,
     )
     .unwrap();
 
@@ -4861,7 +5403,8 @@ fn documented_config_contract_resolves_counterparts_from_exact_file_shape() {
 
     let mut lsp = initialized_lsp(workspace.path(), 75_100);
     open_document(&mut lsp, &app_path, &app_text);
-    let app_position = position_of(&app_text, "welcome-title = Bienvenido");
+    let app_position =
+        position_of_nth(&app_text, "welcome-title = Bienvenido", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 75_101,
@@ -4889,7 +5432,7 @@ fn documented_config_contract_resolves_counterparts_from_exact_file_shape() {
     );
 
     open_document(&mut lsp, &nested_path, &nested_text);
-    let nested_position = position_of(&nested_text, "label = Abrir");
+    let nested_position = position_of_nth(&nested_text, "label = Abrir", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 75_102,
@@ -4928,12 +5471,14 @@ fn client_configuration_applies_origin_language_and_file_masks_without_file_conf
     std::fs::create_dir_all(workspace.path().join("messages/es")).unwrap();
     std::fs::write(
         workspace.path().join("messages/fr/app.ftl"),
-        "welcome-title = Bonjour\n",
+        r#"welcome-title = Bonjour
+"#,
     )
     .unwrap();
     std::fs::write(
         workspace.path().join("messages/es/app.ftl"),
-        "welcome-title = Hola\n",
+        r#"welcome-title = Hola
+"#,
     )
     .unwrap();
 
@@ -4952,7 +5497,7 @@ fn client_configuration_applies_origin_language_and_file_masks_without_file_conf
     );
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "welcome-title = Hola");
+    let position = position_of_nth(&source_text, "welcome-title = Hola", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 75_111,
@@ -4986,27 +5531,33 @@ fn file_config_overrides_client_origin_language_and_file_masks() {
     std::fs::create_dir_all(workspace.path().join("messages/fr")).unwrap();
     std::fs::write(
         workspace.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
     )
     .unwrap();
     std::fs::write(
         workspace.path().join("locales/en/app.ftl"),
-        "welcome-title = Welcome\n",
+        r#"welcome-title = Welcome
+"#,
     )
     .unwrap();
     std::fs::write(
         workspace.path().join("locales/fr/app.ftl"),
-        "welcome-title = Bonjour\n",
+        r#"welcome-title = Bonjour
+"#,
     )
     .unwrap();
     std::fs::write(
         workspace.path().join("locales/es/app.ftl"),
-        "welcome-title = Bienvenido\n",
+        r#"welcome-title = Bienvenido
+"#,
     )
     .unwrap();
     std::fs::write(
         workspace.path().join("messages/fr/app.ftl"),
-        "welcome-title = Salut\n",
+        r#"welcome-title = Salut
+"#,
     )
     .unwrap();
 
@@ -5025,7 +5576,8 @@ fn file_config_overrides_client_origin_language_and_file_masks() {
     );
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "welcome-title = Bienvenido");
+    let position =
+        position_of_nth(&source_text, "welcome-title = Bienvenido", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 75_121,
@@ -5057,7 +5609,10 @@ fn file_config_selector_style_overrides_client_setting() {
     copy_dir(&fixture, temp.path());
     std::fs::write(
         temp.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\nselector_style = \"whole\"\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+selector_style = "whole"
+"#,
     )
     .unwrap();
 
@@ -5078,7 +5633,7 @@ fn file_config_selector_style_overrides_client_setting() {
     }));
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "coins-line");
+    let position = position_of_nth(&source_text, "coins-line", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 77,
@@ -5098,7 +5653,10 @@ fn file_config_selector_style_overrides_client_setting() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let actions = rewrite_actions_only(actions);
+    let actions = actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     let action = &actions[0];
     assert_eq!(
         action["title"],
@@ -5126,7 +5684,7 @@ fn code_action_uses_snippet_text_edit_when_supported() {
     );
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "coins-line");
+    let position = position_of_nth(&source_text, "coins-line", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 79,
@@ -5158,8 +5716,11 @@ fn code_action_uses_snippet_text_edit_when_supported() {
     assert_eq!(
         action["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
-            "Tienes { \\$${1:coins} } { \\$${1:coins} ->\n    [one] monedas.\n    *[other] monedas.\n}"
-                .to_string()
+            r#"Tienes { \$${1:coins} } { \$${1:coins} ->
+    [one] monedas.
+    *[other] monedas.
+}"#
+            .to_string()
         )
     );
     assert!(action["edit"]["changes"].is_null());
@@ -5185,7 +5746,7 @@ fn code_action_generates_whole_snippet_when_no_variable_exists() {
     );
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "plain-count");
+    let position = position_of_nth(&source_text, "plain-count", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 81,
@@ -5205,7 +5766,10 @@ fn code_action_generates_whole_snippet_when_no_variable_exists() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let actions = rewrite_actions_only(actions);
+    let actions = actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     assert_eq!(actions.len(), 1);
     assert_eq!(
         actions[0]["title"],
@@ -5214,8 +5778,11 @@ fn code_action_generates_whole_snippet_when_no_variable_exists() {
     assert_eq!(
         actions[0]["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
-            "{ \\$${1:count} ->\n    [one] Monedas disponibles.\n    *[other] Monedas disponibles.\n}"
-                .to_string()
+            r#"{ \$${1:count} ->
+    [one] Monedas disponibles.
+    *[other] Monedas disponibles.
+}"#
+            .to_string()
         )
     );
 }
@@ -5240,7 +5807,7 @@ fn code_action_supports_attributes() {
     );
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "$files");
+    let position = position_of_nth(&source_text, "$files", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 83,
@@ -5286,7 +5853,7 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
     );
     open_document(&mut lsp, &source_path, &source_text);
 
-    let key_position = position_of(&source_text, "formatted-download");
+    let key_position = position_of_nth(&source_text, "formatted-download", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 85,
@@ -5306,7 +5873,10 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let key_actions = rewrite_actions_only(key_actions);
+    let key_actions = key_actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     assert_eq!(key_actions.len(), 3);
     let key_prefix = key_actions
         .iter()
@@ -5320,12 +5890,15 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
     assert_eq!(
         key_prefix["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
-            "Descarga { NUMBER(\\$${1:downloads}) } { \\$${1:downloads} ->\n    [one] archivos.\n    *[other] archivos.\n}"
-                .to_string()
+            r#"Descarga { NUMBER(\$${1:downloads}) } { \$${1:downloads} ->
+    [one] archivos.
+    *[other] archivos.
+}"#
+            .to_string()
         )
     );
 
-    let variable_position = position_of(&source_text, "$downloads");
+    let variable_position = position_of_nth(&source_text, "$downloads", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 91,
@@ -5345,7 +5918,10 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let variable_actions = rewrite_actions_only(variable_actions);
+    let variable_actions = variable_actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     assert_eq!(variable_actions.len(), 3);
     let variable_prefix = variable_actions
         .iter()
@@ -5357,12 +5933,16 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
     assert_eq!(
         variable_prefix["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
-            "Descarga { NUMBER($downloads) } { $downloads ->\n    [one] archivos.\n    *[other] archivos.\n}"
-                .to_string()
+            r#"Descarga { NUMBER($downloads) } { $downloads ->
+    [one] archivos.
+    *[other] archivos.
+}"#
+            .to_string()
         )
     );
 
-    let function_position = position_of(&source_text, "NUMBER($downloads)");
+    let function_position =
+        position_of_nth(&source_text, "NUMBER($downloads)", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 104,
@@ -5382,7 +5962,10 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let function_actions = rewrite_actions_only(function_actions);
+    let function_actions = function_actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     assert_eq!(function_actions.len(), 3);
     let function_prefix = function_actions
         .iter()
@@ -5396,13 +5979,16 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
     assert_eq!(
         function_prefix["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
-            "Descarga { NUMBER($downloads) } { NUMBER($downloads) ->\n    [one] archivos.\n    *[other] archivos.\n}"
-                .to_string()
+            r#"Descarga { NUMBER($downloads) } { NUMBER($downloads) ->
+    [one] archivos.
+    *[other] archivos.
+}"#
+            .to_string()
         )
     );
 
     let deep_variable_position =
-        position_of(&source_text, "WRAP(NUMBER($downloads))");
+        position_of_nth(&source_text, "WRAP(NUMBER($downloads))", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 105,
@@ -5422,7 +6008,10 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let deep_variable_actions = rewrite_actions_only(deep_variable_actions);
+    let deep_variable_actions = deep_variable_actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     assert_eq!(deep_variable_actions.len(), 3);
     let deep_variable_prefix = deep_variable_actions
         .iter()
@@ -5438,7 +6027,10 @@ fn code_action_uses_enclosing_function_placeable_as_generation_anchor() {
     assert_eq!(
         deep_variable_prefix["edit"]["documentChanges"][0]["edits"][0]["snippet"],
         Value::String(
-            "Descarga { WRAP(NUMBER($downloads)) } { WRAP(NUMBER($downloads)) ->\n    [one] archivos.\n    *[other] archivos.\n}"
+            r#"Descarga { WRAP(NUMBER($downloads)) } { WRAP(NUMBER($downloads)) ->
+    [one] archivos.
+    *[other] archivos.
+}"#
                 .to_string()
         )
     );
@@ -5453,7 +6045,7 @@ fn code_action_keeps_punctuation_attached_in_prefix_generation() {
     let mut lsp = initialized_lsp(&root, 92);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "coins-period");
+    let position = position_of_nth(&source_text, "coins-period", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 93,
@@ -5486,8 +6078,11 @@ fn code_action_keeps_punctuation_attached_in_prefix_generation() {
         action["edit"]["changes"][format!("file://{}", source_path.display())]
             [0]["newText"],
         Value::String(
-            "Tienes { $coins } { $coins ->\n    [one].\n    *[other].\n}"
-                .to_string()
+            r#"Tienes { $coins } { $coins ->
+    [one].
+    *[other].
+}"#
+            .to_string()
         )
     );
 }
@@ -5501,7 +6096,7 @@ fn code_action_generation_is_absent_when_message_already_has_selector() {
     let mut lsp = initialized_lsp(&root, 116);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "whole-coins");
+    let position = position_of_nth(&source_text, "whole-coins", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 117,
@@ -5521,8 +6116,9 @@ fn code_action_generation_is_absent_when_message_already_has_selector() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let mut titles = rewrite_actions_only(actions)
+    let mut titles = actions
         .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
         .map(|action| action["title"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
     titles.sort();
@@ -5545,7 +6141,7 @@ fn code_action_generation_is_absent_when_attribute_already_has_selector() {
     let mut lsp = initialized_lsp(&root, 118);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "{ $files ->");
+    let position = position_of_nth(&source_text, "{ $files ->", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 119,
@@ -5565,8 +6161,9 @@ fn code_action_generation_is_absent_when_attribute_already_has_selector() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let mut titles = rewrite_actions_only(actions)
+    let mut titles = actions
         .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
         .map(|action| action["title"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
     titles.sort();
@@ -5589,7 +6186,7 @@ fn code_action_rewrites_whole_selector_to_prefix_and_suffix() {
     let mut lsp = initialized_lsp(&root, 94);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "whole-coins");
+    let position = position_of_nth(&source_text, "whole-coins", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 95,
@@ -5622,10 +6219,14 @@ fn code_action_rewrites_whole_selector_to_prefix_and_suffix() {
         })
         .expect("missing code action: Convert selector to prefix form");
     assert_eq!(
-        prefix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        prefix["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            "Tienes { $coins } { $coins ->\n    [one] moneda.\n    *[other] monedas.\n}"
-                .to_string()
+            r#"Tienes { $coins } { $coins ->
+    [one] moneda.
+    *[other] monedas.
+}"#
+            .to_string()
         )
     );
 
@@ -5637,10 +6238,14 @@ fn code_action_rewrites_whole_selector_to_prefix_and_suffix() {
         })
         .expect("missing code action: Convert selector to suffix form");
     assert_eq!(
-        suffix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        suffix["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            "Tienes { $coins ->\n    [one] { $coins } moneda.\n    *[other] { $coins } monedas.\n}"
-                .to_string()
+            r#"Tienes { $coins ->
+    [one] { $coins } moneda.
+    *[other] { $coins } monedas.
+}"#
+            .to_string()
         )
     );
 }
@@ -5654,7 +6259,7 @@ fn code_action_rewrites_prefix_selector_to_whole() {
     let mut lsp = initialized_lsp(&root, 96);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "prefix-coins");
+    let position = position_of_nth(&source_text, "prefix-coins", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 97,
@@ -5682,10 +6287,14 @@ fn code_action_rewrites_prefix_selector_to_whole() {
         })
         .expect("missing code action: Convert selector to whole form");
     assert_eq!(
-        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        action["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            "{ $coins ->\n    [one] Tienes { $coins } moneda.\n    *[other] Tienes { $coins } monedas.\n}"
-                .to_string()
+            r#"{ $coins ->
+    [one] Tienes { $coins } moneda.
+    *[other] Tienes { $coins } monedas.
+}"#
+            .to_string()
         )
     );
 }
@@ -5693,10 +6302,18 @@ fn code_action_rewrites_prefix_selector_to_whole() {
 #[test]
 fn code_action_selector_rewrite_preserves_assignment_spacing() {
     let workspace = temp_workspace(&[
-        ("locales/en/app.ftl", "placeholder = Hello\n"),
+        (
+            "locales/en/app.ftl",
+            r#"placeholder = Hello
+"#,
+        ),
         (
             "locales/es/app.ftl",
-            "prefix-coins = Tienes { $coins } { $coins ->\n    [one] moneda.\n    *[other] monedas.\n}\n",
+            r#"prefix-coins = Tienes { $coins } { $coins ->
+    [one] moneda.
+    *[other] monedas.
+}
+"#,
         ),
     ]);
     let source_path = workspace.path().join("locales/es/app.ftl");
@@ -5705,7 +6322,7 @@ fn code_action_selector_rewrite_preserves_assignment_spacing() {
     let mut lsp = initialized_lsp(workspace.path(), 97_100);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "prefix-coins");
+    let position = position_of_nth(&source_text, "prefix-coins", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 97_101,
@@ -5732,15 +6349,17 @@ fn code_action_selector_rewrite_preserves_assignment_spacing() {
                 == Value::String("Convert selector to whole form".to_string())
         })
         .expect("missing code action: Convert selector to whole form");
-    let updated = apply_code_action_edit(
-        &source_text,
-        action,
-        &format!("file://{}", source_path.display()),
-    );
+    let updated = Editor::new(&source_text)
+        .apply_code_action(action, &format!("file://{}", source_path.display()))
+        .source;
 
     assert_eq!(
         updated,
-        "prefix-coins = { $coins ->\n    [one] Tienes { $coins } moneda.\n    *[other] Tienes { $coins } monedas.\n}\n"
+        r#"prefix-coins = { $coins ->
+    [one] Tienes { $coins } moneda.
+    *[other] Tienes { $coins } monedas.
+}
+"#
     );
 }
 
@@ -5753,7 +6372,7 @@ fn code_action_rewrites_suffix_selector_to_whole_and_prefix() {
     let mut lsp = initialized_lsp(&root, 98);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "suffix-coins");
+    let position = position_of_nth(&source_text, "suffix-coins", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 99,
@@ -5788,7 +6407,7 @@ fn code_action_bare_suffix_like_selector_only_offers_prefix() {
     let mut lsp = initialized_lsp(&root, 100);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "bare-suffix-coins");
+    let position = position_of_nth(&source_text, "bare-suffix-coins", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 101,
@@ -5808,7 +6427,10 @@ fn code_action_bare_suffix_like_selector_only_offers_prefix() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let actions = rewrite_actions_only(actions);
+    let actions = actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     assert_eq!(actions.len(), 1);
     let action = actions
         .iter()
@@ -5818,9 +6440,14 @@ fn code_action_bare_suffix_like_selector_only_offers_prefix() {
         })
         .expect("missing code action: Convert selector to prefix form");
     assert_eq!(
-        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        action["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            "{ $coins } { $coins ->\n    [one] moneda.\n    *[other] monedas.\n}".to_string()
+            r#"{ $coins } { $coins ->
+    [one] moneda.
+    *[other] monedas.
+}"#
+            .to_string()
         )
     );
 }
@@ -5862,10 +6489,14 @@ fn code_action_rewrites_nested_whole_selector_inside_variant() {
         })
         .expect("missing code action: Convert selector to prefix form");
     assert_eq!(
-        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        action["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            "Ella tiene { $coins } { $coins ->\n            [one] moneda.\n            *[other] monedas.\n        }"
-                .to_string()
+            r#"Ella tiene { $coins } { $coins ->
+            [one] moneda.
+            *[other] monedas.
+        }"#
+            .to_string()
         )
     );
     assert!(actions.iter().any(|candidate| candidate["title"]
@@ -5881,7 +6512,7 @@ fn code_action_rewrite_is_absent_when_message_has_no_selector() {
     let mut lsp = initialized_lsp(&root, 120);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "coins-line");
+    let position = position_of_nth(&source_text, "coins-line", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 121,
@@ -5901,8 +6532,9 @@ fn code_action_rewrite_is_absent_when_message_has_no_selector() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let mut titles = rewrite_actions_only(actions)
+    let mut titles = actions
         .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
         .map(|action| action["title"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
     titles.sort();
@@ -5926,7 +6558,7 @@ fn code_action_rewrite_is_absent_when_attribute_has_no_selector() {
     let mut lsp = initialized_lsp(&root, 122);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "$files");
+    let position = position_of_nth(&source_text, "$files", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 123,
@@ -5946,8 +6578,9 @@ fn code_action_rewrite_is_absent_when_attribute_has_no_selector() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let mut titles = rewrite_actions_only(actions)
+    let mut titles = actions
         .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
         .map(|action| action["title"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
     titles.sort();
@@ -5971,7 +6604,7 @@ fn code_action_rewrites_selector_inside_attribute_value() {
     let mut lsp = initialized_lsp(&root, 110);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "{ $files ->");
+    let position = position_of_nth(&source_text, "{ $files ->", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 111,
@@ -5999,10 +6632,14 @@ fn code_action_rewrites_selector_inside_attribute_value() {
         })
         .expect("missing code action: Convert selector to prefix form");
     assert_eq!(
-        prefix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        prefix["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            "Descarga { $files } { $files ->\n        [one] archivo.\n        *[other] archivos.\n    }"
-                .to_string()
+            r#"Descarga { $files } { $files ->
+        [one] archivo.
+        *[other] archivos.
+    }"#
+            .to_string()
         )
     );
     let suffix = actions
@@ -6013,10 +6650,14 @@ fn code_action_rewrites_selector_inside_attribute_value() {
         })
         .expect("missing code action: Convert selector to suffix form");
     assert_eq!(
-        suffix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        suffix["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            "Descarga { $files ->\n        [one] { $files } archivo.\n        *[other] { $files } archivos.\n    }"
-                .to_string()
+            r#"Descarga { $files ->
+        [one] { $files } archivo.
+        *[other] { $files } archivos.
+    }"#
+            .to_string()
         )
     );
 }
@@ -6030,7 +6671,7 @@ fn attribute_rewrite_range_does_not_consume_comments_or_attribute_key() {
     let mut lsp = initialized_lsp(&root, 112);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "{ $files ->");
+    let position = position_of_nth(&source_text, "{ $files ->", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 113,
@@ -6072,7 +6713,7 @@ fn code_action_rewrites_selected_count_selector_with_trailing_suffix_text() {
     let mut lsp = initialized_lsp(&root, 106);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "{ $count ->");
+    let position = position_of_nth(&source_text, "{ $count ->", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 107,
@@ -6102,10 +6743,18 @@ fn code_action_rewrites_selected_count_selector_with_trailing_suffix_text() {
         })
         .expect("missing code action: Convert selector to suffix form");
     assert_eq!(
-        suffix["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        suffix["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            "Copy the download link for { $gender ->\n        [female] her\n        [male] his\n       *[other] their\n    } account on { $count ->\n    [one] { $count } device now.\n    *[other] { $count } devices now.\n}"
-                .to_string()
+            r#"Copy the download link for { $gender ->
+        [female] her
+        [male] his
+       *[other] their
+    } account on { $count ->
+    [one] { $count } device now.
+    *[other] { $count } devices now.
+}"#
+            .to_string()
         )
     );
 }
@@ -6120,7 +6769,7 @@ fn code_action_rewrites_selected_gender_selector_to_whole_with_nested_count_pres
     let mut lsp = initialized_lsp(&root, 108);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "{ $gender ->");
+    let position = position_of_nth(&source_text, "{ $gender ->", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 109,
@@ -6149,10 +6798,24 @@ fn code_action_rewrites_selected_gender_selector_to_whole_with_nested_count_pres
         })
         .expect("missing code action: Convert selector to whole form");
     assert_eq!(
-        whole["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        whole["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            " { $gender ->\n    [female] Copy the download link for her account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n    [male] Copy the download link for his account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n    *[other] Copy the download link for their account on { $count } { $count ->\n            [one] device\n           *[other] devices\n        } now.\n}"
-                .to_string()
+            r#" { $gender ->
+    [female] Copy the download link for her account on { $count } { $count ->
+            [one] device
+           *[other] devices
+        } now.
+    [male] Copy the download link for his account on { $count } { $count ->
+            [one] device
+           *[other] devices
+        } now.
+    *[other] Copy the download link for their account on { $count } { $count ->
+            [one] device
+           *[other] devices
+        } now.
+}"#
+            .to_string()
         )
     );
 }
@@ -6166,7 +6829,7 @@ fn code_action_is_hidden_for_ambiguous_message_keys() {
     let mut lsp = initialized_lsp(&root, 86);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position = position_of(&source_text, "range-summary");
+    let position = position_of_nth(&source_text, "range-summary", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 87,
@@ -6186,10 +6849,13 @@ fn code_action_is_hidden_for_ambiguous_message_keys() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let actions = rewrite_actions_only(actions);
+    let actions = actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     assert!(actions.is_empty());
 
-    let position = position_of(&source_text, "nested-coins");
+    let position = position_of_nth(&source_text, "nested-coins", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 88,
@@ -6209,7 +6875,10 @@ fn code_action_is_hidden_for_ambiguous_message_keys() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let nested_actions = rewrite_actions_only(nested_actions);
+    let nested_actions = nested_actions
+        .into_iter()
+        .filter(|action| action["kind"].as_str() == Some("refactor.rewrite"))
+        .collect::<Vec<_>>();
     assert!(nested_actions.is_empty());
 }
 
@@ -6342,7 +7011,11 @@ fn file_config_overrides_client_style_diagnostic_settings() {
     copy_dir(&fixture_root(), temp.path());
     std::fs::write(
         temp.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\nselector_style = \"whole\"\nwarn_on_selector_style_mismatch = true\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+selector_style = "whole"
+warn_on_selector_style_mismatch = true
+"#,
     )
     .unwrap();
 
@@ -6389,7 +7062,13 @@ fn file_config_overrides_client_style_diagnostic_settings() {
 fn diagnostics_report_invalid_numeric_identifier_keys_when_enabled() {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");
-    let source_text = "bad-key =\n    { $count ->\n        [admins] nope\n        [one] ok\n       *[other] ok\n    }\n";
+    let source_text = r#"bad-key =
+    { $count ->
+        [admins] nope
+        [one] ok
+       *[other] ok
+    }
+"#;
 
     let mut lsp = initialized_lsp(&root, 118);
     change_configuration(
@@ -6424,7 +7103,12 @@ fn diagnostics_report_invalid_numeric_identifier_keys_when_enabled() {
 fn diagnostics_ignore_non_numeric_admin_other_selector() {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");
-    let source_text = "bad-key =\n    { $count ->\n        [admins] nope\n       *[other] ok\n    }\n";
+    let source_text = r#"bad-key =
+    { $count ->
+        [admins] nope
+       *[other] ok
+    }
+"#;
 
     let mut lsp = initialized_lsp(&root, 122);
     change_configuration(
@@ -6453,12 +7137,22 @@ fn diagnostics_do_not_warn_for_complete_numeric_selectors_or_matching_style() {
     copy_dir(&fixture_root(), temp.path());
     std::fs::write(
         temp.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\nwarn_on_missing_plural_categories = true\nwarn_on_selector_style_mismatch = true\nselector_style = \"whole\"\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+warn_on_missing_plural_categories = true
+warn_on_selector_style_mismatch = true
+selector_style = "whole"
+"#,
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/en/match.ftl"),
-        "match-rollout =\n    { $count ->\n        [one] one package\n       *[other] { $count } packages\n    }\n",
+        r#"match-rollout =
+    { $count ->
+        [one] one package
+       *[other] { $count } packages
+    }
+"#,
     )
     .unwrap();
 
@@ -6483,12 +7177,17 @@ fn parse_error_diagnostics_publish_on_save_and_clear_after_fix() {
     std::fs::create_dir_all(temp.path().join("locales/en")).unwrap();
     std::fs::write(
         temp.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
     )
     .unwrap();
 
     let source_path = temp.path().join("locales/en/broken.ftl");
-    let invalid_source = "welcome-title = Welcome\n\ng@Rb@ge = broken\n";
+    let invalid_source = r#"welcome-title = Welcome
+
+g@Rb@ge = broken
+"#;
     std::fs::write(&source_path, invalid_source).unwrap();
 
     let mut lsp = initialized_lsp(temp.path(), 124);
@@ -6518,7 +7217,10 @@ fn parse_error_diagnostics_publish_on_save_and_clear_after_fix() {
         Value::from(position_of(invalid_source, "@").1)
     );
 
-    let valid_source = "welcome-title = Welcome\n\ngarbage = broken\n";
+    let valid_source = r#"welcome-title = Welcome
+
+garbage = broken
+"#;
     send_change_document(&mut lsp, &source_path, 2, valid_source);
     send_save_document(&mut lsp, &source_path, None);
 
@@ -6531,7 +7233,15 @@ fn parse_error_diagnostics_publish_on_save_and_clear_after_fix() {
 fn diagnostics_report_local_selector_style_mismatches_when_enabled() {
     let root = fixture_root();
     let source_path = root.join("locales/en/app.ftl");
-    let source_text = "install-hint =\n    Copy the download link for { $gender ->\n        [female] her\n       *[fallback] their\n    } account on { $count } { $count ->\n        [one] device\n       *[other] devices\n    } now.\n";
+    let source_text = r#"install-hint =
+    Copy the download link for { $gender ->
+        [female] her
+       *[fallback] their
+    } account on { $count } { $count ->
+        [one] device
+       *[other] devices
+    } now.
+"#;
 
     let mut lsp = initialized_lsp(&root, 119);
     change_configuration(
@@ -6668,10 +7378,14 @@ fn code_action_preserves_nested_selector_when_generating_inside_variant() {
         })
         .expect("missing code action: Generate number selector from $coins (prefix)");
     assert_eq!(
-        action["edit"]["changes"][format!("file://{}", source_path.display())][0]["newText"],
+        action["edit"]["changes"][format!("file://{}", source_path.display())]
+            [0]["newText"],
         Value::String(
-            "Ella tiene { $coins } { $coins ->\n            [one] monedas.\n            *[other] monedas.\n        }"
-                .to_string()
+            r#"Ella tiene { $coins } { $coins ->
+            [one] monedas.
+            *[other] monedas.
+        }"#
+            .to_string()
         )
     );
 }
@@ -6897,7 +7611,9 @@ fn temp_workspace(files: &[(&str, &str)]) -> TempDir {
     let temp = tempdir().unwrap();
     std::fs::write(
         temp.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
     )
     .unwrap();
 
@@ -6910,12 +7626,6 @@ fn temp_workspace(files: &[(&str, &str)]) -> TempDir {
     }
 
     temp
-}
-
-fn assert_fluent_parses(source: &str) {
-    if let Err((_, errors)) = parser::parse(source) {
-        panic!("failed to parse Fluent source with {errors:?}\n{source}");
-    }
 }
 
 fn extract_ftl_blocks(markdown: &str) -> Vec<String> {
@@ -6975,35 +7685,44 @@ fn completion_workspace() -> TempDir {
     std::fs::create_dir_all(temp.path().join("locales/es/dialogs")).unwrap();
     std::fs::write(
         temp.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/en/app.ftl"),
-        "hello-world = Hello\n\
-download-action = Download\n\
-download-count = Download count\n\
-\n\
-# Completion doc coverage\n\
-# Keep this note in completion hover\n\
-commented-preview = Preview text for completion docs.\n",
+        r#"hello-world = Hello
+download-action = Download
+download-count = Download count
+
+# Completion doc coverage
+# Keep this note in completion hover
+commented-preview = Preview text for completion docs.
+"#,
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/en/dialogs/menu.ftl"),
-        "# Menu completion documentation\n\
-# Keep this entry visible in completion hover\n\
-menu-save =\n    .label = Save\n    .tooltip = Save this file\n",
+        r#"# Menu completion documentation
+# Keep this entry visible in completion hover
+menu-save =
+    .label = Save
+    .tooltip = Save this file
+"#,
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/es/app.ftl"),
-        "welcome-title = Bienvenido\n",
+        r#"welcome-title = Bienvenido
+"#,
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/es/dialogs/menu.ftl"),
-        "menu-save =\n    .label = Guardar\n",
+        r#"menu-save =
+    .label = Guardar
+"#,
     )
     .unwrap();
     temp
@@ -7015,29 +7734,29 @@ fn missing_entry_workspace() -> TempDir {
     std::fs::create_dir_all(temp.path().join("locales/es")).unwrap();
     std::fs::write(
         temp.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/en/app.ftl"),
-        concat!(
-            "hello = Hello World\n",
-            "\n",
-            "menu-save =\n",
-            "    .label = Save\n",
-            "    .tooltip = Save this file\n",
-            "\n",
-            "sync-status = Sync ready\n",
-        ),
+        r#"hello = Hello World
+
+menu-save =
+    .label = Save
+    .tooltip = Save this file
+
+sync-status = Sync ready
+"#,
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/es/app.ftl"),
-        concat!(
-            "hello = Hola Mundo\n",
-            "menu-save =\n",
-            "    .label = Guardar\n",
-        ),
+        r#"hello = Hola Mundo
+menu-save =
+    .label = Guardar
+"#,
     )
     .unwrap();
     temp
@@ -7049,31 +7768,31 @@ fn copy_marker_workspace() -> TempDir {
     std::fs::create_dir_all(temp.path().join("locales/es")).unwrap();
     std::fs::write(
         temp.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/en/app.ftl"),
-        concat!(
-            "hello = Hello World\n",
-            "\n",
-            "download-action =\n",
-            "    .label = Download\n",
-            "    .tooltip = Download this build\n",
-        ),
+        r#"hello = Hello World
+
+download-action =
+    .label = Download
+    .tooltip = Download this build
+"#,
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/es/app.ftl"),
-        concat!(
-            "# [LSP-COPY]\n",
-            "hello = Hola Mundo\n",
-            "\n",
-            "# [LSP-COPY .tooltip]\n",
-            "download-action =\n",
-            "    .label = Descargar\n",
-            "    .tooltip = Download this build\n",
-        ),
+        r#"# [LSP-COPY]
+hello = Hola Mundo
+
+# [LSP-COPY .tooltip]
+download-action =
+    .label = Descargar
+    .tooltip = Download this build
+"#,
     )
     .unwrap();
     temp
@@ -7085,92 +7804,94 @@ fn single_key_copy_workspace() -> TempDir {
     std::fs::create_dir_all(temp.path().join("locales/es")).unwrap();
     std::fs::write(
         temp.path().join("fluent-lsp.toml"),
-        "origin_language = \"en\"\nfile_masks = [\"locales/{lang}/{filepath}.ftl\"]\n",
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/en/app.ftl"),
-        concat!(
-            "hello = Hello World\n",
-            "download-action =\n",
-            "    .label = Download\n",
-            "    .tooltip = Download this build\n",
-            "\n",
-            "sync-status = Sync ready\n",
-        ),
+        r#"hello = Hello World
+download-action =
+    .label = Download
+    .tooltip = Download this build
+
+sync-status = Sync ready
+"#,
     )
     .unwrap();
     std::fs::write(
         temp.path().join("locales/es/app.ftl"),
-        concat!(
-            "hello = { \"\" }\n",
-            "download-action =\n",
-            "    .label = Descargar\n",
-            "\n",
-            "sync-status = { \"\" }\n",
-        ),
+        r#"hello = { "" }
+download-action =
+    .label = Descargar
+
+sync-status = { "" }
+"#,
     )
     .unwrap();
     temp
 }
 
-fn apply_code_action_edit(
-    source: &str,
-    action: &Value,
-    target_uri: &str,
-) -> String {
-    let mut updated = source.to_string();
-    let mut edits = action["edit"]["changes"][target_uri]
-        .as_array()
-        .cloned()
-        .expect("expected workspace edit changes");
-    edits.sort_by_key(|text_edit| {
-        (
-            std::cmp::Reverse(
-                text_edit["range"]["start"]["line"].as_u64().unwrap(),
-            ),
-            std::cmp::Reverse(
-                text_edit["range"]["start"]["character"].as_u64().unwrap(),
-            ),
-            std::cmp::Reverse(
-                text_edit["range"]["end"]["line"].as_u64().unwrap(),
-            ),
-            std::cmp::Reverse(
-                text_edit["range"]["end"]["character"].as_u64().unwrap(),
-            ),
-        )
-    });
-
-    for text_edit in edits {
-        let start = position_to_offset(
-            &updated,
-            (
-                text_edit["range"]["start"]["line"].as_u64().unwrap() as u32,
-                text_edit["range"]["start"]["character"].as_u64().unwrap()
-                    as u32,
-            ),
-        );
-        let end = position_to_offset(
-            &updated,
-            (
-                text_edit["range"]["end"]["line"].as_u64().unwrap() as u32,
-                text_edit["range"]["end"]["character"].as_u64().unwrap() as u32,
-            ),
-        );
-        updated
-            .replace_range(start..end, text_edit["newText"].as_str().unwrap());
-    }
-
-    updated
+struct Editor {
+    source: String,
 }
 
-fn rewrite_actions_only(actions: Vec<Value>) -> Vec<Value> {
-    actions
-        .into_iter()
-        .filter(|action| {
-            action["kind"] == Value::String("refactor.rewrite".to_string())
-        })
-        .collect()
+impl Editor {
+    fn new(source: &str) -> Self {
+        Self {
+            source: source.to_string(),
+        }
+    }
+
+    fn apply_code_action(mut self, action: &Value, target_uri: &str) -> Self {
+        let mut edits = action["edit"]["changes"][target_uri]
+            .as_array()
+            .cloned()
+            .expect("expected workspace edit changes");
+        edits.sort_by_key(|text_edit| {
+            (
+                std::cmp::Reverse(
+                    text_edit["range"]["start"]["line"].as_u64().unwrap(),
+                ),
+                std::cmp::Reverse(
+                    text_edit["range"]["start"]["character"].as_u64().unwrap(),
+                ),
+                std::cmp::Reverse(
+                    text_edit["range"]["end"]["line"].as_u64().unwrap(),
+                ),
+                std::cmp::Reverse(
+                    text_edit["range"]["end"]["character"].as_u64().unwrap(),
+                ),
+            )
+        });
+
+        for text_edit in edits {
+            let start = position_to_offset(
+                &self.source,
+                (
+                    text_edit["range"]["start"]["line"].as_u64().unwrap()
+                        as u32,
+                    text_edit["range"]["start"]["character"].as_u64().unwrap()
+                        as u32,
+                ),
+            );
+            let end = position_to_offset(
+                &self.source,
+                (
+                    text_edit["range"]["end"]["line"].as_u64().unwrap() as u32,
+                    text_edit["range"]["end"]["character"].as_u64().unwrap()
+                        as u32,
+                ),
+            );
+            self.source.replace_range(
+                start..end,
+                text_edit["newText"].as_str().unwrap(),
+            );
+        }
+
+        self
+    }
 }
 
 fn position_to_offset(source: &str, position: (u32, u32)) -> usize {
@@ -7201,7 +7922,7 @@ fn position_of(source: &str, needle: &str) -> (u32, u32) {
 }
 
 fn position_after(source: &str, needle: &str) -> (u32, u32) {
-    let (line, character) = position_of(source, needle);
+    let (line, character) = position_of_nth(source, needle, 1);
     (
         line,
         character + u32::try_from(needle.chars().count()).unwrap(),
