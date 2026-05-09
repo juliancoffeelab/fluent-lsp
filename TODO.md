@@ -9,146 +9,86 @@ Remove all existing ones, and make tests assert real data, not helpers.
 Do not make tests looser to accommodate incorrect behavior.
 If a test fails because the implementation does not match the spec, say that to the user and fix the code instead of weakening the test.
 
-## Configuration
+## Coverage Matrix
 
-- [x] Add one end-to-end config-contract integration test that uses the documented `fluent-lsp.toml` shape exactly.
-- [x] In that config-contract test, assert `origin_language = "en"` and `file_masks = ["locales/{lang}/{filepath}.ftl"]` drive counterpart resolution exactly as documented.
-- [x] Add precedence coverage that client `workspace/didChangeConfiguration` applies core path-mapping settings when file config does not override them.
-- [x] Add precedence coverage that file config overrides client-provided `origin_language` and `file_masks`.
+This section breaks broad request behavior into concrete request paths.
+Each path below carries both existing coverage and missing coverage.
+Each path below needs at least ten exact tests, not one merged happy-path test.
+
+## Configuration Paths
+
+### Path: documented `fluent-lsp.toml` contract
+
+Existing coverage:
+- [documented_config_contract_resolves_counterparts_from_exact_file_shape](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5359)
+
+Missing coverage:
+- none currently tracked beyond the path-specific request coverage below
+
+### Path: client configuration precedence
+
+Existing coverage:
+- [client_configuration_applies_origin_language_and_file_masks_without_file_config](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5467)
+- [code_action_uses_client_selector_style_setting](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5295)
+- [diagnostics_report_selector_style_mismatches_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6967)
+
+Missing coverage:
+- [ ] Add precedence coverage that client `workspace/didChangeConfiguration` applies plural-diagnostic settings when file config does not override them.
+
+### Path: file configuration precedence
+
+Existing coverage:
+- [file_config_overrides_client_origin_language_and_file_masks](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5526)
+- [file_config_selector_style_overrides_client_setting](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5606)
+- [file_config_overrides_client_style_diagnostic_settings](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7009)
+
+Missing coverage:
 - [ ] Add precedence coverage that file config overrides client-provided plural-diagnostic settings, not just path mapping and selector-style settings.
 
-## Capabilities
+## Capability Paths
 
-- [x] Add one exact `initialize` contract test that asserts the documented capability surface as a whole.
-- [x] In that `initialize` contract test, assert exact `textDocumentSync`, `completionProvider`, `codeActionProvider`, `codeLensProvider`, and `executeCommandProvider` shapes.
-- [x] In that `initialize` contract test, assert unsupported capabilities remain absent, including `rename`, `semanticTokens`, `inlayHint`, and `documentSymbol`.
+### Path: exact `initialize` capability contract
 
-## `textDocument/definition`
+Existing coverage:
+- [initialize_returns_exact_capability_contract](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:271)
 
-- [ ] Add an integration test that proves `Go to Definition` from an origin-file term returns no location, not just the top-level key case.
-- [ ] Add an integration test that proves `Go to Definition` from an origin-file attribute returns no location, not just the top-level key case.
-- [ ] Add an integration test that proves a translation term with no origin counterpart returns no location.
-- [ ] Add an integration test that proves a nested translation file with no origin counterpart returns no location, not just a top-level orphan file.
-- [ ] Add an integration test that proves a nested translation attribute with no origin counterpart returns no location, not just the top-level attribute case.
+Missing coverage:
+- none currently tracked outside the request-specific paths below
 
-## `textDocument/references`
+## Index And Trace Paths
 
-- [ ] Add an integration test that proves `Find References` from a translation-file term returns no result, not just the top-level key case.
-- [ ] Add an integration test that proves `Find References` from a translation-file attribute returns no result, not just the top-level key case.
-- [ ] Add a dirty-overlay references test for attribute ranges, not just the top-level `download-action` message case.
-- [ ] Add a dirty-close references test for attribute ranges, not just the top-level `download-action` message case.
-- [ ] Add a background-refresh references test for nested translation files being added and removed, not just top-level `app.ftl`.
+### Path: initial index build and progress
 
-## `textDocument/hover`
+Existing coverage:
+- [initialized_builds_index_and_reports_progress_when_supported](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:917)
 
-### File and group comments on key hover
-
-- [ ] Add an integration test for key hover that proves a file-level comment block and a group-level comment block keep a newline between them when they are adjacent in source.
-- [ ] Add an integration test for key hover that proves a file-level comment block and a group-level comment block keep a newline between them when they are not adjacent in source.
-- [ ] Add an integration test for key hover that proves a group-level comment block and a message-level comment block keep a newline between them when they are adjacent in source.
-- [ ] Add an integration test for key hover that proves a group-level comment block and a message-level comment block keep a newline between them when they are not adjacent in source.
-- [ ] Add an integration test for key hover that proves file-level comments apply to every key they scope over, not just the first key after the comments.
-- [ ] Add an integration test for key hover that proves group-level comments apply to every key they scope over, not just the first key after the comments.
-
-### Selector hover
-
-- [x] Add an integration test that proves selector hover preserves unresolved term references inside the selected branch instead of substituting them.
-- [x] Add an integration test that proves selector hover preserves unresolved non-selector inline Fluent references inside the selected branch, not just `$variable` references.
-
-## `textDocument/completion`
-
-### Empty result shape
-
-- [ ] Tighten the top-level origin-file completion test so it asserts the exact empty completion payload instead of only asserting that the extracted label list is empty.
-- [ ] Tighten the nested origin-file completion test so it asserts the exact empty completion payload instead of only asserting that the extracted label list is empty.
-- [ ] Tighten the unmatched-prefix completion test so it asserts the exact empty completion payload instead of only asserting that the extracted label list is empty.
-- [ ] Tighten the missing-origin-counterpart completion test so it asserts the exact empty completion payload instead of only asserting that the extracted label list is empty.
-
-## `textDocument/codeAction`
-
-### Missing-entry quick-fix titles
-
-- [x] Add an integration test that asserts the spec title exactly: `Copy missing strings in file`.
-- [x] Add an integration test that asserts the old file-wide copy title is absent: `Copy missing keys and attributes from source`.
-- [x] Add an integration test that asserts the old stub title is absent: `Add missing keys and attributes from source`.
-- [x] Add an integration test that asserts the spec title exactly: `Copy missing string \`hello\``.
-- [x] Add an integration test that asserts the old single-message copy title is absent: `Copy \`hello\` from source`.
-- [x] Add an integration test that asserts the spec title exactly: `Copy missing attribute \`download-action.tooltip\``.
-- [x] Add an integration test that asserts the old single-attribute copy title is absent: `Copy missing attributes for \`download-action\` from source`.
-
-### File-wide copy examples from the spec
-
-- [x] Add an integration test for the spec example where a whole missing string is added by the file-wide copy action.
-- [x] In that whole-missing-string test, assert exact `Before` -> `After` source comparison.
-- [x] Add an integration test for the spec example where a whole missing message with attributes is added by the file-wide copy action.
-- [x] In that whole-missing-message-with-attributes test, assert exact `Before` -> `After` source comparison.
-- [x] In that whole-missing-message-with-attributes test, assert exact resulting source including one `# [LSP-COPY .<attribute>]` marker per copied attribute.
-- [x] In that same test, assert unrelated existing local entries remain unchanged.
-
-### Selector rewrite formatting
-
-- [x] Add an integration test that proves selector rewrite preserves assignment spacing such as `= {`.
-
-### Exact action sets
-
-- [ ] Tighten the representative generation test for a variable occurrence so it asserts the exact returned rewrite-title set instead of only checking that three expected titles are present.
-- [ ] Tighten the attribute-generation test so it asserts the exact returned rewrite-title set instead of only checking that one expected title is present.
-- [ ] Tighten the whole-selector rewrite test so it asserts the exact returned rewrite-title set instead of only checking that the prefix and suffix titles are present.
-- [ ] Tighten the suffix-selector rewrite test so it asserts the exact returned rewrite-title set instead of only checking that the whole and prefix titles are present.
-- [ ] Tighten the nested-selector rewrite test so it asserts the exact returned rewrite-title set instead of only checking that one additional title is present.
-
-## `textDocument/codeLens`
-
-- [ ] Add one selector-focused contract test that proves `Show all N selector combinations` is derived from the actual combination count, not just the current 6-combination fixture.
-- [ ] Add one negative integration test that a message with selectors but no meaningful expansion opportunity does not produce a code lens.
-- [ ] Add one exact contract test for the full returned code-lens set on the main fixture file instead of only checking `items.len() >= 3` and one `install-hint` lens.
-- [ ] Add one exact contract test for the code-lens command arguments array so the emitted `workspace/executeCommand` call shape is verified before execution.
-
-## `workspace/executeCommand`
-
-- [ ] Add a test that enforces the spec behavior for the selector-combinations command when `window/showDocument` is unavailable.
-- [ ] Assert that the command does not fall back to `window/showMessage` for selector combinations.
-- [ ] Assert that the command fails or otherwise follows the spec-only path instead of silently degrading.
-- [ ] Add an exact contract test for `workspace/executeCommand` argument ordering and values: document URI first, Fluent key second.
-- [ ] Add an invalid-params test for a non-string document URI argument.
-- [ ] Add an invalid-params test for a non-string Fluent key argument.
-
-### Selector combinations document
-
-- [ ] Add an integration test that proves selector-combinations document output preserves unresolved term references in rendered combination blocks.
-- [ ] Add an integration test that proves selector-combinations document output preserves unresolved non-selector inline Fluent references in rendered combination blocks.
-
-## Diagnostics
-
-### Default-off behavior
-
-- [ ] Replace the current `diagnostics_are_absent_by_default` smoke test with an exact save-triggered assertion that disabled plural/category diagnostics publish no warnings by default.
-
-### Unicode plural categories
-
-- [ ] Add a unit test that explicitly proves English treats `[zero]` as an unsupported plural category and emits `` `zero` is not a supported plural category for `en` `` when unsupported-category diagnostics are enabled.
-- [ ] Add a JSON-RPC integration test for the same English `[zero]` unsupported-category diagnostic path.
-- [ ] Add end-to-end Unicode-plural coverage for a locale with extended category sets, so categories such as `two`, `few`, and `many` are exercised beyond the unit-only category-table assertions.
-- [ ] Add exact severity and range assertions for each Latvian missing-category diagnostic, not just the unsupported `few` diagnostic.
-- [ ] Add exact severity and range assertions for the Ukrainian missing-category diagnostic.
-- [ ] Add a diagnostic test that proves the origin file may use a different plural-category set without producing translation-side category warnings.
-
-### Selector style mismatch
-
-- [ ] Add exact severity and range assertions for each translation-file selector-style mismatch diagnostic instead of checking only the sorted messages.
-- [ ] Add exact severity and range assertions for the local-origin selector-style mismatch diagnostic instead of checking only its message.
-
-## Index And Refresh
-
+Missing coverage:
 - [ ] Add a background-refresh test that picks up on-disk content or mtime changes for an already indexed file, not just add/delete events.
+
+### Path: index-driven refresh across request paths
+
+Existing coverage:
+- [indexed_requests_reflect_live_origin_changes_without_restart](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1172)
+- [indexed_requests_reflect_live_translation_changes_and_dirty_close_reverts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1259)
+- [indexed_references_pick_up_disk_file_adds_and_deletes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1332)
+- [local_only_file_warning_updates_when_origin_counterpart_appears](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1401)
+- [translation_only_keys_warn_and_clear_when_origin_adds_counterparts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1471)
+
+Missing coverage:
 - [ ] Add a background-refresh definition test for an origin counterpart file appearing on disk after initialization.
 - [ ] Add a background-refresh definition test for an origin counterpart file disappearing on disk after initialization.
 - [ ] Add a background-refresh hover test that picks up changed origin comment or preview content from disk without restarting the server.
 - [ ] Add a background-refresh completion test that picks up changed origin completion entries from disk without restarting the server.
 - [ ] Add a background-refresh missing-origin-diagnostics test that picks up on-disk counterpart changes for an already indexed translation file without reopening it.
 
-## Trace Logging
+### Path: trace logging
 
+Existing coverage:
+- [log_trace_reports_index_and_request_timings_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:968)
+- [verbose_log_trace_includes_request_details](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1040)
+- [set_trace_enables_request_timings_after_initialize](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1097)
+
+Missing coverage:
 - [ ] Add trace coverage for `textDocument/references`.
 - [ ] Add trace coverage for `textDocument/hover`.
 - [ ] Add trace coverage for `textDocument/completion`.
@@ -160,15 +100,17 @@ If a test fails because the implementation does not match the spec, say that to 
 - [ ] Add verbose trace coverage that `textDocument/codeLens` reports `count=<count>`.
 - [ ] Add verbose trace coverage that `workspace/executeCommand` reports `command=<command> ok=true`.
 
-## Path-By-Path Coverage Matrix
-
-This section breaks broad request behavior into concrete request paths.
-Each path below needs at least ten exact tests, not one merged happy-path test.
-
 ## `textDocument/definition` Path Matrix
 
 ### Path: translation top-level key -> origin top-level key
 
+Existing coverage:
+- [goto_definition_from_translation_resolves_to_origin_fluent_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:96)
+- [documented_config_contract_resolves_counterparts_from_exact_file_shape](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5359)
+- [client_configuration_applies_origin_language_and_file_masks_without_file_config](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5467)
+- [file_config_overrides_client_origin_language_and_file_masks](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5526)
+
+Missing coverage:
 - [ ] Add a test where the translation key is the first non-empty line in the file.
 - [ ] Add a test where the translation key is the last non-empty line in the file.
 - [ ] Add a test where the cursor is on the first character of the key name.
@@ -182,6 +124,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: translation term -> origin term
 
+Existing coverage:
+- [goto_definition_from_translation_resolves_to_origin_fluent_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:96)
+
+Missing coverage:
 - [ ] Add a test where the term is the first non-empty line in the file.
 - [ ] Add a test where the term is the last non-empty line in the file.
 - [ ] Add a test where the cursor is on the leading `-` character.
@@ -195,6 +141,11 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: translation attribute key -> origin attribute key
 
+Existing coverage:
+- [goto_definition_from_translation_resolves_to_origin_fluent_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:96)
+- [documented_config_contract_resolves_counterparts_from_exact_file_shape](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5359)
+
+Missing coverage:
 - [ ] Add a top-level attribute test where the attribute is the first attribute on the message.
 - [ ] Add a top-level attribute test where the attribute is the last attribute on the message.
 - [ ] Add a nested-file attribute test where the attribute is the first attribute on the message.
@@ -208,6 +159,15 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: no-location and request-error outcomes
 
+Existing coverage:
+- [definition_rejects_non_file_uris_with_invalid_params](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:337)
+- [definition_rejects_files_outside_the_configured_workspace](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:360)
+- [goto_definition_from_origin_file_returns_no_location](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:394)
+- [goto_definition_returns_no_location_for_translation_key_missing_in_origin](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:417)
+- [goto_definition_returns_no_location_when_origin_counterpart_file_is_missing](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:452)
+- [goto_definition_returns_no_location_for_translation_attribute_missing_in_origin](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:480)
+
+Missing coverage:
 - [ ] Add a test where `Go to Definition` from an origin top-level key returns no location.
 - [ ] Add a test where `Go to Definition` from an origin term returns no location.
 - [ ] Add a test where `Go to Definition` from an origin attribute returns no location.
@@ -223,6 +183,11 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: origin top-level key -> translation top-level key references
 
+Existing coverage:
+- [references_from_origin_resolve_to_translated_fluent_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:576)
+- [indexed_references_pick_up_disk_file_adds_and_deletes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1332)
+
+Missing coverage:
 - [ ] Add a test where the origin key is the first non-empty line in the file.
 - [ ] Add a test where the origin key is the last non-empty line in the file.
 - [ ] Add a test where the cursor is on the first character of the key name.
@@ -236,6 +201,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: origin term -> translation term references
 
+Existing coverage:
+- [references_from_origin_resolve_to_translated_fluent_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:576)
+
+Missing coverage:
 - [ ] Add a test where the origin term is the first non-empty line in the file.
 - [ ] Add a test where the origin term is the last non-empty line in the file.
 - [ ] Add a test where the cursor is on the leading `-` character.
@@ -249,6 +218,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: origin attribute -> translation attribute references
 
+Existing coverage:
+- [references_from_origin_resolve_to_translated_fluent_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:576)
+
+Missing coverage:
 - [ ] Add a top-level attribute test where the attribute is the first attribute on the message.
 - [ ] Add a top-level attribute test where the attribute is the last attribute on the message.
 - [ ] Add a nested-file attribute test where the attribute is the first attribute on the message.
@@ -262,6 +235,14 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: no-match and caller-side no-result outcomes
 
+Existing coverage:
+- [references_from_origin_return_empty_list_when_no_translation_matches](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:755)
+- [references_from_origin_attribute_return_empty_list_when_no_translation_matches](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:795)
+- [references_from_translation_file_return_no_result](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:834)
+- [references_reject_non_file_uris_with_invalid_params](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:858)
+- [references_reject_files_outside_the_configured_workspace](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:882)
+
+Missing coverage:
 - [ ] Add a test where an origin top-level key has no translation matches and returns an exact empty array.
 - [ ] Add a test where an origin term has no translation matches and returns an exact empty array.
 - [ ] Add a test where an origin attribute has no translation matches and returns an exact empty array.
@@ -275,6 +256,11 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: indexed references with dirty overlays and background refresh
 
+Existing coverage:
+- [indexed_requests_reflect_live_translation_changes_and_dirty_close_reverts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1259)
+- [indexed_references_pick_up_disk_file_adds_and_deletes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1332)
+
+Missing coverage:
 - [ ] Add a dirty-overlay test where opening a translation file introduces a new top-level key reference immediately.
 - [ ] Add a dirty-overlay test where opening a translation file introduces a new term reference immediately.
 - [ ] Add a dirty-overlay test where opening a translation file introduces a new attribute reference immediately.
@@ -290,6 +276,14 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: top-level key hover
 
+Existing coverage:
+- [hover_key_and_attribute_show_comment_context_across_locale_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4016)
+- [hover_key_with_origin_comments_only_shows_one_origin_comment_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4212)
+- [hover_key_with_local_comments_only_shows_one_local_comment_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4265)
+- [hover_key_without_comments_returns_no_hover](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4318)
+- [hover_on_uncommented_key_does_not_fall_back_to_body_preview](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4776)
+
+Missing coverage:
 - [ ] Add a test where origin-only top-level key comments render as one exact block.
 - [ ] Add a test where local-only top-level key comments render as one exact block.
 - [ ] Add a test where origin and local top-level key comments render as two exact blocks in order.
@@ -303,6 +297,13 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: top-level message body hover
 
+Existing coverage:
+- [hover_from_translation_shows_local_formatted_messages](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3041)
+- [hover_from_origin_file_shows_one_body_preview_block_for_top_level_message](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3931)
+- [hover_body_without_origin_message_shows_one_local_preview_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4352)
+- [hover_body_preview_stays_semantic_across_translation_locales](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4715)
+
+Missing coverage:
 - [ ] Add a translation-file body hover test where origin and local previews both render exactly.
 - [ ] Add an origin-file body hover test where only the origin preview block is returned.
 - [ ] Add a local-only body hover test where the origin message is missing and one local block is returned.
@@ -316,6 +317,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: attribute key hover
 
+Existing coverage:
+- [hover_key_and_attribute_show_comment_context_across_locale_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4016)
+
+Missing coverage:
 - [ ] Add an origin-only attribute-key comment test where one exact origin comment block is returned.
 - [ ] Add a local-only attribute-key comment test where one exact local comment block is returned.
 - [ ] Add an origin+local attribute-key comment test where two exact blocks are returned in order.
@@ -329,6 +334,12 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: attribute body hover
 
+Existing coverage:
+- [hover_from_translation_shows_local_formatted_messages](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3041)
+- [hover_from_origin_file_shows_formatted_attribute_text](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3832)
+- [hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2486)
+
+Missing coverage:
 - [ ] Add an origin-file attribute-body hover test where one exact origin preview block is returned.
 - [ ] Add a translation-file attribute-body hover test where origin and local preview blocks are returned in order.
 - [ ] Add a local-only attribute-body hover test where the origin attribute is missing and one local block is returned.
@@ -342,6 +353,13 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: selector hover on selector expression
 
+Existing coverage:
+- [hover_from_translation_matches_available_selector_variables_across_source_and_local](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3510)
+- [hover_from_latvian_translation_preserves_zero_category_selectors](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:3695)
+- [hover_selector_without_origin_selectors_leaves_origin_block_headerless](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4403)
+- [hover_selector_without_origin_message_shows_one_local_selector_block](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4472)
+
+Missing coverage:
 - [ ] Add a matching-selector test where origin and local selector headers list the same chosen variable values.
 - [ ] Add a mismatched-selector-set test where shared selector variables are matched by name only.
 - [ ] Add an origin-without-selectors test where the origin block is headerless and the local block still has a selector header.
@@ -355,6 +373,11 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: selector hover on variant branch text
 
+Existing coverage:
+- [hover_selector_preserves_unresolved_term_references_inside_selected_branch](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4529)
+- [hover_selector_preserves_unresolved_non_selector_inline_references_inside_selected_branch](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4622)
+
+Missing coverage:
 - [ ] Add a test where an unresolved term reference in the selected origin branch is preserved verbatim.
 - [ ] Add a test where an unresolved term reference in the selected local branch is preserved verbatim.
 - [ ] Add a test where an unresolved non-selector inline message reference in the selected origin branch is preserved verbatim.
@@ -370,6 +393,11 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: top-level message completion list
 
+Existing coverage:
+- [completion_from_translation_uses_origin_language_keys_and_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1629)
+- [completion_omits_already_present_top_level_keys](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1731)
+
+Missing coverage:
 - [ ] Add a test where completion at the first message in a translation file returns the exact top-level key list.
 - [ ] Add a test where completion at the last message in a translation file returns the exact top-level key list.
 - [ ] Add a test where the typed prefix matches exactly one origin key and only that label is returned.
@@ -383,6 +411,12 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: attribute completion list
 
+Existing coverage:
+- [completion_from_translation_uses_origin_language_keys_and_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1629)
+- [completion_omits_already_present_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1768)
+- [completion_uses_nested_origin_counterpart_and_skips_origin_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1806)
+
+Missing coverage:
 - [ ] Add a test where bare-dot completion on a message with two missing attributes returns the exact ordered attribute list.
 - [ ] Add a test where bare-dot completion on a message with one existing attribute excludes the existing attribute exactly.
 - [ ] Add a test where a typed attribute prefix matches exactly one attribute and only that label is returned.
@@ -396,6 +430,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: completion documentation payload
 
+Existing coverage:
+- [completion_items_include_origin_documentation_for_keys_and_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2011)
+
+Missing coverage:
 - [ ] Add a message-completion-doc test where origin-only comments render as one exact markdown block.
 - [ ] Add a message-completion-doc test where origin comments preserve comment-line newlines exactly.
 - [ ] Add an attribute-completion-doc test where origin-only comments render as one exact markdown block.
@@ -409,6 +447,16 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: empty-result and request-error outcomes
 
+Existing coverage:
+- [completion_returns_empty_results_for_nested_origin_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1874)
+- [completion_returns_empty_results_for_unmatched_prefixes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1910)
+- [completion_returns_empty_results_inside_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1947)
+- [completion_returns_empty_results_without_origin_counterpart_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1972)
+- [completion_rejects_non_file_uris_with_invalid_params](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:553)
+- [completion_rejects_files_outside_the_configured_workspace](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:518)
+- [completion_uses_nested_origin_counterpart_and_skips_origin_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1806)
+
+Missing coverage:
 - [ ] Add a top-level origin-file completion test that asserts the exact empty completion payload.
 - [ ] Add a nested origin-file completion test that asserts the exact empty completion payload.
 - [ ] Add an unmatched-prefix completion test that asserts the exact empty completion payload.
@@ -424,6 +472,13 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: file-wide missing-string quick fix
 
+Existing coverage:
+- [code_action_file_wide_copy_uses_spec_title_for_whole_missing_string_example](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2124)
+- [code_action_file_wide_copy_uses_spec_title_for_whole_missing_message_with_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2207)
+- [whole_file_missing_entry_actions_are_absent_when_translation_is_complete](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2294)
+- [whole_file_missing_entry_actions_are_absent_without_origin_counterpart_file](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2341)
+
+Missing coverage:
 - [ ] Add a file-wide copy test where one whole missing top-level message is added with the exact `LSP-COPY` marker placement.
 - [ ] Add a file-wide copy test where one whole missing message with multiple attributes is added with one exact per-attribute marker line each.
 - [ ] Add a file-wide copy test where a missing top-level term is copied with the exact resulting source.
@@ -437,6 +492,12 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: single-message missing-string quick fix
 
+Existing coverage:
+- [code_action_copies_single_stub_message_without_touching_other_entries](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2557)
+- [single_message_copy_actions_are_absent_for_complete_entries](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2831)
+- [single_message_copy_action_is_absent_when_selected_key_has_no_origin_counterpart](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2900)
+
+Missing coverage:
 - [ ] Add a single-message copy test where the selected stub message is the first entry in the file.
 - [ ] Add a single-message copy test where the selected stub message is the last entry in the file.
 - [ ] Add a single-message copy test where the copied message has no attributes and uses the exact whole-message `LSP-COPY` marker form.
@@ -450,6 +511,12 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: single-attribute missing-attribute quick fix
 
+Existing coverage:
+- [code_action_copies_missing_attributes_for_selected_message_only](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2692)
+- [missing_attribute_copy_action_is_absent_when_selected_message_has_no_origin_counterpart](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2948)
+- [hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2486)
+
+Missing coverage:
 - [ ] Add a missing-attribute copy test where the selected message is the first message in the file.
 - [ ] Add a missing-attribute copy test where the selected message is the last message in the file.
 - [ ] Add a missing-attribute copy test where one missing attribute is inserted with the exact per-attribute `LSP-COPY` marker.
@@ -463,6 +530,13 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: selector generation from a variable occurrence
 
+Existing coverage:
+- [code_action_generates_prefix_selector_by_default](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5183)
+- [code_action_returns_all_styles_for_variable_occurrence](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5247)
+- [code_action_uses_client_selector_style_setting](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5295)
+- [code_action_keeps_punctuation_attached_in_prefix_generation](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6040)
+
+Missing coverage:
 - [ ] Add a generation test where the variable occurrence is in top-level body text and the exact returned rewrite-title set is asserted.
 - [ ] Add a generation test where the variable occurrence is in attribute-body text and the exact returned rewrite-title set is asserted.
 - [ ] Add a generation test where the selected variable occurrence is the first variable in the message.
@@ -476,6 +550,14 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: selector generation from non-default anchors
 
+Existing coverage:
+- [code_action_uses_snippet_text_edit_when_supported](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5668)
+- [code_action_generates_whole_snippet_when_no_variable_exists](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5730)
+- [code_action_supports_attributes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5791)
+- [code_action_uses_enclosing_function_placeable_as_generation_anchor](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5837)
+- [code_action_preserves_nested_selector_when_generating_inside_variant](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7345)
+
+Missing coverage:
 - [ ] Add a generation test where the enclosing anchor is a function placeable and the exact edit is asserted.
 - [ ] Add a generation test where the enclosing anchor is inside an attribute value and the exact edit is asserted.
 - [ ] Add a generation test where there is no variable and the whole-form snippet is generated with the exact placeholder text.
@@ -489,6 +571,19 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: selector rewrite
 
+Existing coverage:
+- [code_action_rewrites_whole_selector_to_prefix_and_suffix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6181)
+- [code_action_rewrites_prefix_selector_to_whole](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6254)
+- [code_action_selector_rewrite_preserves_assignment_spacing](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6303)
+- [code_action_rewrites_suffix_selector_to_whole_and_prefix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6367)
+- [code_action_bare_suffix_like_selector_only_offers_prefix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6402)
+- [code_action_rewrites_nested_whole_selector_inside_variant](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6456)
+- [code_action_rewrites_selector_inside_attribute_value](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6599)
+- [attribute_rewrite_range_does_not_consume_comments_or_attribute_key](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6666)
+- [code_action_rewrites_selected_count_selector_with_trailing_suffix_text](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6708)
+- [code_action_rewrites_selected_gender_selector_to_whole_with_nested_count_preserved](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6763)
+
+Missing coverage:
 - [ ] Add a whole->prefix rewrite test where the exact returned rewrite-title set is asserted.
 - [ ] Add a whole->suffix rewrite test where the exact returned rewrite-title set is asserted.
 - [ ] Add a prefix->whole rewrite test where the exact returned rewrite-title set is asserted.
@@ -502,6 +597,15 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: absence and hiding outcomes
 
+Existing coverage:
+- [origin_files_do_not_offer_translation_only_missing_entry_quick_fixes](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2999)
+- [code_action_generation_is_absent_when_message_already_has_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6091)
+- [code_action_generation_is_absent_when_attribute_already_has_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6136)
+- [code_action_rewrite_is_absent_when_message_has_no_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6507)
+- [code_action_rewrite_is_absent_when_attribute_has_no_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6553)
+- [code_action_is_hidden_for_ambiguous_message_keys](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6824)
+
+Missing coverage:
 - [ ] Add a generation-absence test where a message that already has a selector returns no generation actions.
 - [ ] Add a generation-absence test where an attribute that already has a selector returns no generation actions.
 - [ ] Add a rewrite-absence test where a message with no selector returns no rewrite actions.
@@ -517,6 +621,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: positive selector-combination lens
 
+Existing coverage:
+- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826)
+
+Missing coverage:
 - [ ] Add a test where a message with one selector returns the exact title with the correct combination count.
 - [ ] Add a test where a message with two selectors returns the exact title with the correct combination count.
 - [ ] Add a test where a message with three selectors returns the exact title with the correct combination count.
@@ -530,6 +638,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: no-lens outcomes
 
+Existing coverage:
+- [code_lens_returns_empty_list_for_files_without_selector_combinations](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5056)
+
+Missing coverage:
 - [ ] Add a test where a plain message with no selectors returns an exact empty lens array.
 - [ ] Add a test where a selector message with no meaningful expansion opportunity returns an exact empty lens array.
 - [ ] Add a test where an ambiguous selector message returns an exact empty lens array.
@@ -543,6 +655,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: lens contract shape
 
+Existing coverage:
+- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826)
+
+Missing coverage:
 - [ ] Add a contract test that asserts the full returned lens array exactly for the main fixture file.
 - [ ] Add a contract test that asserts the exact command title for every returned lens, not just one representative lens.
 - [ ] Add a contract test that asserts the exact command name for every returned lens, not just one representative lens.
@@ -558,6 +674,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: `window/showDocument` success path
 
+Existing coverage:
+- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826)
+
+Missing coverage:
 - [ ] Add a test where a valid command request opens a temp markdown document through `window/showDocument`.
 - [ ] Add a test where the exact `external = false` value is asserted.
 - [ ] Add a test where the exact `takeFocus = true` value is asserted.
@@ -571,6 +691,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: generated selector-combinations markdown document
 
+Existing coverage:
+- [code_lens_opens_full_selector_combinations_document](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:4826)
+
+Missing coverage:
 - [ ] Add a test where the markdown document starts with the exact expected heading for the selected key.
 - [ ] Add a test where the markdown document contains the exact current-language line.
 - [ ] Add a test where the markdown document contains the exact source-language line.
@@ -584,6 +708,13 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: invalid-params and malformed-argument outcomes
 
+Existing coverage:
+- [execute_command_rejects_unknown_command](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5089)
+- [execute_command_rejects_missing_document_uri_argument](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5112)
+- [execute_command_rejects_missing_fluent_key_argument](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5135)
+- [execute_command_rejects_non_file_document_uris](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:5160)
+
+Missing coverage:
 - [ ] Add a test where an unknown command returns the exact invalid-params error.
 - [ ] Add a test where a missing document URI argument returns the exact invalid-params error.
 - [ ] Add a test where a missing Fluent key argument returns the exact invalid-params error.
@@ -597,6 +728,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: no-`showDocument` capability and failure outcomes
 
+Existing coverage:
+- none yet
+
+Missing coverage:
 - [ ] Add a test where `window/showDocument` is unavailable and the exact spec-compliant failure path is asserted.
 - [ ] Add a test where `window/showDocument` is unavailable and `window/showMessage` is explicitly not sent.
 - [ ] Add a test where the command request still returns an exact response object when `showDocument` is unavailable.
@@ -612,6 +747,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: parse-error diagnostics
 
+Existing coverage:
+- [parse_error_diagnostics_publish_on_save_and_clear_after_fix](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7175)
+
+Missing coverage:
 - [ ] Add a parse-error test where the invalid token is on the first non-empty line in the file.
 - [ ] Add a parse-error test where the invalid token is on the last non-empty line in the file.
 - [ ] Add a parse-error test where the exact severity is asserted.
@@ -625,6 +764,11 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: `LSP-COPY` marker diagnostics
 
+Existing coverage:
+- [lsp_copy_marker_diagnostics_publish_on_save_and_clear_after_removal](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2386)
+- [hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:2486)
+
+Missing coverage:
 - [ ] Add a whole-message marker test where the exact warning message is asserted.
 - [ ] Add a whole-message marker test where the exact severity is asserted.
 - [ ] Add a whole-message marker test where the exact range points at the marker line.
@@ -638,6 +782,10 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: missing origin counterpart file diagnostics
 
+Existing coverage:
+- [local_only_file_warning_updates_when_origin_counterpart_appears](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1401)
+
+Missing coverage:
 - [ ] Add a top-level translation file test where the exact missing-origin-file warning message is asserted.
 - [ ] Add a top-level translation file test where the exact severity is asserted.
 - [ ] Add a top-level translation file test where the exact range is asserted.
@@ -651,6 +799,11 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: translation-only entry and attribute diagnostics
 
+Existing coverage:
+- [translation_only_keys_warn_and_clear_when_origin_adds_counterparts](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1471)
+- [translation_only_warnings_are_absent_for_matching_translation_files](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:1594)
+
+Missing coverage:
 - [ ] Add a translation-only top-level entry test where the exact warning message is asserted.
 - [ ] Add a translation-only top-level entry test where the exact severity is asserted.
 - [ ] Add a translation-only top-level entry test where the exact range is asserted.
@@ -664,6 +817,11 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: unsupported numeric selector key diagnostics
 
+Existing coverage:
+- [diagnostics_report_invalid_numeric_identifier_keys_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7062)
+- [diagnostics_ignore_non_numeric_admin_other_selector](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7103)
+
+Missing coverage:
 - [ ] Add an English invalid-selector-key test where the exact message is asserted.
 - [ ] Add an English invalid-selector-key test where the exact severity is asserted.
 - [ ] Add an English invalid-selector-key test where the exact range is asserted.
@@ -677,6 +835,13 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: plural-category diagnostics
 
+Existing coverage:
+- [diagnostics_are_absent_by_default](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6886)
+- [diagnostics_report_unsupported_and_missing_categories_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6896)
+- [diagnostics_use_unicode_plural_categories_for_ukrainian](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7276)
+- [did_close_clears_document_diagnostics](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7312)
+
+Missing coverage:
 - [ ] Add an English `[zero]` test where the exact unsupported-category message is asserted.
 - [ ] Add an English `[zero]` test where the exact severity is asserted.
 - [ ] Add an English `[zero]` test where the exact range is asserted.
@@ -690,6 +855,13 @@ Each path below needs at least ten exact tests, not one merged happy-path test.
 
 ### Path: selector-style mismatch diagnostics
 
+Existing coverage:
+- [diagnostics_report_selector_style_mismatches_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:6967)
+- [file_config_overrides_client_style_diagnostic_settings](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7009)
+- [diagnostics_do_not_warn_for_complete_numeric_selectors_or_matching_style](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7135)
+- [diagnostics_report_local_selector_style_mismatches_when_enabled](/Users/illiadenysenko/Workspace/lab/fluent-lsp/tests/integration_lsp.rs:7233)
+
+Missing coverage:
 - [ ] Add a translation-file whole-style mismatch test where the exact message is asserted.
 - [ ] Add a translation-file whole-style mismatch test where the exact severity is asserted.
 - [ ] Add a translation-file whole-style mismatch test where the exact range is asserted.
