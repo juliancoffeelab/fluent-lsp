@@ -1,5 +1,7 @@
 /target
+.ralph/
 .nvimlog
+junk/
 benchmarks/flamegraphs/*.stdout
 benchmarks/flamegraphs/*.trace/
 benchmarks/flamegraphs/*.xctrace.xml
