@@ -58,6 +58,37 @@ Criterion:
 make bench-criterion
 ```
 
+Time Profiler:
+
+Dependencies:
+
+- `xcrun xctrace`
+- `inferno-collapse-xctrace`
+- `inferno-flamegraph`
+- `rustfilt`
+
+Run the code-lens profiling flow:
+
+```bash
+make profile-lense
+```
+
+That command:
+
+- builds `fluent-lsp-bench-code-lens`
+- records a Time Profiler trace
+- exports it to time-profile XML
+- collapses stacks into folded format
+- renders an SVG flamegraph and a text tree
+
+Output files:
+
+- `benchmarks/profiles/fluent-lsp-bench-code-lens.trace`
+- `benchmarks/profiles/fluent-lsp-bench-code-lens.time-profile.xml`
+- `benchmarks/profiles/fluent-lsp-bench-code-lens.folded`
+- `benchmarks/profiles/fluent-lsp-bench-code-lens.svg`
+- `benchmarks/profiles/fluent-lsp-bench-code-lens.tree.txt`
+
 Older bounded results and profiling notes are recorded in [STAGES.md](/Users/illiadenysenko/Workspace/lab/fluent-lsp/STAGES.md) and under [benchmarks/](/Users/illiadenysenko/Workspace/lab/fluent-lsp/benchmarks).
 
 Try it locally from this repo:
