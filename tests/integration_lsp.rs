@@ -6329,14 +6329,18 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
         (
             "locales/en/dialogs/menu.ftl",
             "commented-menu =",
-            &[r#"# Attribute hover comment coverage
+            &[r#"### Shared menu copy
+## File menu
+# Attribute hover comment coverage
 # Keep this menu note visible on attribute key hover"#][..],
         ),
         (
             "locales/es/dialogs/menu.ftl",
             "commented-menu =",
             &[
-                r#"# Attribute hover comment coverage
+                r#"### Shared menu copy
+## File menu
+# Attribute hover comment coverage
 # Keep this menu note visible on attribute key hover"#,
                 r#"# Cobertura de comentarios para hover de atributo
 # Mantener visible esta nota en el hover de la clave del atributo"#,
@@ -6346,7 +6350,9 @@ fn hover_key_and_attribute_show_comment_context_across_locale_files() {
             "locales/fr/dialogs/menu.ftl",
             "commented-menu =",
             &[
-                r#"# Attribute hover comment coverage
+                r#"### Shared menu copy
+## File menu
+# Attribute hover comment coverage
 # Keep this menu note visible on attribute key hover"#,
                 r#"# Couverture de commentaire pour hover d attribut
 # Garder cette note visible sur le hover de la cle d attribut"#,
@@ -6577,6 +6583,234 @@ local-note = Texto de vista previa para comentarios de hover.
 }
 
 #[test]
+fn hover_key_keeps_newline_between_adjacent_resource_and_group_comments() {
+    let workspace = temp_workspace(&[(
+        "locales/en/app.ftl",
+        r#"### Shared translator guidance
+## Buttons
+first-button = First
+"#,
+    )]);
+    let source_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_114);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_position = position_of_nth(&source_text, "first-button", 1);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_115,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_115);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(
+            r#"```ftl
+### Shared translator guidance
+## Buttons
+```"#
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn hover_key_keeps_newline_between_separated_resource_and_group_comments() {
+    let workspace = temp_workspace(&[(
+        "locales/en/app.ftl",
+        r#"### Shared translator guidance
+
+## Buttons
+first-button = First
+"#,
+    )]);
+    let source_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_116);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_position = position_of_nth(&source_text, "first-button", 1);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_117,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_117);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(
+            r#"```ftl
+### Shared translator guidance
+## Buttons
+```"#
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn hover_key_keeps_newline_between_adjacent_group_and_message_comments() {
+    let workspace = temp_workspace(&[(
+        "locales/en/app.ftl",
+        r#"## Buttons
+# First action
+first-button = First
+"#,
+    )]);
+    let source_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_118);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_position = position_of_nth(&source_text, "first-button", 1);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_119,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_119);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(
+            r#"```ftl
+## Buttons
+# First action
+```"#
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn hover_key_keeps_newline_between_separated_group_and_message_comments() {
+    let workspace = temp_workspace(&[(
+        "locales/en/app.ftl",
+        r#"## Buttons
+
+# First action
+first-button = First
+"#,
+    )]);
+    let source_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_120);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_position = position_of_nth(&source_text, "first-button", 1);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_121,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_121);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(
+            r#"```ftl
+## Buttons
+# First action
+```"#
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn hover_later_key_still_shows_resource_comment_scope() {
+    let workspace = temp_workspace(&[(
+        "locales/en/app.ftl",
+        r#"### Shared translator guidance
+first-button = First
+second-button = Second
+"#,
+    )]);
+    let source_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_122);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_position = position_of_nth(&source_text, "second-button", 1);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_123,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_123);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(
+            r#"```ftl
+### Shared translator guidance
+```"#
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn hover_later_key_still_shows_group_comment_scope() {
+    let workspace = temp_workspace(&[(
+        "locales/en/app.ftl",
+        r#"## Buttons
+first-button = First
+second-button = Second
+"#,
+    )]);
+    let source_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_124);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_position = position_of_nth(&source_text, "second-button", 1);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_125,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let hover = recv_response(&mut lsp, 6_125);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        Value::String(
+            r#"```ftl
+## Buttons
+```"#
+                .to_string()
+        )
+    );
+}
+
+#[test]
 fn hover_key_without_comments_returns_no_hover() {
     let workspace = temp_workspace(&[
         (
@@ -6593,20 +6827,20 @@ fn hover_key_without_comments_returns_no_hover() {
     let source_path = workspace.path().join("locales/es/app.ftl");
     let source_text = std::fs::read_to_string(&source_path).unwrap();
 
-    let mut lsp = initialized_lsp(workspace.path(), 6_114);
+    let mut lsp = initialized_lsp(workspace.path(), 6_126);
     open_document(&mut lsp, &source_path, &source_text);
 
     let position = position_of_nth(&source_text, "plain-note", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
-        "id": 6_115,
+        "id": 6_127,
         "method": "textDocument/hover",
         "params": {
             "textDocument": { "uri": format!("file://{}", source_path.display()) },
             "position": { "line": position.0, "character": position.1 }
         }
     }));
-    let hover = recv_response(&mut lsp, 6_115);
+    let hover = recv_response(&mut lsp, 6_127);
     assert_eq!(hover["result"], Value::Null);
 }
 
@@ -7953,10 +8187,11 @@ fn execute_command_rejects_malformed_arguments_and_missing_keys_exactly() {
 #[test]
 fn execute_command_requires_show_document_support_and_skips_temp_document_fallback(
 ) {
+    let fluent_key = "install-hint-no-show-document-support";
     let workspace = temp_workspace(&[
         (
             "locales/en/app.ftl",
-            r#"install-hint =
+            r#"install-hint-no-show-document-support =
     { $count ->
         [one] one
        *[other] other
@@ -7965,7 +8200,7 @@ fn execute_command_requires_show_document_support_and_skips_temp_document_fallba
         ),
         (
             "locales/es/app.ftl",
-            r#"install-hint =
+            r#"install-hint-no-show-document-support =
     { $count ->
         [one] uno
        *[other] otros
@@ -7984,6 +8219,9 @@ fn execute_command_requires_show_document_support_and_skips_temp_document_fallba
                     .to_str()
                     .is_some_and(|name| {
                         name.starts_with("fluent-lsp-selector-combinations-")
+                            && name.ends_with(
+                                "-install-hint-no-show-document-support.md",
+                            )
                     })
             })
             .count()
@@ -8001,7 +8239,7 @@ fn execute_command_requires_show_document_support_and_skips_temp_document_fallba
             "command": "fluent-lsp.showSelectorCombinations",
             "arguments": [
                 format!("file://{}", source_path.display()),
-                "install-hint"
+                fluent_key
             ]
         }
     }));

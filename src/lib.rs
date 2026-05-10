@@ -3287,27 +3287,33 @@ fn render_expression_preview(
     }
 }
 
-fn is_free_comment_entry(entry: &Entry<&str>) -> bool {
-    matches!(
-        entry,
-        Entry::Comment(_) | Entry::GroupComment(_) | Entry::ResourceComment(_)
-    )
-}
-
 fn render_comment_source_from_resource(
     source: &str,
     resource: &Resource<&str>,
     entry_index: usize,
 ) -> Option<String> {
     let mut spans = Vec::new();
-    let mut comment_start = entry_index;
-    while comment_start > 0
-        && is_free_comment_entry(&resource.body[comment_start - 1])
-    {
-        comment_start -= 1;
+    let mut resource_comment = None;
+    let mut group_comment = None;
+
+    for comment_entry in &resource.body[..entry_index] {
+        match comment_entry {
+            Entry::ResourceComment(comment) => {
+                resource_comment = Some(comment.span.0.clone());
+                group_comment = None;
+            }
+            Entry::GroupComment(comment) => {
+                group_comment = Some(comment.span.0.clone());
+            }
+            _ => {}
+        }
     }
-    for comment_entry in &resource.body[comment_start..entry_index] {
-        spans.push(comment_entry_span(comment_entry)?);
+
+    if let Some(span) = resource_comment {
+        spans.push(span);
+    }
+    if let Some(span) = group_comment {
+        spans.push(span);
     }
     match &resource.body[entry_index] {
         Entry::Message(message) => {
@@ -3327,7 +3333,13 @@ fn render_comment_source_from_resource(
     }
     let mut rendered = String::new();
     for span in spans {
+        if !rendered.is_empty() && !rendered.ends_with('\n') {
+            rendered.push('\n');
+        }
         rendered.push_str(source.get(span)?);
+        if !rendered.ends_with('\n') {
+            rendered.push('\n');
+        }
     }
     let filtered = rendered
         .lines()
@@ -3339,15 +3351,6 @@ fn render_comment_source_from_resource(
     } else {
         format!("{filtered}\n")
     })
-}
-
-fn comment_entry_span(entry: &Entry<&str>) -> Option<ByteRange<usize>> {
-    match entry {
-        Entry::Comment(comment)
-        | Entry::GroupComment(comment)
-        | Entry::ResourceComment(comment) => Some(comment.span.0.clone()),
-        _ => None,
-    }
 }
 
 fn parse_lsp_copy_marker_line(line: &str) -> Option<LspCopyMarkerKind> {
