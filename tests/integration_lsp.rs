@@ -515,6 +515,541 @@ fn goto_definition_returns_no_location_for_translation_attribute_missing_in_orig
 }
 
 #[test]
+fn goto_definition_top_level_key_position_matrix_and_comment_context_are_exact()
+ {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/first.ftl",
+            r#"first-key = Origin first
+"#,
+        ),
+        (
+            "locales/es/first.ftl",
+            r#"first-key = Local first
+"#,
+        ),
+        (
+            "locales/en/last.ftl",
+            r#"head = Origin head
+last-key = Origin last
+"#,
+        ),
+        (
+            "locales/es/last.ftl",
+            r#"head = Encabezado local
+last-key = Ultima local
+"#,
+        ),
+        (
+            "locales/en/file-comment.ftl",
+            r#"file-key = Origin file key
+"#,
+        ),
+        (
+            "locales/es/file-comment.ftl",
+            r#"### Resource docs
+file-key = Clave archivo
+"#,
+        ),
+        (
+            "locales/en/group-comment.ftl",
+            r#"intro = Intro origin
+group-key = Group origin
+"#,
+        ),
+        (
+            "locales/es/group-comment.ftl",
+            r#"intro = Intro local
+## Group docs
+group-key = Clave grupo
+"#,
+        ),
+        (
+            "locales/en/spaced.ftl",
+            r#"spaced-key = Origin spaced
+"#,
+        ),
+        (
+            "locales/es/spaced.ftl",
+            r#"  spaced-key = Local spaced
+"#,
+        ),
+    ]);
+    let mut lsp = initialized_lsp(workspace.path(), 6_140);
+
+    let first_path = workspace.path().join("locales/es/first.ftl");
+    let first_origin = workspace.path().join("locales/en/first.ftl");
+    let first_text = std::fs::read_to_string(&first_path).unwrap();
+    open_document(&mut lsp, &first_path, &first_text);
+    let first_key_start = position_of(&first_text, "first-key");
+    let first_positions = [
+        ("first-char", first_key_start),
+        ("middle-char", (first_key_start.0, first_key_start.1 + 4)),
+        ("last-char", (first_key_start.0, first_key_start.1 + 8)),
+    ];
+    for (offset, (_label, position)) in first_positions.into_iter().enumerate()
+    {
+        let request_id = 6_141 + i64::try_from(offset).unwrap();
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/definition",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", first_path.display()) },
+                "position": { "line": position.0, "character": position.1 }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(
+            response["result"],
+            json!({
+                "uri": format!("file://{}", first_origin.display()),
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 9 }
+                }
+            })
+        );
+    }
+
+    let first_equals = position_of(&first_text, "=");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_144,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", first_path.display()) },
+            "position": { "line": first_equals.0, "character": first_equals.1 }
+        }
+    }));
+    let first_equals_response = recv_response(&mut lsp, 6_144);
+    assert_eq!(first_equals_response["result"], Value::Null);
+
+    let spaced_path = workspace.path().join("locales/es/spaced.ftl");
+    let spaced_text = std::fs::read_to_string(&spaced_path).unwrap();
+    open_document(&mut lsp, &spaced_path, &spaced_text);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_145,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", spaced_path.display()) },
+            "position": { "line": 0, "character": 0 }
+        }
+    }));
+    let spaced_response = recv_response(&mut lsp, 6_145);
+    assert_eq!(spaced_response["result"], Value::Null);
+
+    let file_comment_path = workspace.path().join("locales/es/file-comment.ftl");
+    let file_comment_origin = workspace.path().join("locales/en/file-comment.ftl");
+    let file_comment_text =
+        std::fs::read_to_string(&file_comment_path).unwrap();
+    open_document(&mut lsp, &file_comment_path, &file_comment_text);
+    let file_comment_position = position_of(&file_comment_text, "file-key");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_146,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", file_comment_path.display()) },
+            "position": {
+                "line": file_comment_position.0,
+                "character": file_comment_position.1
+            }
+        }
+    }));
+    let file_comment_response = recv_response(&mut lsp, 6_146);
+    assert_eq!(
+        file_comment_response["result"],
+        json!({
+            "uri": format!("file://{}", file_comment_origin.display()),
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 8 }
+            }
+        })
+    );
+
+    let group_comment_path =
+        workspace.path().join("locales/es/group-comment.ftl");
+    let group_comment_origin =
+        workspace.path().join("locales/en/group-comment.ftl");
+    let group_comment_text =
+        std::fs::read_to_string(&group_comment_path).unwrap();
+    open_document(&mut lsp, &group_comment_path, &group_comment_text);
+    let group_comment_position = position_of(&group_comment_text, "group-key");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_147,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", group_comment_path.display()) },
+            "position": {
+                "line": group_comment_position.0,
+                "character": group_comment_position.1
+            }
+        }
+    }));
+    let group_comment_response = recv_response(&mut lsp, 6_147);
+    assert_eq!(
+        group_comment_response["result"],
+        json!({
+            "uri": format!("file://{}", group_comment_origin.display()),
+            "range": {
+                "start": { "line": 1, "character": 0 },
+                "end": { "line": 1, "character": 9 }
+            }
+        })
+    );
+
+    let last_path = workspace.path().join("locales/es/last.ftl");
+    let last_origin = workspace.path().join("locales/en/last.ftl");
+    let last_text = std::fs::read_to_string(&last_path).unwrap();
+    open_document(&mut lsp, &last_path, &last_text);
+    let last_position = position_of(&last_text, "last-key");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_148,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", last_path.display()) },
+            "position": {
+                "line": last_position.0,
+                "character": last_position.1
+            }
+        }
+    }));
+    let last_response = recv_response(&mut lsp, 6_148);
+    assert_eq!(
+        last_response["result"],
+        json!({
+            "uri": format!("file://{}", last_origin.display()),
+            "range": {
+                "start": { "line": 1, "character": 0 },
+                "end": { "line": 1, "character": 8 }
+            }
+        })
+    );
+}
+
+#[test]
+fn goto_definition_term_position_matrix_and_comment_context_are_exact() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/first-term.ftl",
+            r#"-brand-name = Origin brand
+"#,
+        ),
+        (
+            "locales/es/first-term.ftl",
+            r#"-brand-name = Marca local
+"#,
+        ),
+        (
+            "locales/en/last-term.ftl",
+            r#"-alias = Alias origin
+-brand-name = Origin last brand
+"#,
+        ),
+        (
+            "locales/es/last-term.ftl",
+            r#"-alias = Alias local
+-brand-name = Marca final
+"#,
+        ),
+        (
+            "locales/en/file-term.ftl",
+            r#"-file-term = Origin file term
+"#,
+        ),
+        (
+            "locales/es/file-term.ftl",
+            r#"### Resource docs
+-file-term = Termino archivo
+"#,
+        ),
+        (
+            "locales/en/group-term.ftl",
+            r#"-lead = Lead origin
+-brand-name = Group origin
+-brand-name-extra = Decoy origin
+"#,
+        ),
+        (
+            "locales/es/group-term.ftl",
+            r#"-lead = Lead local
+## Group docs
+-brand-name = Marca grupo
+"#,
+        ),
+        (
+            "locales/en/spaced-term.ftl",
+            r#"-spaced-term = Origin spaced term
+"#,
+        ),
+        (
+            "locales/es/spaced-term.ftl",
+            r#"  -spaced-term = Local spaced term
+"#,
+        ),
+    ]);
+    let mut lsp = initialized_lsp(workspace.path(), 6_150);
+
+    let first_path = workspace.path().join("locales/es/first-term.ftl");
+    let first_origin = workspace.path().join("locales/en/first-term.ftl");
+    let first_text = std::fs::read_to_string(&first_path).unwrap();
+    open_document(&mut lsp, &first_path, &first_text);
+    let dash_position = position_of(&first_text, "-brand-name");
+    let first_alpha = position_of(&first_text, "brand-name");
+    let last_character = (first_alpha.0, first_alpha.1 + 9);
+    let term_positions = [dash_position, first_alpha, last_character];
+    for (offset, position) in term_positions.into_iter().enumerate() {
+        let request_id = 6_151 + i64::try_from(offset).unwrap();
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/definition",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", first_path.display()) },
+                "position": { "line": position.0, "character": position.1 }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(
+            response["result"],
+            json!({
+                "uri": format!("file://{}", first_origin.display()),
+                "range": {
+                    "start": { "line": 0, "character": 1 },
+                    "end": { "line": 0, "character": 11 }
+                }
+            })
+        );
+    }
+
+    let first_equals = position_of(&first_text, "=");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_154,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", first_path.display()) },
+            "position": { "line": first_equals.0, "character": first_equals.1 }
+        }
+    }));
+    let first_equals_response = recv_response(&mut lsp, 6_154);
+    assert_eq!(first_equals_response["result"], Value::Null);
+
+    let spaced_path = workspace.path().join("locales/es/spaced-term.ftl");
+    let spaced_text = std::fs::read_to_string(&spaced_path).unwrap();
+    open_document(&mut lsp, &spaced_path, &spaced_text);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_155,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", spaced_path.display()) },
+            "position": { "line": 0, "character": 0 }
+        }
+    }));
+    let spaced_response = recv_response(&mut lsp, 6_155);
+    assert_eq!(spaced_response["result"], Value::Null);
+
+    let file_term_path = workspace.path().join("locales/es/file-term.ftl");
+    let file_term_origin = workspace.path().join("locales/en/file-term.ftl");
+    let file_term_text = std::fs::read_to_string(&file_term_path).unwrap();
+    open_document(&mut lsp, &file_term_path, &file_term_text);
+    let file_term_position = position_of(&file_term_text, "file-term");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_156,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", file_term_path.display()) },
+            "position": {
+                "line": file_term_position.0,
+                "character": file_term_position.1
+            }
+        }
+    }));
+    let file_term_response = recv_response(&mut lsp, 6_156);
+    assert_eq!(
+        file_term_response["result"],
+        json!({
+            "uri": format!("file://{}", file_term_origin.display()),
+            "range": {
+                "start": { "line": 0, "character": 1 },
+                "end": { "line": 0, "character": 10 }
+            }
+        })
+    );
+
+    let group_term_path = workspace.path().join("locales/es/group-term.ftl");
+    let group_term_origin = workspace.path().join("locales/en/group-term.ftl");
+    let group_term_text = std::fs::read_to_string(&group_term_path).unwrap();
+    open_document(&mut lsp, &group_term_path, &group_term_text);
+    let group_term_position = position_of(&group_term_text, "brand-name");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_157,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", group_term_path.display()) },
+            "position": {
+                "line": group_term_position.0,
+                "character": group_term_position.1
+            }
+        }
+    }));
+    let group_term_response = recv_response(&mut lsp, 6_157);
+    assert_eq!(
+        group_term_response["result"],
+        json!({
+            "uri": format!("file://{}", group_term_origin.display()),
+            "range": {
+                "start": { "line": 1, "character": 1 },
+                "end": { "line": 1, "character": 11 }
+            }
+        })
+    );
+
+    let last_path = workspace.path().join("locales/es/last-term.ftl");
+    let last_origin = workspace.path().join("locales/en/last-term.ftl");
+    let last_text = std::fs::read_to_string(&last_path).unwrap();
+    open_document(&mut lsp, &last_path, &last_text);
+    let last_position = position_of(&last_text, "brand-name");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_158,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", last_path.display()) },
+            "position": {
+                "line": last_position.0,
+                "character": last_position.1
+            }
+        }
+    }));
+    let last_response = recv_response(&mut lsp, 6_158);
+    assert_eq!(
+        last_response["result"],
+        json!({
+            "uri": format!("file://{}", last_origin.display()),
+            "range": {
+                "start": { "line": 1, "character": 1 },
+                "end": { "line": 1, "character": 11 }
+            }
+        })
+    );
+}
+
+#[test]
+fn goto_definition_no_location_outcomes_cover_remaining_matrix_cases() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"shared-key = Origin key
+-origin-term = Origin term
+-shared-term = Shared origin term
+button =
+    .label = Origin label
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"shared-key = Clave local
+-origin-term = Termino origen
+-shared-term = Termino compartido
+-local-term = Termino local
+button =
+    .label = Etiqueta local
+"#,
+        ),
+        (
+            "locales/es/dialogs/orphan.ftl",
+            r#"orphan-key = Huerfano
+"#,
+        ),
+    ]);
+    let mut lsp = initialized_lsp(workspace.path(), 6_160);
+
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+    open_document(&mut lsp, &origin_path, &origin_text);
+
+    let origin_term_position = position_of(&origin_text, "origin-term");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_161,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": {
+                "line": origin_term_position.0,
+                "character": origin_term_position.1
+            }
+        }
+    }));
+    let origin_term_response = recv_response(&mut lsp, 6_161);
+    assert_eq!(origin_term_response["result"], Value::Null);
+
+    let origin_attribute_position = position_of(&origin_text, ".label =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_162,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": {
+                "line": origin_attribute_position.0,
+                "character": origin_attribute_position.1
+            }
+        }
+    }));
+    let origin_attribute_response = recv_response(&mut lsp, 6_162);
+    assert_eq!(origin_attribute_response["result"], Value::Null);
+
+    let translation_path = workspace.path().join("locales/es/app.ftl");
+    let translation_text = std::fs::read_to_string(&translation_path).unwrap();
+    open_document(&mut lsp, &translation_path, &translation_text);
+
+    let local_term_position = position_of(&translation_text, "local-term");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_163,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": {
+                "line": local_term_position.0,
+                "character": local_term_position.1
+            }
+        }
+    }));
+    let local_term_response = recv_response(&mut lsp, 6_163);
+    assert_eq!(local_term_response["result"], Value::Null);
+
+    let orphan_path = workspace.path().join("locales/es/dialogs/orphan.ftl");
+    let orphan_text = std::fs::read_to_string(&orphan_path).unwrap();
+    open_document(&mut lsp, &orphan_path, &orphan_text);
+    let orphan_position = position_of(&orphan_text, "orphan-key");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_164,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", orphan_path.display()) },
+            "position": {
+                "line": orphan_position.0,
+                "character": orphan_position.1
+            }
+        }
+    }));
+    let orphan_response = recv_response(&mut lsp, 6_164);
+    assert_eq!(orphan_response["result"], Value::Null);
+}
+
+#[test]
 fn completion_rejects_files_outside_the_configured_workspace() {
     let root = fixture_root();
     let mut lsp = initialized_lsp(&root, 8);
@@ -914,6 +1449,825 @@ fn references_reject_files_outside_the_configured_workspace() {
 }
 
 #[test]
+fn references_origin_top_level_key_position_matrix_and_exact_results() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/ref-top.ftl",
+            r#"stable-key = Origin stable
+"#,
+        ),
+        (
+            "locales/es/ref-top.ftl",
+            r#"### Reference docs
+stable-key = Clave estable
+"#,
+        ),
+        (
+            "locales/fr/ref-top.ftl",
+            r#"intro = Introduction
+stable-key = Cle stable
+"#,
+        ),
+        (
+            "locales/uk/ref-top.ftl",
+            r#"other-key = Insha
+"#,
+        ),
+        (
+            "locales/en/last-ref.ftl",
+            r#"head = Head origin
+last-key = Origin last
+"#,
+        ),
+        (
+            "locales/es/last-ref.ftl",
+            r#"head = Cabeza local
+last-key = Ultima local
+"#,
+        ),
+    ]);
+    let mut lsp = initialized_lsp(workspace.path(), 6_170);
+
+    let origin_path = workspace.path().join("locales/en/ref-top.ftl");
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+    open_document(&mut lsp, &origin_path, &origin_text);
+    let key_start = position_of(&origin_text, "stable-key");
+    let positions = [
+        key_start,
+        (key_start.0, key_start.1 + 5),
+        (key_start.0, key_start.1 + 9),
+    ];
+    for (offset, position) in positions.into_iter().enumerate() {
+        let request_id = 6_171 + i64::try_from(offset).unwrap();
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/references",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+                "position": { "line": position.0, "character": position.1 },
+                "context": { "includeDeclaration": true }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(
+            response["result"],
+            json!([
+                {
+                    "uri": format!("file://{}", origin_path.display()),
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 0, "character": 10 }
+                    }
+                },
+                {
+                    "uri": format!("file://{}", workspace.path().join("locales/es/ref-top.ftl").display()),
+                    "range": {
+                        "start": { "line": 1, "character": 0 },
+                        "end": { "line": 1, "character": 10 }
+                    }
+                },
+                {
+                    "uri": format!("file://{}", workspace.path().join("locales/fr/ref-top.ftl").display()),
+                    "range": {
+                        "start": { "line": 1, "character": 0 },
+                        "end": { "line": 1, "character": 10 }
+                    }
+                }
+            ])
+        );
+    }
+
+    let last_origin_path = workspace.path().join("locales/en/last-ref.ftl");
+    let last_origin_text = std::fs::read_to_string(&last_origin_path).unwrap();
+    open_document(&mut lsp, &last_origin_path, &last_origin_text);
+    let last_position = position_of(&last_origin_text, "last-key");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_174,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", last_origin_path.display()) },
+            "position": { "line": last_position.0, "character": last_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let last_response = recv_response(&mut lsp, 6_174);
+    assert_eq!(
+        last_response["result"],
+        json!([{
+            "uri": format!("file://{}", workspace.path().join("locales/es/last-ref.ftl").display()),
+            "range": {
+                "start": { "line": 1, "character": 0 },
+                "end": { "line": 1, "character": 8 }
+            }
+        }])
+    );
+}
+
+#[test]
+fn references_origin_term_position_matrix_and_exact_results() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/ref-term.ftl",
+            r#"-brand-name = Origin brand
+"#,
+        ),
+        (
+            "locales/es/ref-term.ftl",
+            r#"### Term docs
+-brand-name = Marca estable
+"#,
+        ),
+        (
+            "locales/fr/ref-term.ftl",
+            r#"## Group docs
+-brand-name = Marque stable
+"#,
+        ),
+        (
+            "locales/uk/ref-term.ftl",
+            r#"-brand = Prefijo solamente
+"#,
+        ),
+        (
+            "locales/en/last-term-ref.ftl",
+            r#"-alias = Alias origin
+-brand-name = Origin last brand
+"#,
+        ),
+        (
+            "locales/es/last-term-ref.ftl",
+            r#"-alias = Alias local
+-brand-name = Marca final
+"#,
+        ),
+    ]);
+    let mut lsp = initialized_lsp(workspace.path(), 6_180);
+
+    let origin_path = workspace.path().join("locales/en/ref-term.ftl");
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+    open_document(&mut lsp, &origin_path, &origin_text);
+    let dash_position = position_of(&origin_text, "-brand-name");
+    let first_alpha = position_of(&origin_text, "brand-name");
+    let last_character = (first_alpha.0, first_alpha.1 + 9);
+    let positions = [dash_position, first_alpha, last_character];
+    for (offset, position) in positions.into_iter().enumerate() {
+        let request_id = 6_181 + i64::try_from(offset).unwrap();
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/references",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+                "position": { "line": position.0, "character": position.1 },
+                "context": { "includeDeclaration": false }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(
+            response["result"],
+            json!([
+                {
+                    "uri": format!("file://{}", workspace.path().join("locales/es/ref-term.ftl").display()),
+                    "range": {
+                        "start": { "line": 1, "character": 1 },
+                        "end": { "line": 1, "character": 11 }
+                    }
+                },
+                {
+                    "uri": format!("file://{}", workspace.path().join("locales/fr/ref-term.ftl").display()),
+                    "range": {
+                        "start": { "line": 1, "character": 1 },
+                        "end": { "line": 1, "character": 11 }
+                    }
+                }
+            ])
+        );
+    }
+
+    let last_origin_path =
+        workspace.path().join("locales/en/last-term-ref.ftl");
+    let last_origin_text = std::fs::read_to_string(&last_origin_path).unwrap();
+    open_document(&mut lsp, &last_origin_path, &last_origin_text);
+    let last_position = position_of(&last_origin_text, "brand-name");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_184,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", last_origin_path.display()) },
+            "position": { "line": last_position.0, "character": last_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let last_response = recv_response(&mut lsp, 6_184);
+    assert_eq!(
+        last_response["result"],
+        json!([{
+            "uri": format!("file://{}", workspace.path().join("locales/es/last-term-ref.ftl").display()),
+            "range": {
+                "start": { "line": 1, "character": 1 },
+                "end": { "line": 1, "character": 11 }
+            }
+        }])
+    );
+}
+
+#[test]
+fn references_origin_attribute_position_matrix_and_exact_results() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/ref-attr.ftl",
+            r#"button =
+    .label = Origin label
+    .tooltip = Origin tooltip
+"#,
+        ),
+        (
+            "locales/es/ref-attr.ftl",
+            r#"button =
+    .label = Etiqueta local
+    .tooltip = Ayuda local
+"#,
+        ),
+        (
+            "locales/de/ref-attr.ftl",
+            r#"button =
+    .label = Bezeichnung lokal
+    .tooltip = Hinweis lokal
+"#,
+        ),
+        (
+            "locales/fr/ref-attr.ftl",
+            r#"button =
+    .label = Etiquette locale
+"#,
+        ),
+        (
+            "locales/en/dialogs/menu.ftl",
+            r#"menu-save =
+    .label = Save
+    .tooltip = Save this file
+"#,
+        ),
+        (
+            "locales/es/dialogs/menu.ftl",
+            r#"menu-save =
+    .label = Guardar
+    .tooltip = Guardar este archivo
+"#,
+        ),
+        (
+            "locales/de/dialogs/menu.ftl",
+            r#"menu-save =
+    .label = Speichern
+    .tooltip = Diese Datei speichern
+"#,
+        ),
+    ]);
+    let mut lsp = initialized_lsp(workspace.path(), 6_185);
+
+    let origin_path = workspace.path().join("locales/en/ref-attr.ftl");
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+    open_document(&mut lsp, &origin_path, &origin_text);
+
+    let top_level_first_dot = position_of(&origin_text, ".label =");
+    let top_level_first_name = position_of(&origin_text, "label =");
+    let top_level_first_last =
+        (top_level_first_name.0, top_level_first_name.1 + 4);
+    let top_level_first_positions = [
+        top_level_first_dot,
+        top_level_first_name,
+        top_level_first_last,
+    ];
+    for (offset, position) in top_level_first_positions.into_iter().enumerate() {
+        let request_id = 6_186 + i64::try_from(offset).unwrap();
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/references",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+                "position": { "line": position.0, "character": position.1 },
+                "context": { "includeDeclaration": false }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(
+            response["result"],
+            json!([
+                {
+                    "uri": format!("file://{}", workspace.path().join("locales/de/ref-attr.ftl").display()),
+                    "range": {
+                        "start": { "line": 1, "character": 5 },
+                        "end": { "line": 1, "character": 10 }
+                    }
+                },
+                {
+                    "uri": format!("file://{}", workspace.path().join("locales/es/ref-attr.ftl").display()),
+                    "range": {
+                        "start": { "line": 1, "character": 5 },
+                        "end": { "line": 1, "character": 10 }
+                    }
+                },
+                {
+                    "uri": format!("file://{}", workspace.path().join("locales/fr/ref-attr.ftl").display()),
+                    "range": {
+                        "start": { "line": 1, "character": 5 },
+                        "end": { "line": 1, "character": 10 }
+                    }
+                }
+            ])
+        );
+    }
+
+    let top_level_last_position = position_of(&origin_text, ".tooltip =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_189,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": {
+                "line": top_level_last_position.0,
+                "character": top_level_last_position.1
+            },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let top_level_last_response = recv_response(&mut lsp, 6_189);
+    assert_eq!(
+        top_level_last_response["result"],
+        json!([
+            {
+                "uri": format!("file://{}", workspace.path().join("locales/de/ref-attr.ftl").display()),
+                "range": {
+                    "start": { "line": 2, "character": 5 },
+                    "end": { "line": 2, "character": 12 }
+                }
+            },
+            {
+                "uri": format!("file://{}", workspace.path().join("locales/es/ref-attr.ftl").display()),
+                "range": {
+                    "start": { "line": 2, "character": 5 },
+                    "end": { "line": 2, "character": 12 }
+                }
+            }
+        ])
+    );
+
+    let nested_origin_path =
+        workspace.path().join("locales/en/dialogs/menu.ftl");
+    let nested_origin_text =
+        std::fs::read_to_string(&nested_origin_path).unwrap();
+    open_document(&mut lsp, &nested_origin_path, &nested_origin_text);
+
+    let nested_first_position = position_of(&nested_origin_text, ".label =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_190,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_origin_path.display()) },
+            "position": {
+                "line": nested_first_position.0,
+                "character": nested_first_position.1
+            },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let nested_first_response = recv_response(&mut lsp, 6_190);
+    assert_eq!(
+        nested_first_response["result"],
+        json!([
+            {
+                "uri": format!("file://{}", workspace.path().join("locales/de/dialogs/menu.ftl").display()),
+                "range": {
+                    "start": { "line": 1, "character": 5 },
+                    "end": { "line": 1, "character": 10 }
+                }
+            },
+            {
+                "uri": format!("file://{}", workspace.path().join("locales/es/dialogs/menu.ftl").display()),
+                "range": {
+                    "start": { "line": 1, "character": 5 },
+                    "end": { "line": 1, "character": 10 }
+                }
+            }
+        ])
+    );
+
+    let nested_last_position = position_of(&nested_origin_text, ".tooltip =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_191,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_origin_path.display()) },
+            "position": {
+                "line": nested_last_position.0,
+                "character": nested_last_position.1
+            },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let nested_last_response = recv_response(&mut lsp, 6_191);
+    assert_eq!(
+        nested_last_response["result"],
+        json!([
+            {
+                "uri": format!("file://{}", workspace.path().join("locales/de/dialogs/menu.ftl").display()),
+                "range": {
+                    "start": { "line": 2, "character": 5 },
+                    "end": { "line": 2, "character": 12 }
+                }
+            },
+            {
+                "uri": format!("file://{}", workspace.path().join("locales/es/dialogs/menu.ftl").display()),
+                "range": {
+                    "start": { "line": 2, "character": 5 },
+                    "end": { "line": 2, "character": 12 }
+                }
+            }
+        ])
+    );
+}
+
+#[test]
+fn references_no_result_outcomes_cover_remaining_matrix_cases() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/orphan-term.ftl",
+            r#"-orphan-term = Origin orphan
+"#,
+        ),
+        (
+            "locales/es/orphan-term.ftl",
+            r#"-different-term = Termino distinto
+"#,
+        ),
+        (
+            "locales/en/translation-side.ftl",
+            r#"shared-key = Origin shared
+-shared-term = Origin shared term
+button =
+    .label = Origin label
+"#,
+        ),
+        (
+            "locales/es/translation-side.ftl",
+            r#"shared-key = Clave local
+-shared-term = Termino compartido
+button =
+    .label = Etiqueta local
+"#,
+        ),
+        (
+            "locales/en/equals.ftl",
+            r#"exact-key = Exact value
+"#,
+        ),
+        (
+            "locales/en/spaced-origin.ftl",
+            r#"  spaced-key = Invalid origin spacing
+"#,
+        ),
+        (
+            "locales/es/spaced-origin.ftl",
+            r#"spaced-key = Local spaced key
+"#,
+        ),
+    ]);
+    let mut lsp = initialized_lsp(workspace.path(), 6_190);
+
+    let orphan_origin = workspace.path().join("locales/en/orphan-term.ftl");
+    let orphan_origin_text = std::fs::read_to_string(&orphan_origin).unwrap();
+    open_document(&mut lsp, &orphan_origin, &orphan_origin_text);
+    let orphan_position = position_of(&orphan_origin_text, "orphan-term");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_191,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", orphan_origin.display()) },
+            "position": {
+                "line": orphan_position.0,
+                "character": orphan_position.1
+            },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let orphan_response = recv_response(&mut lsp, 6_191);
+    assert_eq!(orphan_response["result"], Value::Array(Vec::new()));
+
+    let translation_path = workspace.path().join("locales/es/translation-side.ftl");
+    let translation_text = std::fs::read_to_string(&translation_path).unwrap();
+    open_document(&mut lsp, &translation_path, &translation_text);
+
+    let translation_term_position = position_of(&translation_text, "shared-term");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_192,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": {
+                "line": translation_term_position.0,
+                "character": translation_term_position.1
+            },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let translation_term_response = recv_response(&mut lsp, 6_192);
+    assert_eq!(translation_term_response["result"], Value::Null);
+
+    let translation_attribute_position = position_of(&translation_text, ".label =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_193,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": {
+                "line": translation_attribute_position.0,
+                "character": translation_attribute_position.1
+            },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let translation_attribute_response = recv_response(&mut lsp, 6_193);
+    assert_eq!(translation_attribute_response["result"], Value::Null);
+
+    let equals_origin = workspace.path().join("locales/en/equals.ftl");
+    let equals_text = std::fs::read_to_string(&equals_origin).unwrap();
+    open_document(&mut lsp, &equals_origin, &equals_text);
+    let equals_position = position_of(&equals_text, "=");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_194,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", equals_origin.display()) },
+            "position": {
+                "line": equals_position.0,
+                "character": equals_position.1
+            },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let equals_response = recv_response(&mut lsp, 6_194);
+    assert_eq!(equals_response["result"], Value::Null);
+
+    let spaced_origin = workspace.path().join("locales/en/spaced-origin.ftl");
+    let spaced_text = std::fs::read_to_string(&spaced_origin).unwrap();
+    open_document(&mut lsp, &spaced_origin, &spaced_text);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_195,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", spaced_origin.display()) },
+            "position": { "line": 0, "character": 0 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let spaced_response = recv_response(&mut lsp, 6_195);
+    assert_eq!(spaced_response["result"], Value::Null);
+}
+
+#[test]
+fn indexed_references_cover_dirty_overlay_and_nested_refresh_matrix() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"download-action = Download
+-brand-name = Brand
+button =
+    .label = Label
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"hello = Hola
+"#,
+        ),
+        (
+            "locales/en/dialogs/menu.ftl",
+            r#"menu-save =
+    .label = Save
+"#,
+        ),
+    ]);
+    let mut lsp = initialized_lsp(workspace.path(), 6_200);
+
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+    open_document(&mut lsp, &origin_path, &origin_text);
+    let top_level_position = position_of(&origin_text, "download-action");
+    let term_position = position_of(&origin_text, "brand-name");
+    let attribute_position = position_of(&origin_text, ".label =");
+
+    for (request_id, position) in [
+        (6_201, top_level_position),
+        (6_202, term_position),
+        (6_203, attribute_position),
+    ] {
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/references",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+                "position": { "line": position.0, "character": position.1 },
+                "context": { "includeDeclaration": false }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"], Value::Array(Vec::new()));
+    }
+
+    let translation_path = workspace.path().join("locales/es/app.ftl");
+    let overlay_with_references = r#"download-action = Descargar
+-brand-name = Marca
+button =
+    .label = Etiqueta
+"#;
+    send_open_document(&mut lsp, &translation_path, overlay_with_references);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_204,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": { "line": top_level_position.0, "character": top_level_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let top_level_overlay_response = recv_response(&mut lsp, 6_204);
+    assert_eq!(
+        top_level_overlay_response["result"],
+        json!([{
+            "uri": format!("file://{}", translation_path.display()),
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 15 }
+            }
+        }])
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_205,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": { "line": term_position.0, "character": term_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let term_overlay_response = recv_response(&mut lsp, 6_205);
+    assert_eq!(
+        term_overlay_response["result"],
+        json!([{
+            "uri": format!("file://{}", translation_path.display()),
+            "range": {
+                "start": { "line": 1, "character": 1 },
+                "end": { "line": 1, "character": 11 }
+            }
+        }])
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_206,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": { "line": attribute_position.0, "character": attribute_position.1 },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let attribute_overlay_response = recv_response(&mut lsp, 6_206);
+    assert_eq!(
+        attribute_overlay_response["result"],
+        json!([{
+            "uri": format!("file://{}", translation_path.display()),
+            "range": {
+                "start": { "line": 3, "character": 5 },
+                "end": { "line": 3, "character": 10 }
+            }
+        }])
+    );
+
+    let overlay_without_references = r#"hello = Hola
+"#;
+    send_change_document(&mut lsp, &translation_path, 2, overlay_without_references);
+
+    for (request_id, position) in [
+        (6_207, top_level_position),
+        (6_208, term_position),
+        (6_209, attribute_position),
+    ] {
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/references",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+                "position": { "line": position.0, "character": position.1 },
+                "context": { "includeDeclaration": false }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"], Value::Array(Vec::new()));
+    }
+
+    send_change_document(&mut lsp, &translation_path, 3, overlay_with_references);
+    send_close_document(&mut lsp, &translation_path);
+    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+
+    for (request_id, position) in [
+        (6_210, top_level_position),
+        (6_211, term_position),
+        (6_212, attribute_position),
+    ] {
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/references",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+                "position": { "line": position.0, "character": position.1 },
+                "context": { "includeDeclaration": false }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"], Value::Array(Vec::new()));
+    }
+
+    let nested_origin_path =
+        workspace.path().join("locales/en/dialogs/menu.ftl");
+    let nested_origin_text =
+        std::fs::read_to_string(&nested_origin_path).unwrap();
+    open_document(&mut lsp, &nested_origin_path, &nested_origin_text);
+    let nested_attribute_position = position_of(&nested_origin_text, ".label =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_213,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_origin_path.display()) },
+            "position": {
+                "line": nested_attribute_position.0,
+                "character": nested_attribute_position.1
+            },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let nested_before_refresh = recv_response(&mut lsp, 6_213);
+    assert_eq!(nested_before_refresh["result"], Value::Array(Vec::new()));
+
+    let nested_translation_path =
+        workspace.path().join("locales/fr/dialogs/menu.ftl");
+    std::fs::create_dir_all(nested_translation_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &nested_translation_path,
+        r#"menu-save =
+    .label = Enregistrer
+"#,
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_214,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_origin_path.display()) },
+            "position": {
+                "line": nested_attribute_position.0,
+                "character": nested_attribute_position.1
+            },
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let nested_after_refresh = recv_response(&mut lsp, 6_214);
+    assert_eq!(
+        nested_after_refresh["result"],
+        json!([{
+            "uri": format!("file://{}", nested_translation_path.display()),
+            "range": {
+                "start": { "line": 1, "character": 5 },
+                "end": { "line": 1, "character": 10 }
+            }
+        }])
+    );
+}
+
+#[test]
 fn initialized_builds_index_and_reports_progress_when_supported() {
     let root = fixture_root();
     let mut lsp = LspProcess::start();
@@ -1169,6 +2523,279 @@ fn set_trace_enables_request_timings_after_initialize() {
 }
 
 #[test]
+fn verbose_trace_reports_remaining_request_operations_exactly() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"local-only-help = Source help
+
+install-hint =
+    Copy the download link for { $gender ->
+        [female] her
+       *[other] their
+    } account on { $count } { $count ->
+        [one] device
+       *[other] devices
+    } now.
+
+coins-line = You have { $coins } coins.
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"install-hint =
+    Copia el enlace de descarga para la cuenta de { $gender ->
+        [female] ella
+       *[other] elle
+    } en { $count } { $count ->
+        [one] dispositivo
+       *[other] dispositivos
+    } ahora.
+
+coins-line = Tienes { $coins } monedas.
+"#,
+        ),
+    ]);
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 159,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", workspace.path().display()),
+            "trace": "verbose",
+            "capabilities": {
+                "window": {
+                    "showDocument": {
+                        "support": true
+                    }
+                }
+            }
+        }
+    }));
+    assert_eq!(lsp.recv()["id"], 159);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    let init_notifications = recv_notifications_for_methods(
+        &mut lsp,
+        &["window/logMessage", "$/logTrace"],
+    );
+    assert!(
+        init_notifications["$/logTrace"]["params"]["verbose"]
+            .as_str()
+            .is_some_and(|verbose| verbose.starts_with("files="))
+    );
+
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let references_position = position_of(&origin_text, "install-hint");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 160,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": {
+                "line": references_position.0,
+                "character": references_position.1
+            },
+            "context": {
+                "includeDeclaration": false
+            }
+        }
+    }));
+    let (references, references_trace) =
+        recv_response_and_notification(&mut lsp, 160, "$/logTrace");
+    let reference_count = references["result"].as_array().unwrap().len();
+    assert_eq!(
+        references_trace["params"]["verbose"],
+        Value::String(format!("count={reference_count}"))
+    );
+    assert!(
+        references_trace["params"]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with(
+                "fluent-lsp timing operation=textDocument/references elapsed_ms="
+            ))
+    );
+
+    let hover_position = position_of(&source_text, "Copia el enlace");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 161,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": {
+                "line": hover_position.0,
+                "character": hover_position.1
+            }
+        }
+    }));
+    let (_, hover_trace) =
+        recv_response_and_notification(&mut lsp, 161, "$/logTrace");
+    assert_eq!(
+        hover_trace["params"]["verbose"],
+        Value::String("hit=true".to_string())
+    );
+    assert!(
+        hover_trace["params"]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with(
+                "fluent-lsp timing operation=textDocument/hover elapsed_ms="
+            ))
+    );
+
+    let action_position = position_of(&source_text, "$coins");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 162,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "range": {
+                "start": {
+                    "line": action_position.0,
+                    "character": action_position.1
+                },
+                "end": {
+                    "line": action_position.0,
+                    "character": action_position.1
+                }
+            },
+            "context": {
+                "diagnostics": []
+            }
+        }
+    }));
+    let (actions, actions_trace) =
+        recv_response_and_notification(&mut lsp, 162, "$/logTrace");
+    let action_count = actions["result"].as_array().unwrap().len();
+    assert_eq!(
+        actions_trace["params"]["verbose"],
+        Value::String(format!("count={action_count}"))
+    );
+    assert!(
+        actions_trace["params"]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with(
+                "fluent-lsp timing operation=textDocument/codeAction elapsed_ms="
+            ))
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 163,
+        "method": "textDocument/codeLens",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) }
+        }
+    }));
+    let (lenses, lenses_trace) =
+        recv_response_and_notification(&mut lsp, 163, "$/logTrace");
+    let lens_count = lenses["result"].as_array().unwrap().len();
+    assert_eq!(
+        lenses_trace["params"]["verbose"],
+        Value::String(format!("count={lens_count}"))
+    );
+    assert!(
+        lenses_trace["params"]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with(
+                "fluent-lsp timing operation=textDocument/codeLens elapsed_ms="
+            ))
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 164,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": "fluent-lsp.showSelectorCombinations",
+            "arguments": [
+                format!("file://{}", source_path.display()),
+                "install-hint"
+            ]
+        }
+    }));
+    let request = lsp.recv();
+    assert_eq!(request["method"], "window/showDocument");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": {
+            "success": true
+        }
+    }));
+    let mut command_trace = None;
+    let mut command_response = None;
+    while command_trace.is_none() || command_response.is_none() {
+        let message = lsp.recv();
+        if command_trace.is_none()
+            && message["method"] == Value::String("$/logTrace".to_string())
+        {
+            command_trace = Some(message);
+            continue;
+        }
+        if command_response.is_none() && message["id"] == Value::from(164) {
+            command_response = Some(message);
+        }
+    }
+    let command_trace = command_trace.expect("missing execute-command trace");
+    let command_response =
+        command_response.expect("missing execute-command response");
+    assert_eq!(command_response["result"], Value::Null);
+    assert_eq!(
+        command_trace["params"]["verbose"],
+        Value::String(
+            "command=fluent-lsp.showSelectorCombinations ok=true".to_string()
+        )
+    );
+    assert!(
+        command_trace["params"]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with(
+                "fluent-lsp timing operation=workspace/executeCommand elapsed_ms="
+            ))
+    );
+
+    let completion_text = format!("{source_text}\nlo");
+    send_change_document(&mut lsp, &source_path, 2, &completion_text);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 165,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": 10, "character": 2 }
+        }
+    }));
+    let (completion, completion_trace) =
+        recv_response_and_notification(&mut lsp, 165, "$/logTrace");
+    let completion_count = completion["result"].as_array().unwrap().len();
+    assert_eq!(
+        completion_trace["params"]["verbose"],
+        Value::String(format!("count={completion_count}"))
+    );
+    assert!(
+        completion_trace["params"]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with(
+                "fluent-lsp timing operation=textDocument/completion elapsed_ms="
+            ))
+    );
+}
+
+#[test]
 fn indexed_requests_reflect_live_origin_changes_without_restart() {
     let workspace = completion_workspace();
     let origin_path = workspace.path().join("locales/en/app.ftl");
@@ -1253,6 +2880,305 @@ fresh-key = Fresh origin value
     .map(|item| item["label"].as_str().unwrap().to_string())
     .collect::<Vec<_>>();
     assert_eq!(labels, vec!["fresh-key".to_string()]);
+}
+
+#[test]
+fn background_refresh_updates_indexed_origin_content_for_definition_hover_and_completion(
+) {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"hello = Hello
+
+# Original hover docs
+download-action = Download
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"hello = Hola
+download-action = Descargar
+"#,
+        ),
+    ]);
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let translation_path = workspace.path().join("locales/es/app.ftl");
+    let translation_text = std::fs::read_to_string(&translation_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 148_100);
+    open_document(&mut lsp, &translation_path, &translation_text);
+
+    let key_position = position_of_nth(&translation_text, "download-action", 1);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 148_101,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let initial_definition = recv_response(&mut lsp, 148_101);
+    assert_eq!(
+        initial_definition["result"],
+        json!({
+            "uri": format!("file://{}", origin_path.display()),
+            "range": {
+                "start": { "line": 3, "character": 0 },
+                "end": { "line": 3, "character": 15 }
+            }
+        })
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 148_102,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let initial_hover = recv_response(&mut lsp, 148_102);
+    assert_eq!(
+        initial_hover["result"]["contents"]["value"],
+        Value::String(
+            r#"```ftl
+# Original hover docs
+```"#
+                .to_string()
+        )
+    );
+
+    let completion_text = "new";
+    send_change_document(&mut lsp, &translation_path, 2, completion_text);
+    let completion_position = position_after(completion_text, "new");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 148_103,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": {
+                "line": completion_position.0,
+                "character": completion_position.1
+            }
+        }
+    }));
+    let initial_completion = recv_response(&mut lsp, 148_103);
+    assert_eq!(initial_completion["result"], Value::Array(Vec::new()));
+    send_change_document(&mut lsp, &translation_path, 3, &translation_text);
+
+    std::fs::write(
+        &origin_path,
+        r#"hello = Hello
+new-download = New completion candidate
+
+# Updated hover docs
+download-action = Download updated
+"#,
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 148_104,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let refreshed_definition = recv_response(&mut lsp, 148_104);
+    assert_eq!(
+        refreshed_definition["result"],
+        json!({
+            "uri": format!("file://{}", origin_path.display()),
+            "range": {
+                "start": { "line": 4, "character": 0 },
+                "end": { "line": 4, "character": 15 }
+            }
+        })
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 148_105,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let refreshed_hover = recv_response(&mut lsp, 148_105);
+    assert_eq!(
+        refreshed_hover["result"]["contents"]["value"],
+        Value::String(
+            r#"```ftl
+# Updated hover docs
+```"#
+                .to_string()
+        )
+    );
+
+    send_change_document(&mut lsp, &translation_path, 4, completion_text);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 148_106,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": {
+                "line": completion_position.0,
+                "character": completion_position.1
+            }
+        }
+    }));
+    let refreshed_completion = recv_response(&mut lsp, 148_106);
+    assert_eq!(
+        refreshed_completion["result"],
+        json!([{
+            "label": "new-download",
+            "kind": 1,
+            "detail": "message",
+            "documentation": {
+                "kind": "markdown",
+                "value": "```ftl\nnew-download = New completion candidate\n\n```"
+            },
+            "insertText": "new-download",
+            "sortText": "0000"
+        }])
+    );
+}
+
+#[test]
+fn background_refresh_updates_indexed_counterpart_appearance_disappearance_and_diagnostics(
+) {
+    let workspace = temp_workspace(&[(
+        "locales/es/only.ftl",
+        r#"local-only = Solo local
+"#,
+    )]);
+    let translation_path = workspace.path().join("locales/es/only.ftl");
+    let origin_path = workspace.path().join("locales/en/only.ftl");
+    let translation_text = std::fs::read_to_string(&translation_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 148_200);
+    send_open_document(&mut lsp, &translation_path, &translation_text);
+    send_save_document(&mut lsp, &translation_path, Some(&translation_text));
+
+    let initial_warning =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        initial_warning["params"],
+        json!({
+            "uri": format!("file://{}", translation_path.display()),
+            "diagnostics": [{
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 0 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Translation file has no origin-language counterpart for `only`"
+            }]
+        })
+    );
+
+    let key_position = position_of_nth(&translation_text, "local-only", 1);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 148_201,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let missing_definition = recv_response(&mut lsp, 148_201);
+    assert_eq!(missing_definition["result"], Value::Null);
+
+    std::fs::create_dir_all(origin_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &origin_path,
+        r#"local-only = Origin now exists
+"#,
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    loop {
+        let notification =
+            recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+        if notification["params"]["uri"]
+            == Value::String(format!("file://{}", translation_path.display()))
+        {
+            assert_eq!(notification["params"]["diagnostics"], Value::Array(Vec::new()));
+            break;
+        }
+    }
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 148_202,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let appearing_definition = recv_response(&mut lsp, 148_202);
+    assert_eq!(
+        appearing_definition["result"],
+        json!({
+            "uri": format!("file://{}", origin_path.display()),
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 10 }
+            }
+        })
+    );
+
+    std::fs::remove_file(&origin_path).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    loop {
+        let notification =
+            recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+        if notification["params"]["uri"]
+            == Value::String(format!("file://{}", translation_path.display()))
+        {
+            assert_eq!(
+                notification["params"],
+                json!({
+                    "uri": format!("file://{}", translation_path.display()),
+                    "diagnostics": [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 0 }
+                        },
+                        "severity": 2,
+                        "source": "fluent-lsp",
+                        "message": "Translation file has no origin-language counterpart for `only`"
+                    }]
+                })
+            );
+            break;
+        }
+    }
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 148_203,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": { "line": key_position.0, "character": key_position.1 }
+        }
+    }));
+    let disappearing_definition = recv_response(&mut lsp, 148_203);
+    assert_eq!(disappearing_definition["result"], Value::Null);
 }
 
 #[test]
@@ -1462,6 +3388,183 @@ file_masks = ["locales/{lang}/{filepath}.ftl"]
             .iter()
             .all(|diagnostic| diagnostic["message"] != warning_text)
         {
+            assert_eq!(cleared["params"]["diagnostics"], Value::Array(Vec::new()));
+            break;
+        }
+    }
+}
+
+#[test]
+fn nested_missing_origin_warning_clears_and_does_not_reappear_after_reopen() {
+    let workspace = tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/es/dialogs")).unwrap();
+    std::fs::write(
+        workspace.path().join("fluent-lsp.toml"),
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
+    )
+    .unwrap();
+
+    let local_path = workspace.path().join("locales/es/dialogs/menu.ftl");
+    let local_text = r#"menu-save = Guardar
+"#;
+    std::fs::write(&local_path, local_text).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 153);
+    send_open_document(&mut lsp, &local_path, local_text);
+    send_save_document(&mut lsp, &local_path, Some(local_text));
+
+    let initial_warning =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        initial_warning["params"],
+        json!({
+            "uri": format!("file://{}", local_path.display()),
+            "diagnostics": [{
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 0 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Translation file has no origin-language counterpart for `dialogs/menu`"
+            }]
+        })
+    );
+
+    let origin_path = workspace.path().join("locales/en/dialogs/menu.ftl");
+    std::fs::create_dir_all(origin_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &origin_path,
+        r#"menu-save = Save
+"#,
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    loop {
+        let cleared =
+            recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+        if cleared["params"]["uri"]
+            == Value::String(format!("file://{}", local_path.display()))
+        {
+            assert_eq!(
+                cleared["params"],
+                json!({
+                    "uri": format!("file://{}", local_path.display()),
+                    "diagnostics": []
+                })
+            );
+            break;
+        }
+    }
+
+    send_close_document(&mut lsp, &local_path);
+    let close_notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        close_notification["params"],
+        json!({
+            "uri": format!("file://{}", local_path.display()),
+            "diagnostics": []
+        })
+    );
+
+    send_open_document(&mut lsp, &local_path, local_text);
+    send_save_document(&mut lsp, &local_path, Some(local_text));
+    let reopened_notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        reopened_notification["params"],
+        json!({
+            "uri": format!("file://{}", local_path.display()),
+            "diagnostics": []
+        })
+    );
+}
+
+#[test]
+fn missing_origin_warning_coexists_with_parse_errors_and_clears_independently() {
+    let workspace = tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/es")).unwrap();
+    std::fs::write(
+        workspace.path().join("fluent-lsp.toml"),
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
+    )
+    .unwrap();
+
+    let local_path = workspace.path().join("locales/es/only.ftl");
+    let invalid_text = r#"g@Rb@ge = broken
+"#;
+    std::fs::write(&local_path, invalid_text).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 154);
+    send_open_document(&mut lsp, &local_path, invalid_text);
+    send_save_document(&mut lsp, &local_path, Some(invalid_text));
+
+    let initial_notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        initial_notification["params"],
+        json!({
+            "uri": format!("file://{}", local_path.display()),
+            "diagnostics": [
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 0, "character": 0 }
+                    },
+                    "severity": 2,
+                    "source": "fluent-lsp",
+                    "message": "Translation file has no origin-language counterpart for `only`"
+                },
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 1 },
+                        "end": { "line": 0, "character": 2 }
+                    },
+                    "severity": 1,
+                    "source": "fluent-lsp",
+                    "message": "Fluent syntax error: Expected a token starting with \"=\""
+                }
+            ]
+        })
+    );
+
+    let origin_path = workspace.path().join("locales/en/only.ftl");
+    std::fs::create_dir_all(origin_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &origin_path,
+        r#"garbage = fixed
+"#,
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    loop {
+        let refreshed =
+            recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+        if refreshed["params"]["uri"]
+            == Value::String(format!("file://{}", local_path.display()))
+        {
+            assert_eq!(
+                refreshed["params"],
+                json!({
+                    "uri": format!("file://{}", local_path.display()),
+                    "diagnostics": [{
+                        "range": {
+                            "start": { "line": 0, "character": 1 },
+                            "end": { "line": 0, "character": 2 }
+                        },
+                        "severity": 1,
+                        "source": "fluent-lsp",
+                        "message": "Fluent syntax error: Expected a token starting with \"=\""
+                    }]
+                })
+            );
             break;
         }
     }
@@ -1585,6 +3688,106 @@ menu =
             diagnostic["message"] != extra_text
                 && diagnostic["message"] != tooltip_text
         }) {
+            break;
+        }
+    }
+}
+
+#[test]
+fn translation_only_warnings_clear_independently_on_background_refresh() {
+    let workspace = tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/en")).unwrap();
+    std::fs::create_dir_all(workspace.path().join("locales/es")).unwrap();
+    std::fs::write(
+        workspace.path().join("fluent-lsp.toml"),
+        r#"origin_language = "en"
+file_masks = ["locales/{lang}/{filepath}.ftl"]
+"#,
+    )
+    .unwrap();
+
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let translation_path = workspace.path().join("locales/es/app.ftl");
+    let origin_text = r#"shared = Hello
+menu =
+    .label = Save
+"#;
+    let translation_text = r#"shared = Hola
+extra = Solo local
+menu =
+    .label = Guardar
+    .tooltip = Solo aqui
+"#;
+    std::fs::write(&origin_path, origin_text).unwrap();
+    std::fs::write(&translation_path, translation_text).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 153_100);
+    send_open_document(&mut lsp, &translation_path, translation_text);
+    send_save_document(&mut lsp, &translation_path, Some(translation_text));
+    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+
+    std::fs::write(
+        &origin_path,
+        r#"shared = Hello
+extra = Origin now exists
+menu =
+    .label = Save
+"#,
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let tooltip_position = position_of(translation_text, "tooltip");
+    loop {
+        let notification =
+            recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+        if notification["params"]["uri"]
+            != Value::String(format!("file://{}", translation_path.display()))
+        {
+            continue;
+        }
+        if notification["params"]["diagnostics"]
+            == json!([
+                {
+                    "range": {
+                        "start": {
+                            "line": tooltip_position.0,
+                            "character": tooltip_position.1
+                        },
+                        "end": {
+                            "line": tooltip_position.0,
+                            "character": tooltip_position.1 + 7
+                        }
+                    },
+                    "severity": 2,
+                    "source": "fluent-lsp",
+                    "message": "Translation attribute `menu.tooltip` has no origin-language counterpart"
+                }
+            ])
+        {
+            break;
+        }
+    }
+
+    std::fs::write(
+        &origin_path,
+        r#"shared = Hello
+extra = Origin now exists
+menu =
+    .label = Save
+    .tooltip = Origin tooltip
+"#,
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    loop {
+        let notification =
+            recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+        if notification["params"]["uri"]
+            != Value::String(format!("file://{}", translation_path.display()))
+        {
+            continue;
+        }
+        if notification["params"]["diagnostics"] == Value::Array(Vec::new()) {
             break;
         }
     }
@@ -2425,6 +4628,7 @@ download-action =
             "Entry still contains an `# [LSP-COPY]` marker".to_string()
         )
     );
+    assert_eq!(marker_diagnostics[0]["severity"], Value::from(2));
     assert_eq!(
         marker_diagnostics[0]["range"]["start"]["line"],
         Value::from(0)
@@ -2441,6 +4645,7 @@ download-action =
         marker_diagnostics[1]["range"]["start"]["character"],
         Value::from(5)
     );
+    assert_eq!(marker_diagnostics[1]["severity"], Value::from(2));
 
     send_change_document(&mut lsp, &source_path, 2, cleaned);
     send_save_document(&mut lsp, &source_path, Some(cleaned));
@@ -2494,8 +4699,7 @@ fn hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments() {
     let mut lsp = initialized_lsp(workspace.path(), 60_100);
     open_document(&mut lsp, &source_path, &source_text);
 
-    let position =
-        position_of_nth(&source_text, ".tooltip = Download this build", 1);
+    let position = position_of_nth(&source_text, "Download this build", 1);
     lsp.send(&json!({
         "jsonrpc": "2.0",
         "id": 60_101,
@@ -2551,6 +4755,64 @@ fn hover_on_copied_attribute_does_not_surface_lsp_copy_marker_comments() {
             ),
         ]
     );
+}
+
+#[test]
+fn lsp_copy_marker_diagnostics_update_exactly_when_markers_are_removed_incrementally(
+) {
+    let workspace = copy_marker_workspace();
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let without_whole_marker = r#"hello = Hola Mundo
+
+# [LSP-COPY .tooltip]
+download-action =
+    .label = Descargar
+    .tooltip = Download this build
+"#;
+    let without_any_markers = r#"hello = Hola Mundo
+
+download-action =
+    .label = Descargar
+    .tooltip = Download this build
+"#;
+
+    let mut lsp = initialized_lsp(workspace.path(), 60_110);
+    open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+    let _ = recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+
+    send_change_document(&mut lsp, &source_path, 2, without_whole_marker);
+    send_save_document(&mut lsp, &source_path, Some(without_whole_marker));
+    let single_notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    let tooltip_position = position_of_nth(without_whole_marker, "tooltip", 2);
+    assert_eq!(
+        single_notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": {
+                        "line": tooltip_position.0,
+                        "character": tooltip_position.1
+                    },
+                    "end": {
+                        "line": tooltip_position.0,
+                        "character": tooltip_position.1 + 7
+                    }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Entry still contains an `# [LSP-COPY]` marker"
+            }
+        ])
+    );
+
+    send_change_document(&mut lsp, &source_path, 3, without_any_markers);
+    send_save_document(&mut lsp, &source_path, Some(without_any_markers));
+    let cleared =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(cleared["params"]["diagnostics"], Value::Array(Vec::new()));
 }
 
 #[test]
@@ -5053,6 +7315,118 @@ Copia el enlace de descarga para la cuenta de elle en { $count } dispositivos ah
 }
 
 #[test]
+fn execute_command_opens_selector_combinations_for_first_and_last_entries() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"first-choice =
+    { $count ->
+        [one] first
+       *[other] firsts
+    }
+
+middle = Middle
+
+last-choice =
+    { $count ->
+        [one] last
+       *[other] lasts
+    }
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"first-choice =
+    { $count ->
+        [one] primero
+       *[other] primeros
+    }
+
+middle = Medio
+
+last-choice =
+    { $count ->
+        [one] ultimo
+       *[other] ultimos
+    }
+"#,
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = LspProcess::start();
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_090,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": format!("file://{}", workspace.path().display()),
+            "capabilities": {
+                "window": {
+                    "showDocument": {
+                        "support": true
+                    }
+                }
+            }
+        }
+    }));
+    assert_eq!(lsp.recv()["id"], 42_090);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    }));
+    assert_eq!(
+        recv_notification(&mut lsp, "window/logMessage")["method"],
+        "window/logMessage"
+    );
+    open_document(&mut lsp, &source_path, &source_text);
+
+    for (request_id, key) in [(42_091, "first-choice"), (42_092, "last-choice")] {
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "workspace/executeCommand",
+            "params": {
+                "command": "fluent-lsp.showSelectorCombinations",
+                "arguments": [
+                    format!("file://{}", source_path.display()),
+                    key
+                ]
+            }
+        }));
+        let request = lsp.recv();
+        assert_eq!(request["method"], "window/showDocument");
+        let document_uri = request["params"]["uri"].as_str().unwrap();
+        let document_file_name = Path::new(
+            document_uri
+                .strip_prefix("file://")
+                .expect("expected file uri for temp document"),
+        )
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("temp document file name should be valid UTF-8");
+        assert!(
+            document_file_name
+                .strip_prefix("fluent-lsp-selector-combinations-")
+                .is_some_and(|tail| tail.ends_with(&format!("-{key}.md"))),
+            "unexpected temp document uri: {document_uri}"
+        );
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request["id"],
+            "result": {
+                "success": true
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"], Value::Null);
+    }
+}
+
+#[test]
 fn code_lens_returns_empty_list_for_files_without_selector_combinations() {
     let workspace = temp_workspace(&[
         (
@@ -5083,6 +7457,289 @@ fn code_lens_returns_empty_list_for_files_without_selector_combinations() {
 
     let lenses = recv_response(&mut lsp, 42_101);
     assert_eq!(lenses["result"], Value::Array(Vec::new()));
+}
+
+#[test]
+fn code_lens_returns_exact_selector_combination_lens_array_for_first_middle_and_last_messages(
+) {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"# first lens comment
+first-count =
+    { $count ->
+        [one] one
+       *[other] other
+    }
+
+plain = plain
+
+middle-rollout =
+    For { $gender ->
+        [female] her
+       *[other] them
+    } on { $count } { $count ->
+        [one] device
+       *[other] devices
+    } now.
+
+# last lens comment
+last-audience =
+    For { $audience ->
+        [admins] admins
+       *[others] others
+    } on { $platform ->
+        [desktop] desktop
+       *[mobile] mobile
+    } with { $count } { $count ->
+        [one] item
+       *[other] items
+    }.
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"# first lens comment
+first-count =
+    { $count ->
+        [one] uno
+       *[other] otros
+    }
+
+plain = texto
+
+middle-rollout =
+    Para { $gender ->
+        [female] ella
+       *[other] elle
+    } en { $count } { $count ->
+        [one] dispositivo
+       *[other] dispositivos
+    } ahora.
+
+# last lens comment
+last-audience =
+    Para { $audience ->
+        [admins] admins
+       *[others] others
+    } en { $platform ->
+        [desktop] escritorio
+       *[mobile] movil
+    } con { $count } { $count ->
+        [one] elemento
+       *[other] elementos
+    }.
+"#,
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let source_uri = format!("file://{}", source_path.display());
+
+    let mut lsp = initialized_lsp(workspace.path(), 42_140);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_141,
+        "method": "textDocument/codeLens",
+        "params": {
+            "textDocument": { "uri": source_uri }
+        }
+    }));
+
+    let lenses = recv_response(&mut lsp, 42_141);
+    assert_eq!(
+        lenses["result"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": 1, "character": 0 },
+                    "end": { "line": 1, "character": 11 }
+                },
+                "command": {
+                    "title": "Show all 2 selector combinations",
+                    "command": "fluent-lsp.showSelectorCombinations",
+                    "arguments": [source_uri, "first-count"]
+                }
+            },
+            {
+                "range": {
+                    "start": { "line": 9, "character": 0 },
+                    "end": { "line": 9, "character": 14 }
+                },
+                "command": {
+                    "title": "Show all 4 selector combinations",
+                    "command": "fluent-lsp.showSelectorCombinations",
+                    "arguments": [source_uri, "middle-rollout"]
+                }
+            },
+            {
+                "range": {
+                    "start": { "line": 19, "character": 0 },
+                    "end": { "line": 19, "character": 13 }
+                },
+                "command": {
+                    "title": "Show all 8 selector combinations",
+                    "command": "fluent-lsp.showSelectorCombinations",
+                    "arguments": [source_uri, "last-audience"]
+                }
+            }
+        ])
+    );
+}
+
+#[test]
+fn code_lens_returns_exact_empty_arrays_for_remaining_no_lens_matrix_cases() {
+    let basic_cases = [
+        (
+            42_150,
+            &[(
+                "locales/en/app.ftl",
+                "hello = Hello\n",
+            ), (
+                "locales/es/app.ftl",
+                "hello = Hola\n",
+            )][..],
+            "locales/es/app.ftl",
+            None,
+        ),
+        (
+            42_151,
+            &[(
+                "locales/en/app.ftl",
+                "same-copy =\n    { $count ->\n        [one] Same text.\n       *[other] Same text.\n    }\n",
+            ), (
+                "locales/es/app.ftl",
+                "same-copy =\n    { $count ->\n        [one] Mismo texto.\n       *[other] Mismo texto.\n    }\n",
+            )][..],
+            "locales/es/app.ftl",
+            None,
+        ),
+        (
+            42_152,
+            &[(
+                "locales/en/app.ftl",
+                "only-other =\n    { $count ->\n       *[other] only branch\n    }\n",
+            ), (
+                "locales/es/app.ftl",
+                "only-other =\n    { $count ->\n       *[other] solo rama\n    }\n",
+            )][..],
+            "locales/es/app.ftl",
+            None,
+        ),
+        (
+            42_153,
+            &[(
+                "locales/en/app.ftl",
+                "ambiguous-key =\n    { $count ->\n        [one] first\n       *[other] firsts\n    }\n\nambiguous-key =\n    { $count ->\n        [one] second\n       *[other] seconds\n    }\n",
+            ), (
+                "locales/es/app.ftl",
+                "ambiguous-key =\n    { $count ->\n        [one] primero\n       *[other] primeros\n    }\n\nambiguous-key =\n    { $count ->\n        [one] segundo\n       *[other] segundos\n    }\n",
+            )][..],
+            "locales/es/app.ftl",
+            None,
+        ),
+        (
+            42_154,
+            &[(
+                "locales/en/app.ftl",
+                "-term-only =\n    { $count ->\n        [one] one\n       *[other] other\n    }\n",
+            ), (
+                "locales/es/app.ftl",
+                "-term-only =\n    { $count ->\n        [one] uno\n       *[other] otros\n    }\n",
+            )][..],
+            "locales/es/app.ftl",
+            None,
+        ),
+        (
+            42_155,
+            &[(
+                "locales/en/app.ftl",
+                "download-action =\n    .tooltip =\n        { $count ->\n            [one] one file\n           *[other] other files\n        }\n",
+            ), (
+                "locales/es/app.ftl",
+                "download-action =\n    .tooltip =\n        { $count ->\n            [one] un archivo\n           *[other] otros archivos\n        }\n",
+            )][..],
+            "locales/es/app.ftl",
+            None,
+        ),
+        (
+            42_156,
+            &[(
+                "locales/en/app.ftl",
+                "hello = Hello\n",
+            ), (
+                "locales/es/app.ftl",
+                "hello = Hola\n",
+            )][..],
+            "locales/en/app.ftl",
+            None,
+        ),
+        (
+            42_157,
+            &[(
+                "locales/en/dialogs/menu.ftl",
+                "menu-save = Save\n",
+            ), (
+                "locales/es/dialogs/menu.ftl",
+                "menu-save = Guardar\n",
+            )][..],
+            "locales/es/dialogs/menu.ftl",
+            None,
+        ),
+        (
+            42_158,
+            &[(
+                "locales/en/app.ftl",
+                "hello = Hello\n",
+            ), (
+                "locales/es/app.ftl",
+                "hello = Hola\n",
+            )][..],
+            "locales/es/empty.ftl",
+            Some(""),
+        ),
+        (
+            42_159,
+            &[(
+                "locales/en/app.ftl",
+                "# comments only\n",
+            ), (
+                "locales/es/app.ftl",
+                "# solo comentarios\n",
+            )][..],
+            "locales/es/app.ftl",
+            None,
+        ),
+    ];
+
+    for (request_id, files, request_path, open_text) in basic_cases {
+        let workspace = temp_workspace(files);
+        let source_path = workspace.path().join(request_path);
+        let mut lsp = initialized_lsp(workspace.path(), request_id);
+
+        if let Some(text) = open_text {
+            send_open_document(&mut lsp, &source_path, text);
+        } else if source_path.exists() {
+            let source_text = std::fs::read_to_string(&source_path).unwrap();
+            open_document(&mut lsp, &source_path, &source_text);
+        }
+
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id + 1_000,
+            "method": "textDocument/codeLens",
+            "params": {
+                "textDocument": {
+                    "uri": format!("file://{}", source_path.display())
+                }
+            }
+        }));
+
+        let lenses = recv_response(&mut lsp, request_id + 1_000);
+        assert_eq!(lenses["result"], Value::Array(Vec::new()));
+    }
 }
 
 #[test]
@@ -5177,6 +7834,593 @@ fn execute_command_rejects_non_file_document_uris() {
         response["error"]["message"],
         Value::String("document URI must point to a file".to_string())
     );
+}
+
+#[test]
+fn execute_command_rejects_malformed_arguments_and_missing_keys_exactly() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"install-hint =
+    { $count ->
+        [one] one
+       *[other] other
+    }
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"install-hint =
+    { $count ->
+        [one] uno
+       *[other] otros
+    }
+"#,
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let outside = tempdir().unwrap();
+    let outside_path = outside.path().join("outside.ftl");
+    std::fs::write(
+        &outside_path,
+        r#"install-hint =
+    { $count ->
+        [one] uno
+       *[other] otros
+    }
+"#,
+    )
+    .unwrap();
+
+    let mut lsp = initialized_lsp_with_capabilities(
+        workspace.path(),
+        42_110,
+        json!({
+            "window": {
+                "showDocument": {
+                    "support": true
+                }
+            }
+        }),
+    );
+    for (request_id, arguments, expected_code, expected_message) in [
+        (
+            42_111,
+            json!([42, "install-hint"]),
+            -32602,
+            "document URI argument must be a string".to_string(),
+        ),
+        (
+            42_112,
+            json!([format!("file://{}", source_path.display()), 7]),
+            -32602,
+            "Fluent key argument must be a string".to_string(),
+        ),
+        (
+            42_113,
+            json!([
+                "install-hint",
+                format!("file://{}", source_path.display())
+            ]),
+            -32602,
+            "document URI argument must be a valid URI".to_string(),
+        ),
+        (
+            42_114,
+            json!([
+                format!("file://{}", source_path.display()),
+                "install-hint",
+                "extra"
+            ]),
+            -32602,
+            "expected exactly two arguments: document URI and Fluent key"
+                .to_string(),
+        ),
+        (
+            42_115,
+            json!([format!("file://{}", source_path.display()), "missing-key"]),
+            -32602,
+            "no selector combinations available for `missing-key`".to_string(),
+        ),
+        (
+            42_116,
+            json!([format!("file://{}", outside_path.display()), "install-hint"]),
+            -32602,
+            format!(
+                "document is outside the configured Fluent workspace: {}",
+                outside_path.display()
+            ),
+        ),
+    ] {
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "workspace/executeCommand",
+            "params": {
+                "command": "fluent-lsp.showSelectorCombinations",
+                "arguments": arguments
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["error"]["code"], Value::from(expected_code));
+        assert_eq!(
+            response["error"]["message"],
+            Value::String(expected_message)
+        );
+    }
+}
+
+#[test]
+fn execute_command_requires_show_document_support_and_skips_temp_document_fallback(
+) {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"install-hint =
+    { $count ->
+        [one] one
+       *[other] other
+    }
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"install-hint =
+    { $count ->
+        [one] uno
+       *[other] otros
+    }
+"#,
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let temp_document_count = || {
+        std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry.file_name()
+                    .to_str()
+                    .is_some_and(|name| {
+                        name.starts_with("fluent-lsp-selector-combinations-")
+                    })
+            })
+            .count()
+    };
+
+    let before = temp_document_count();
+    let mut lsp = initialized_lsp(workspace.path(), 42_120);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_121,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": "fluent-lsp.showSelectorCombinations",
+            "arguments": [
+                format!("file://{}", source_path.display()),
+                "install-hint"
+            ]
+        }
+    }));
+
+    let response = recv_response(&mut lsp, 42_121);
+    assert_eq!(response["error"]["code"], Value::from(-32603));
+    assert_eq!(
+        response["error"]["message"],
+        Value::String(
+            "client does not support window/showDocument".to_string()
+        )
+    );
+    assert_eq!(temp_document_count(), before);
+}
+
+#[test]
+fn execute_command_without_show_document_never_sends_show_message_and_keeps_failure_contract_for_origin_and_nested_documents(
+) {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"install-hint =
+    { $count ->
+        [one] one
+       *[other] other
+    }
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"install-hint =
+    { $count ->
+        [one] uno
+       *[other] otros
+    }
+"#,
+        ),
+        (
+            "locales/en/dialogs/menu.ftl",
+            r#"menu-status =
+    { $count ->
+        [one] menu one
+       *[other] menu other
+    }
+"#,
+        ),
+        (
+            "locales/es/dialogs/menu.ftl",
+            r#"menu-status =
+    { $count ->
+        [one] menu uno
+       *[other] menu otros
+    }
+"#,
+        ),
+    ]);
+    let translation_path = workspace.path().join("locales/es/app.ftl");
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let nested_path = workspace.path().join("locales/es/dialogs/menu.ftl");
+
+    let mut lsp = initialized_lsp(workspace.path(), 42_122);
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_123,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": "fluent-lsp.showSelectorCombinations",
+            "arguments": [
+                format!("file://{}", translation_path.display()),
+                "install-hint"
+            ]
+        }
+    }));
+
+    let first_message = lsp.recv();
+    assert_eq!(first_message["id"], Value::from(42_123));
+    assert_eq!(first_message["error"]["code"], Value::from(-32603));
+    assert_eq!(
+        first_message["error"]["message"],
+        Value::String(
+            "client does not support window/showDocument".to_string()
+        )
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_124,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": "fluent-lsp.unknown",
+            "arguments": []
+        }
+    }));
+    let second_message = lsp.recv();
+    assert_eq!(second_message["id"], Value::from(42_124));
+    assert_eq!(second_message["error"]["code"], Value::from(-32602));
+    assert_eq!(
+        second_message["error"]["message"],
+        Value::String("unknown command: fluent-lsp.unknown".to_string())
+    );
+
+    for (request_id, path, key) in [
+        (42_125, &origin_path, "install-hint"),
+        (42_126, &nested_path, "menu-status"),
+    ] {
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "workspace/executeCommand",
+            "params": {
+                "command": "fluent-lsp.showSelectorCombinations",
+                "arguments": [
+                    format!("file://{}", path.display()),
+                    key
+                ]
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["error"]["code"], Value::from(-32603));
+        assert_eq!(
+            response["error"]["message"],
+            Value::String(
+                "client does not support window/showDocument".to_string()
+            )
+        );
+    }
+}
+
+#[test]
+fn execute_command_surfaces_show_document_decline_and_rpc_error_exactly() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"install-hint =
+    { $count ->
+        [one] one
+       *[other] other
+    }
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"install-hint =
+    { $count ->
+        [one] uno
+       *[other] otros
+    }
+"#,
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+
+    let mut lsp = initialized_lsp_with_capabilities(
+        workspace.path(),
+        42_127,
+        json!({
+            "window": {
+                "showDocument": {
+                    "support": true
+                }
+            }
+        }),
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_128,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": "fluent-lsp.showSelectorCombinations",
+            "arguments": [
+                format!("file://{}", source_path.display()),
+                "install-hint"
+            ]
+        }
+    }));
+    let declined_request = lsp.recv();
+    assert_eq!(declined_request["method"], "window/showDocument");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": declined_request["id"],
+        "result": {
+            "success": false
+        }
+    }));
+    let declined_response = recv_response(&mut lsp, 42_128);
+    assert_eq!(declined_response["error"]["code"], Value::from(-32603));
+    assert_eq!(
+        declined_response["error"]["message"],
+        Value::String(
+            "client declined to show the selector combinations document"
+                .to_string()
+        )
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 42_129,
+        "method": "workspace/executeCommand",
+        "params": {
+            "command": "fluent-lsp.showSelectorCombinations",
+            "arguments": [
+                format!("file://{}", source_path.display()),
+                "install-hint"
+            ]
+        }
+    }));
+    let error_request = lsp.recv();
+    assert_eq!(error_request["method"], "window/showDocument");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": error_request["id"],
+        "error": {
+            "code": -32099,
+            "message": "showDocument exploded"
+        }
+    }));
+    let error_response = recv_response(&mut lsp, 42_129);
+    assert_eq!(error_response["error"]["code"], Value::from(-32603));
+    assert_eq!(
+        error_response["error"]["message"],
+        Value::String(
+            "failed to open selector combinations document: Server error: showDocument exploded"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn execute_command_generated_selector_combination_document_preserves_unresolved_references_exactly(
+) {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"branch-note =
+    { $platform ->
+        [desktop] Open { -missing-brand } now.
+       *[mobile] Open later.
+    }
+
+selector-copy =
+    { $count ->
+        [one] Show { missing-copy } now.
+       *[other] Show later.
+    }
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"branch-note =
+    { $platform ->
+        [desktop] Abre { -missing-brand } ahora.
+       *[mobile] Abre despues.
+    }
+
+selector-copy =
+    { $count ->
+        [one] Muestra { missing-copy } ahora.
+       *[other] Muestra despues.
+    }
+"#,
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+
+    let mut lsp = initialized_lsp_with_capabilities(
+        workspace.path(),
+        42_130,
+        json!({
+            "window": {
+                "showDocument": {
+                    "support": true
+                }
+            }
+        }),
+    );
+
+    for (request_id, key, expected_document) in [
+        (
+            42_131,
+            "branch-note",
+            r#"# Selector combinations for `branch-note`
+
+Current language: `es`
+
+Source language: `en`
+
+Logical file: `app`
+
+Source text:
+
+```ftl
+branch-note =
+    { $platform ->
+        [desktop] Open { -missing-brand } now.
+       *[mobile] Open later.
+    }
+
+```
+
+Source language combinations:
+`$platform=desktop`
+```ftl
+Open { -missing-brand } now.
+```
+`$platform=mobile`
+```ftl
+Open later.
+```
+
+Current text:
+
+```ftl
+branch-note =
+    { $platform ->
+        [desktop] Abre { -missing-brand } ahora.
+       *[mobile] Abre despues.
+    }
+
+```
+
+Current language combinations:
+`$platform=desktop`
+```ftl
+Abre { -missing-brand } ahora.
+```
+`$platform=mobile`
+```ftl
+Abre despues.
+```"#,
+        ),
+        (
+            42_132,
+            "selector-copy",
+            r#"# Selector combinations for `selector-copy`
+
+Current language: `es`
+
+Source language: `en`
+
+Logical file: `app`
+
+Source text:
+
+```ftl
+selector-copy =
+    { $count ->
+        [one] Show { missing-copy } now.
+       *[other] Show later.
+    }
+```
+
+Source language combinations:
+`$count=one`
+```ftl
+Show { missing-copy } now.
+```
+`$count=other`
+```ftl
+Show later.
+```
+
+Current text:
+
+```ftl
+selector-copy =
+    { $count ->
+        [one] Muestra { missing-copy } ahora.
+       *[other] Muestra despues.
+    }
+```
+
+Current language combinations:
+`$count=one`
+```ftl
+Muestra { missing-copy } ahora.
+```
+`$count=other`
+```ftl
+Muestra despues.
+```"#,
+        ),
+    ] {
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "workspace/executeCommand",
+            "params": {
+                "command": "fluent-lsp.showSelectorCombinations",
+                "arguments": [
+                    format!("file://{}", source_path.display()),
+                    key
+                ]
+            }
+        }));
+        let request = lsp.recv();
+        assert_eq!(request["method"], "window/showDocument");
+
+        let document_uri = request["params"]["uri"]
+            .as_str()
+            .expect("showDocument uri must be a string");
+        let document_path = document_uri
+            .strip_prefix("file://")
+            .expect("expected file uri for temp document");
+        let document_text =
+            std::fs::read_to_string(document_path).expect("read temp document");
+        assert_eq!(document_text, expected_document);
+
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request["id"],
+            "result": {
+                "success": true
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"], Value::Null);
+    }
 }
 
 #[test]
@@ -7209,7 +10453,7 @@ fn client_configuration_applies_plural_diagnostic_settings_without_file_config()
         diagnostic["message"].as_str().unwrap().to_string()
     });
 
-    assert_eq!(diagnostics.len(), 3);
+    assert_eq!(diagnostics.len(), 4);
     assert_eq!(
         diagnostics[0]["message"],
         Value::String(
@@ -7227,10 +10471,18 @@ fn client_configuration_applies_plural_diagnostic_settings_without_file_config()
     assert_eq!(
         diagnostics[2]["message"],
         Value::String(
+            "Translation file has no origin-language counterpart for `app`"
+                .to_string()
+        )
+    );
+    assert_eq!(diagnostics[2]["severity"], Value::from(2));
+    assert_eq!(
+        diagnostics[3]["message"],
+        Value::String(
             "`few` is not a supported plural category for `lv`".to_string()
         )
     );
-    assert_eq!(diagnostics[2]["severity"], Value::from(1));
+    assert_eq!(diagnostics[3]["severity"], Value::from(1));
 }
 
 #[test]
@@ -8069,6 +11321,15 @@ fn diagnostics_report_arabic_two_few_many_categories_exactly() {
         json!([
             {
                 "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 0 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Translation file has no origin-language counterpart for `app`"
+            },
+            {
+                "range": {
                     "start": { "line": start.0, "character": start.1 },
                     "end": { "line": end.0, "character": end.1 + 4 }
                 },
@@ -8560,6 +11821,1105 @@ fn code_action_preserves_nested_selector_when_generating_inside_variant() {
         }"#
             .to_string()
         )
+    );
+}
+
+#[test]
+fn goto_definition_attribute_position_matrix_and_exact_outcomes() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"top-entry =
+    .alpha = Origin top alpha
+    .beta = Origin top beta
+    .omega = Origin top omega
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"top-entry =
+    .alpha = Local top alpha
+    .beta = Local top beta
+    .omega = Local top omega
+"#,
+        ),
+        (
+            "locales/en/dialogs/menu.ftl",
+            r#"nested-entry =
+    .first = Origin nested first
+    .last = Origin nested last
+"#,
+        ),
+        (
+            "locales/es/dialogs/menu.ftl",
+            r#"nested-entry =
+    .first = Local nested first
+    .last = Local nested last
+"#,
+        ),
+    ]);
+    let top_path = workspace.path().join("locales/es/app.ftl");
+    let top_origin_path = workspace.path().join("locales/en/app.ftl");
+    let top_text = std::fs::read_to_string(&top_path).unwrap();
+    let top_origin_text = std::fs::read_to_string(&top_origin_path).unwrap();
+    let nested_path = workspace.path().join("locales/es/dialogs/menu.ftl");
+    let nested_origin_path =
+        workspace.path().join("locales/en/dialogs/menu.ftl");
+    let nested_text = std::fs::read_to_string(&nested_path).unwrap();
+    let nested_origin_text =
+        std::fs::read_to_string(&nested_origin_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_300);
+    open_document(&mut lsp, &top_path, &top_text);
+    open_document(&mut lsp, &nested_path, &nested_text);
+
+    let alpha_dot = position_of(&top_text, ".alpha =");
+    let expected_alpha_start = position_of(&top_origin_text, "alpha =");
+    let expected_alpha = json!({
+        "uri": format!("file://{}", top_origin_path.display()),
+        "range": {
+            "start": {
+                "line": expected_alpha_start.0,
+                "character": expected_alpha_start.1
+            },
+            "end": {
+                "line": expected_alpha_start.0,
+                "character": expected_alpha_start.1 + 5
+            }
+        }
+    });
+
+    for (request_id, character) in [(6_301, alpha_dot.1), (6_302, alpha_dot.1 + 1), (6_303, alpha_dot.1 + 5)] {
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/definition",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", top_path.display()) },
+                "position": { "line": alpha_dot.0, "character": character }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"], expected_alpha);
+    }
+
+    let omega_position = position_of(&top_text, ".omega =");
+    let omega_expected_start = position_of(&top_origin_text, "omega =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_304,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", top_path.display()) },
+            "position": {
+                "line": omega_position.0,
+                "character": omega_position.1 + 1
+            }
+        }
+    }));
+    let omega_response = recv_response(&mut lsp, 6_304);
+    assert_eq!(
+        omega_response["result"],
+        json!({
+            "uri": format!("file://{}", top_origin_path.display()),
+            "range": {
+                "start": {
+                    "line": omega_expected_start.0,
+                    "character": omega_expected_start.1
+                },
+                "end": {
+                    "line": omega_expected_start.0,
+                    "character": omega_expected_start.1 + 5
+                }
+            }
+        })
+    );
+
+    let nested_first_position = position_of(&nested_text, ".first =");
+    let nested_first_expected = position_of(&nested_origin_text, "first =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_305,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_path.display()) },
+            "position": {
+                "line": nested_first_position.0,
+                "character": nested_first_position.1 + 1
+            }
+        }
+    }));
+    let nested_first_response = recv_response(&mut lsp, 6_305);
+    assert_eq!(
+        nested_first_response["result"],
+        json!({
+            "uri": format!("file://{}", nested_origin_path.display()),
+            "range": {
+                "start": {
+                    "line": nested_first_expected.0,
+                    "character": nested_first_expected.1
+                },
+                "end": {
+                    "line": nested_first_expected.0,
+                    "character": nested_first_expected.1 + 5
+                }
+            }
+        })
+    );
+
+    let nested_last_position = position_of(&nested_text, ".last =");
+    let nested_last_expected = position_of(&nested_origin_text, "last =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_306,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_path.display()) },
+            "position": {
+                "line": nested_last_position.0,
+                "character": nested_last_position.1 + 4
+            }
+        }
+    }));
+    let nested_last_response = recv_response(&mut lsp, 6_306);
+    assert_eq!(
+        nested_last_response["result"],
+        json!({
+            "uri": format!("file://{}", nested_origin_path.display()),
+            "range": {
+                "start": {
+                    "line": nested_last_expected.0,
+                    "character": nested_last_expected.1
+                },
+                "end": {
+                    "line": nested_last_expected.0,
+                    "character": nested_last_expected.1 + 4
+                }
+            }
+        })
+    );
+
+    let beta_position = position_of(&top_text, ".beta =");
+    let beta_expected = position_of(&top_origin_text, "beta =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_307,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", top_path.display()) },
+            "position": {
+                "line": beta_position.0,
+                "character": beta_position.1 + 2
+            }
+        }
+    }));
+    let beta_response = recv_response(&mut lsp, 6_307);
+    assert_eq!(
+        beta_response["result"],
+        json!({
+            "uri": format!("file://{}", top_origin_path.display()),
+            "range": {
+                "start": {
+                    "line": beta_expected.0,
+                    "character": beta_expected.1
+                },
+                "end": {
+                    "line": beta_expected.0,
+                    "character": beta_expected.1 + 4
+                }
+            }
+        })
+    );
+
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_308,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", top_path.display()) },
+            "position": { "line": alpha_dot.0, "character": 3 }
+        }
+    }));
+    let indentation_response = recv_response(&mut lsp, 6_308);
+    assert_eq!(indentation_response["result"], Value::Null);
+
+    let alpha_equal = position_of(&top_text, "alpha =");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_309,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", top_path.display()) },
+            "position": {
+                "line": alpha_equal.0,
+                "character": alpha_equal.1 + 6
+            }
+        }
+    }));
+    let equal_response = recv_response(&mut lsp, 6_309);
+    assert_eq!(equal_response["result"], Value::Null);
+}
+
+#[test]
+fn hover_key_and_attribute_lines_do_not_fall_back_to_body_preview() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"# Origin key comment
+commented-key = Origin body
+
+menu =
+    .tooltip = Origin attribute body
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"# Comentario local
+commented-key = Cuerpo local
+
+menu =
+    .tooltip = Cuerpo de atributo local
+"#,
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_140);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let key_equal = position_of(&source_text, "commented-key =");
+    for (request_id, character) in [(6_141, key_equal.1 + 13), (6_142, key_equal.1 + 14)] {
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", source_path.display()) },
+                "position": { "line": key_equal.0, "character": character }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"], Value::Null);
+    }
+
+    let attribute_line = position_of(&source_text, ".tooltip =");
+    for (request_id, character) in [(6_143, 0), (6_144, attribute_line.1 + 9)] {
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", source_path.display()) },
+                "position": { "line": attribute_line.0, "character": character }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"], Value::Null);
+    }
+}
+
+#[test]
+fn hover_body_and_attribute_previews_stay_exact_across_positions_and_preserve_unresolved_terms()
+ {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            "body-preview = Uno dos tres\nwith-term = Start { -missing-term } end\nattr-preview =\n    .tooltip = Four five six\nattr-with-term =\n    .tooltip = Open { -missing-term } now",
+        ),
+        (
+            "locales/es/app.ftl",
+            "body-preview = Uno dos tres\nwith-term = Inicio { -missing-term } fin\nattr-preview =\n    .tooltip = Cuatro cinco seis\nattr-with-term =\n    .tooltip = Abre { -missing-term } ahora",
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_145);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let body_expected = Value::String(format!(
+        r#"```ftl
+{}
+```
+
+---
+
+```ftl
+{}
+```"#,
+        preview_message_text_with_overrides(&origin_text, "body-preview", &[]),
+        preview_message_text_with_overrides(&source_text, "body-preview", &[]),
+    ));
+    let body_line = position_of(&source_text, "Uno dos tres");
+    let body_positions = [
+        body_line,
+        position_of(&source_text, "dos"),
+        position_of(&source_text, "tres"),
+        (body_line.0, body_line.1 + 3),
+    ];
+    for (offset, position) in body_positions.into_iter().enumerate() {
+        let request_id = 6_146 + i64::try_from(offset).unwrap();
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", source_path.display()) },
+                "position": { "line": position.0, "character": position.1 }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"]["contents"]["value"], body_expected);
+    }
+
+    let term_position = position_of(&source_text, "{ -missing-term }");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_150,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": term_position.0, "character": term_position.1 }
+        }
+    }));
+    let term_hover = recv_response(&mut lsp, 6_150);
+    assert_eq!(
+        term_hover["result"]["contents"]["value"],
+        Value::String(format!(
+            r#"```ftl
+{}
+```
+
+---
+
+```ftl
+{}
+```"#,
+            preview_message_text_with_overrides(&origin_text, "with-term", &[]),
+            preview_message_text_with_overrides(&source_text, "with-term", &[]),
+        ))
+    );
+
+    let attribute_expected = Value::String(format!(
+        r#"```ftl
+{}
+```
+
+---
+
+```ftl
+{}
+```"#,
+        preview_message_text_with_overrides(
+            &origin_text,
+            "attr-preview.tooltip",
+            &[],
+        ),
+        preview_message_text_with_overrides(
+            &source_text,
+            "attr-preview.tooltip",
+            &[],
+        ),
+    ));
+    let attribute_line = position_of(&source_text, "Cuatro cinco seis");
+    let attribute_positions = [
+        attribute_line,
+        position_of(&source_text, "cinco"),
+        position_of(&source_text, "seis"),
+        (attribute_line.0, attribute_line.1 + 6),
+    ];
+    for (offset, position) in attribute_positions.into_iter().enumerate() {
+        let request_id = 6_151 + i64::try_from(offset).unwrap();
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", source_path.display()) },
+                "position": { "line": position.0, "character": position.1 }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"]["contents"]["value"], attribute_expected);
+    }
+
+    let attribute_term_line = position_of(&source_text, "Abre { -missing-term } ahora");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_155,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": {
+                "line": attribute_term_line.0,
+                "character": attribute_term_line.1 + 5
+            }
+        }
+    }));
+    let attribute_term_hover = recv_response(&mut lsp, 6_155);
+    assert_eq!(
+        attribute_term_hover["result"]["contents"]["value"],
+        Value::String(format!(
+            r#"```ftl
+{}
+```
+
+---
+
+```ftl
+{}
+```"#,
+            preview_message_text_with_overrides(
+                &origin_text,
+                "attr-with-term.tooltip",
+                &[],
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "attr-with-term.tooltip",
+                &[],
+            ),
+        ))
+    );
+}
+
+#[test]
+fn hover_selector_previews_are_stable_across_header_and_branch_positions() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"selector-preview =
+    { $count ->
+        [one] one branch
+       *[other] other branch
+    }
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"selector-preview =
+    { $count ->
+        [one] una rama
+       *[other] otras ramas
+    }
+"#,
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_156);
+    open_document(&mut lsp, &source_path, &source_text);
+
+    let expected_default = Value::String(format!(
+        r#"`$count=*`
+
+```ftl
+{}
+```
+
+---
+
+`$count=*`
+
+```ftl
+{}
+```"#,
+        preview_message_text_with_overrides(
+            &origin_text,
+            "selector-preview",
+            &[],
+        ),
+        preview_message_text_with_overrides(
+            &source_text,
+            "selector-preview",
+            &[],
+        ),
+    ));
+    let expected_one = Value::String(format!(
+        r#"`$count=one`
+
+```ftl
+{}
+```
+
+---
+
+`$count=one`
+
+```ftl
+{}
+```"#,
+        preview_message_text_with_overrides(
+            &origin_text,
+            "selector-preview",
+            &[("$count", "one")],
+        ),
+        preview_message_text_with_overrides(
+            &source_text,
+            "selector-preview",
+            &[("$count", "one")],
+        ),
+    ));
+    let header_start = position_of(&source_text, "{ $count ->");
+    let branch_start = position_of(&source_text, "una rama");
+    let header_positions = [
+        header_start,
+        position_of(&source_text, "$count"),
+        (header_start.0, header_start.1 + 1),
+    ];
+    for (offset, position) in header_positions.into_iter().enumerate() {
+        let request_id = 6_157 + i64::try_from(offset).unwrap();
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", source_path.display()) },
+                "position": { "line": position.0, "character": position.1 }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"]["contents"]["value"], expected_default);
+    }
+
+    let one_positions = [
+        branch_start,
+        position_of(&source_text, "rama"),
+        (branch_start.0, branch_start.1 + 3),
+    ];
+    for (offset, position) in one_positions.into_iter().enumerate() {
+        let request_id = 6_160 + i64::try_from(offset).unwrap();
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", source_path.display()) },
+                "position": { "line": position.0, "character": position.1 }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(response["result"]["contents"]["value"], expected_one);
+    }
+
+    let other_position = position_of(&source_text, "otras ramas");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_163,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", source_path.display()) },
+            "position": { "line": other_position.0, "character": other_position.1 }
+        }
+    }));
+    let other_response = recv_response(&mut lsp, 6_163);
+    assert_eq!(
+        other_response["result"]["contents"]["value"],
+        Value::String(format!(
+            r#"`$count=other`
+
+```ftl
+{}
+```
+
+---
+
+`$count=other`
+
+```ftl
+{}
+```"#,
+            preview_message_text_with_overrides(
+                &origin_text,
+                "selector-preview",
+                &[("$count", "other")],
+            ),
+            preview_message_text_with_overrides(
+                &source_text,
+                "selector-preview",
+                &[("$count", "other")],
+            ),
+        ))
+    );
+}
+
+#[test]
+fn completion_top_level_and_attribute_position_matrices_are_exact() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"alpha-first = First
+alpha-second = Second
+beta-last = Last
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"### File note
+## Group note
+present = Presente
+
+a"#,
+        ),
+        (
+            "locales/en/dialogs/menu.ftl",
+            r#"menu-entry =
+    .alpha = Alpha
+    .beta = Beta
+    .tooltip = Tooltip
+"#,
+        ),
+        (
+            "locales/es/dialogs/menu.ftl",
+            r#"menu-entry =
+    # comment inside message
+    .alpha = Alfa
+    .
+"#,
+        ),
+    ]);
+    let app_path = workspace.path().join("locales/es/app.ftl");
+    let app_text = std::fs::read_to_string(&app_path).unwrap();
+    let nested_path = workspace.path().join("locales/es/dialogs/menu.ftl");
+    let nested_text = std::fs::read_to_string(&nested_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_164);
+    open_document(&mut lsp, &app_path, &app_text);
+    open_document(&mut lsp, &nested_path, &nested_text);
+
+    for (request_id, position) in [(6_165, position_after(&app_text, "a")), (6_166, position_of(&app_text, "a"))] {
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", app_path.display()) },
+                "position": { "line": position.0, "character": position.1 }
+            }
+        }));
+        let completion = recv_response(&mut lsp, request_id);
+        let labels = if completion["result"].is_array() {
+            completion["result"]
+                .as_array()
+                .expect("expected completion items")
+        } else {
+            completion["result"]["items"]
+                .as_array()
+                .expect("expected completion items")
+        }
+        .iter()
+        .map(|item| item["label"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            vec!["alpha-first".to_string(), "alpha-second".to_string()]
+        );
+    }
+
+    let last_text = format!("{app_text}\nb");
+    send_change_document(&mut lsp, &app_path, 2, &last_text);
+    let last_position = position_after(&last_text, "b");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_167,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", app_path.display()) },
+            "position": { "line": last_position.0, "character": last_position.1 }
+        }
+    }));
+    let last_completion = recv_response(&mut lsp, 6_167);
+    let last_labels = if last_completion["result"].is_array() {
+        last_completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        last_completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
+    assert_eq!(last_labels, vec!["beta-last".to_string()]);
+
+    for (offset, position) in [
+        position_after(&nested_text, "."),
+        position_of(&nested_text, "."),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let request_id = 6_168 + i64::try_from(offset).unwrap();
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": { "uri": format!("file://{}", nested_path.display()) },
+                "position": { "line": position.0, "character": position.1 }
+            }
+        }));
+        let completion = recv_response(&mut lsp, request_id);
+        let labels = if completion["result"].is_array() {
+            completion["result"]
+                .as_array()
+                .expect("expected completion items")
+        } else {
+            completion["result"]["items"]
+                .as_array()
+                .expect("expected completion items")
+        }
+        .iter()
+        .map(|item| item["label"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            vec![".beta".to_string(), ".tooltip".to_string()]
+        );
+    }
+
+    let nested_prefix_text = r#"menu-entry =
+    # comment inside message
+    .alpha = Alfa
+    .t
+"#;
+    send_change_document(&mut lsp, &nested_path, 2, nested_prefix_text);
+    let nested_prefix_position = position_after(nested_prefix_text, ".t");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_170,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_path.display()) },
+            "position": {
+                "line": nested_prefix_position.0,
+                "character": nested_prefix_position.1
+            }
+        }
+    }));
+    let nested_prefix_completion = recv_response(&mut lsp, 6_170);
+    let nested_prefix_labels = if nested_prefix_completion["result"].is_array() {
+        nested_prefix_completion["result"]
+            .as_array()
+            .expect("expected completion items")
+    } else {
+        nested_prefix_completion["result"]["items"]
+            .as_array()
+            .expect("expected completion items")
+    }
+    .iter()
+    .map(|item| item["label"].as_str().unwrap().to_string())
+    .collect::<Vec<_>>();
+    assert_eq!(nested_prefix_labels, vec![".tooltip".to_string()]);
+}
+
+#[test]
+fn completion_documentation_without_comments_and_unresolved_references_is_exact()
+{
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"plain-doc = See { -missing-term } and { missing-copy } now
+entry =
+    .plain = Save { -missing-term } and { missing-copy }
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"pl
+
+entry =
+    .p
+"#,
+        ),
+    ]);
+    let app_path = workspace.path().join("locales/es/app.ftl");
+    let app_text = std::fs::read_to_string(&app_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_171);
+    open_document(&mut lsp, &app_path, &app_text);
+
+    let message_position = position_after(&app_text, "pl");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_172,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", app_path.display()) },
+            "position": { "line": message_position.0, "character": message_position.1 }
+        }
+    }));
+    let message_completion = recv_response(&mut lsp, 6_172);
+    let message_item = if message_completion["result"].is_array() {
+        message_completion["result"]
+            .as_array()
+            .cloned()
+            .expect("expected completion items")
+    } else {
+        message_completion["result"]["items"]
+            .as_array()
+            .cloned()
+            .expect("expected completion items")
+    }
+    .into_iter()
+    .find(|item| item["label"] == Value::String("plain-doc".to_string()))
+    .expect("missing plain-doc completion item");
+    assert_eq!(
+        message_item["documentation"]["kind"],
+        Value::String("markdown".to_string())
+    );
+    assert_eq!(
+        message_item["documentation"]["value"],
+        Value::String(
+            r#"```ftl
+plain-doc = See { -missing-term } and { missing-copy } now
+```"#
+                .to_string()
+        )
+    );
+
+    let attribute_position = position_after(&app_text, ".p");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_173,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", app_path.display()) },
+            "position": { "line": attribute_position.0, "character": attribute_position.1 }
+        }
+    }));
+    let attribute_completion = recv_response(&mut lsp, 6_173);
+    let attribute_item = if attribute_completion["result"].is_array() {
+        attribute_completion["result"]
+            .as_array()
+            .cloned()
+            .expect("expected completion items")
+    } else {
+        attribute_completion["result"]["items"]
+            .as_array()
+            .cloned()
+            .expect("expected completion items")
+    }
+    .into_iter()
+    .find(|item| item["label"] == Value::String(".plain".to_string()))
+    .expect("missing .plain completion item");
+    assert_eq!(
+        attribute_item["documentation"]["kind"],
+        Value::String("markdown".to_string())
+    );
+    assert_eq!(
+        attribute_item["documentation"]["value"],
+        Value::String(
+            r#"```ftl
+.plain = Save { -missing-term } and { missing-copy }
+```"#
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn completion_returns_exact_empty_payloads_for_remaining_matrix_cases() {
+    let workspace = completion_workspace();
+    let translation_path = workspace.path().join("locales/es/app.ftl");
+    let origin_path = workspace.path().join("locales/en/app.ftl");
+    let nested_path = workspace.path().join("locales/es/dialogs/menu.ftl");
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_174);
+
+    let blank_text = r#"welcome-title = Bienvenido
+
+   
+"#;
+    send_open_document(&mut lsp, &translation_path, blank_text);
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_175,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": { "line": 2, "character": 2 }
+        }
+    }));
+    assert_eq!(
+        recv_response(&mut lsp, 6_175)["result"],
+        Value::Array(Vec::new())
+    );
+
+    let complete_key_text = r#"welcome-title = Bienvenido
+
+download-action = Descargar
+"#;
+    send_change_document(&mut lsp, &translation_path, 2, complete_key_text);
+    let complete_key_position = position_of(complete_key_text, "download-action");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_176,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", translation_path.display()) },
+            "position": {
+                "line": complete_key_position.0,
+                "character": complete_key_position.1 + 15
+            }
+        }
+    }));
+    assert_eq!(
+        recv_response(&mut lsp, 6_176)["result"],
+        Value::Array(Vec::new())
+    );
+
+    let complete_attribute_text = r#"menu-save =
+    .label = Guardar
+"#;
+    send_open_document(&mut lsp, &nested_path, complete_attribute_text);
+    let complete_attribute_position = position_of(complete_attribute_text, ".label");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_177,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", nested_path.display()) },
+            "position": {
+                "line": complete_attribute_position.0,
+                "character": complete_attribute_position.1 + 6
+            }
+        }
+    }));
+    assert_eq!(
+        recv_response(&mut lsp, 6_177)["result"],
+        Value::Array(Vec::new())
+    );
+
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+    open_document(&mut lsp, &origin_path, &origin_text);
+    let origin_position = position_of(&origin_text, "download-action");
+    lsp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6_178,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": format!("file://{}", origin_path.display()) },
+            "position": {
+                "line": origin_position.0,
+                "character": origin_position.1 + 4
+            }
+        }
+    }));
+    assert_eq!(
+        recv_response(&mut lsp, 6_178)["result"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
+fn code_lens_uses_current_document_uri_for_nested_translation_and_origin_files()
+{
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/dialogs/menu.ftl",
+            r#"menu-status =
+    { $count ->
+        [one] one item
+       *[other] many items
+    }
+"#,
+        ),
+        (
+            "locales/es/dialogs/menu.ftl",
+            r#"menu-status =
+    { $count ->
+        [one] un elemento
+       *[other] muchos elementos
+    }
+"#,
+        ),
+    ]);
+    let translation_path = workspace.path().join("locales/es/dialogs/menu.ftl");
+    let origin_path = workspace.path().join("locales/en/dialogs/menu.ftl");
+    let translation_text = std::fs::read_to_string(&translation_path).unwrap();
+    let origin_text = std::fs::read_to_string(&origin_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_179);
+    open_document(&mut lsp, &translation_path, &translation_text);
+    open_document(&mut lsp, &origin_path, &origin_text);
+
+    for (request_id, path) in [
+        (6_180, translation_path.as_path()),
+        (6_181, origin_path.as_path()),
+    ] {
+        let uri = format!("file://{}", path.display());
+        lsp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/codeLens",
+            "params": {
+                "textDocument": { "uri": uri.clone() }
+            }
+        }));
+        let response = recv_response(&mut lsp, request_id);
+        assert_eq!(
+            response["result"],
+            json!([
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 0, "character": 11 }
+                    },
+                    "command": {
+                        "title": "Show all 2 selector combinations",
+                        "command": "fluent-lsp.showSelectorCombinations",
+                        "arguments": [uri, "menu-status"]
+                    }
+                }
+            ])
+        );
+    }
+}
+
+#[test]
+fn translation_only_term_warning_contract_is_exact() {
+    let workspace = temp_workspace(&[
+        (
+            "locales/en/app.ftl",
+            r#"shared = Shared
+"#,
+        ),
+        (
+            "locales/es/app.ftl",
+            r#"-local-term = Termino local
+"#,
+        ),
+    ]);
+    let source_path = workspace.path().join("locales/es/app.ftl");
+    let source_text = std::fs::read_to_string(&source_path).unwrap();
+
+    let mut lsp = initialized_lsp(workspace.path(), 6_182);
+    open_document(&mut lsp, &source_path, &source_text);
+    send_save_document(&mut lsp, &source_path, Some(&source_text));
+
+    let notification =
+        recv_notification(&mut lsp, "textDocument/publishDiagnostics");
+    assert_eq!(
+        notification["params"]["diagnostics"],
+        json!([
+            {
+                "range": {
+                    "start": { "line": 0, "character": 1 },
+                    "end": { "line": 0, "character": 11 }
+                },
+                "severity": 2,
+                "source": "fluent-lsp",
+                "message": "Translation entry `-local-term` has no origin-language counterpart"
+            }
+        ])
     );
 }
 

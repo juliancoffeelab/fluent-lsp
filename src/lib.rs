@@ -42,7 +42,6 @@ use tower_lsp::ls_types::{
 use tower_lsp::{Client, LanguageServer};
 
 const CONFIG_FILE_NAMES: [&str; 2] = ["fluent-lsp.toml", ".fluent-lsp.toml"];
-const SHOW_MESSAGE_SELECTOR_COMBINATIONS_LIMIT: usize = 10;
 const SHOW_SELECTOR_COMBINATIONS_COMMAND: &str =
     "fluent-lsp.showSelectorCombinations";
 const LSP_COPY_MARKER: &str = "# [LSP-COPY]";
@@ -625,6 +624,7 @@ struct IndexedFile {
     file_match: FileMatch,
     source: String,
     definitions: FastMap<String, Range>,
+    selection_ranges: FastMap<String, Range>,
     keys: FastSet<String>,
     block_line_ranges: FastMap<String, (usize, usize)>,
     source_renders: RefCell<FastMap<String, Option<SourceRender>>>,
@@ -660,6 +660,13 @@ impl IndexedFile {
                 (*start_line, usize::MAX - (end_line - start_line))
             })
             .map(|(key, _, _)| key)
+    }
+
+    fn selected_key_at_position(&self, position: Position) -> Option<&str> {
+        let key = self.key_at_position(position)?;
+        let selection_range = self.selection_ranges.get(key)?;
+        range_contains_position_exclusive_end(selection_range, position)
+            .then_some(key)
     }
 }
 
@@ -841,6 +848,8 @@ fn index_fluent_file(
         FastSet::with_capacity_and_hasher(key_capacity, Default::default());
     let mut definitions =
         FastMap::with_capacity_and_hasher(key_capacity, Default::default());
+    let mut selection_ranges =
+        FastMap::with_capacity_and_hasher(key_capacity, Default::default());
     let mut block_line_ranges =
         FastMap::with_capacity_and_hasher(key_capacity, Default::default());
     let mut ordered_message_keys = Vec::with_capacity(message_count);
@@ -861,6 +870,7 @@ fn index_fluent_file(
                     message.id.span.0.clone(),
                     false,
                     &mut definitions,
+                    &mut selection_ranges,
                     &mut block_line_ranges,
                 );
                 let attributes = message
@@ -883,6 +893,7 @@ fn index_fluent_file(
                         attribute.id.span.0.clone(),
                         true,
                         &mut definitions,
+                        &mut selection_ranges,
                         &mut block_line_ranges,
                     );
                 }
@@ -925,6 +936,7 @@ fn index_fluent_file(
                     term.id.span.0.clone(),
                     false,
                     &mut definitions,
+                    &mut selection_ranges,
                     &mut block_line_ranges,
                 );
                 for attribute in &term.attributes {
@@ -937,6 +949,7 @@ fn index_fluent_file(
                         attribute.id.span.0.clone(),
                         true,
                         &mut definitions,
+                        &mut selection_ranges,
                         &mut block_line_ranges,
                     );
                 }
@@ -950,6 +963,7 @@ fn index_fluent_file(
         file_match,
         source,
         definitions,
+        selection_ranges,
         keys,
         block_line_ranges,
         source_renders: RefCell::new(FastMap::default()),
@@ -966,15 +980,21 @@ fn index_key_metadata(
     span: ByteRange<usize>,
     is_attribute: bool,
     definitions: &mut FastMap<String, Range>,
+    selection_ranges: &mut FastMap<String, Range>,
     block_line_ranges: &mut FastMap<String, (usize, usize)>,
 ) {
     let Some(range) =
-        byte_range_to_lsp_range_with_index(source, source_index, span)
+        byte_range_to_lsp_range_with_index(source, source_index, span.clone())
     else {
         return;
     };
     let key = key.to_string();
     definitions.insert(key.clone(), range);
+    if let Some(selection_range) =
+        selection_range_for_key(source, &key, span, range, is_attribute)
+    {
+        selection_ranges.insert(key.clone(), selection_range);
+    }
     if let Some(block_range) = block_line_range_from_definition_with_index(
         source,
         source_index,
@@ -1156,9 +1176,25 @@ impl IndexActor {
             &file.file_match.language,
             settings,
         );
-        if diagnostics.is_empty() {
-            diagnostics.extend(self.indexed_translation_diagnostics_for(path));
+        let indexed_translation = self.indexed_translation_diagnostics_for(path);
+        if let Some(local_only_warning) =
+            indexed_translation.iter().find(|diagnostic| {
+                diagnostic
+                    .message
+                    .starts_with("Translation file has no origin-language counterpart for `")
+            })
+        {
+            diagnostics.push(local_only_warning.clone());
+        } else if diagnostics.is_empty() {
+            diagnostics.extend(indexed_translation);
         }
+        diagnostics.sort_by_key(|diagnostic| {
+            (
+                diagnostic.range.start.line,
+                diagnostic.range.start.character,
+                diagnostic.message.clone(),
+            )
+        });
         Some((uri, diagnostics))
     }
 
@@ -1217,7 +1253,7 @@ impl IndexActor {
             return None;
         }
         let file = self.index.file(path)?;
-        let key = file.key_at_position(position)?;
+        let key = file.selected_key_at_position(position)?;
         let origin_file = self.index.origin_for(&self.workspace, file)?;
         if !origin_file.keys.contains(key) {
             return None;
@@ -1239,7 +1275,7 @@ impl IndexActor {
             return None;
         }
         let origin_file = self.index.file(path)?;
-        let key = origin_file.key_at_position(position)?;
+        let key = origin_file.selected_key_at_position(position)?;
         let mut references = Vec::new();
         if include_declaration {
             references.push(Location {
@@ -1276,7 +1312,7 @@ impl IndexActor {
         let Some(hover_range) = file.definitions.get(key).copied() else {
             return Ok(None);
         };
-        if range_contains_position(&hover_range, position) {
+        if range_contains_position_exclusive_end(&hover_range, position) {
             let current_comments = file
                 .source_render(key)
                 .and_then(|rendered| rendered.comments)
@@ -1304,10 +1340,18 @@ impl IndexActor {
             }
             return Ok(None);
         }
+        let Some(position_byte_index) =
+            position_to_byte_index(&file.source, position)
+        else {
+            return Ok(None);
+        };
         let resource = parse_fluent_resource(&file.source);
         let Some(pattern) = find_fluent_pattern(&resource, key) else {
             return Ok(None);
         };
+        if !pattern.span.0.contains(&position_byte_index) {
+            return Ok(None);
+        }
         let selector_overrides =
             selector_overrides_for_position(&file.source, key, position);
         let current_preview =
@@ -1822,19 +1866,6 @@ impl Backend {
             .await;
     }
 
-    async fn respond_to_clicked_command_with_error<M>(
-        &self,
-        error: LspError,
-        message_type: MessageType,
-        message: M,
-    ) -> LspResult<Option<Value>>
-    where
-        M: Into<String>,
-    {
-        self.client.show_message(message_type, message.into()).await;
-        Err(error)
-    }
-
     async fn publish_document_diagnostics(&self, uri: &Uri) {
         let (workspace, client_config, source, language) = {
             let state = self.state.read().await;
@@ -1879,9 +1910,24 @@ impl Backend {
                 .unwrap_or_default(),
             None => Vec::new(),
         };
-        if diagnostics.is_empty() {
+        if let Some(local_only_warning) =
+            indexed_translation.iter().find(|diagnostic| {
+                diagnostic
+                    .message
+                    .starts_with("Translation file has no origin-language counterpart for `")
+            })
+        {
+            diagnostics.push(local_only_warning.clone());
+        } else if diagnostics.is_empty() {
             diagnostics.extend(indexed_translation);
         }
+        diagnostics.sort_by_key(|diagnostic| {
+            (
+                diagnostic.range.start.line,
+                diagnostic.range.start.character,
+                diagnostic.message.clone(),
+            )
+        });
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, None)
             .await;
@@ -2221,12 +2267,28 @@ impl Backend {
                 ))
             })?;
         drop(state);
+        let resource = parse_fluent_resource(&source);
+        let mut message_key_counts = FastMap::default();
+        for entry in &resource.body {
+            if let Entry::Message(message) = entry {
+                *message_key_counts
+                    .entry(message.id.name.to_string())
+                    .or_insert(0usize) += 1;
+            }
+        }
         let mut lenses = Vec::new();
-        for key in collect_fluent_keys(&source) {
+        for key in collect_fluent_keys_from_resource(&resource) {
+            if key.starts_with('-') || key.contains('.') {
+                continue;
+            }
+            if message_key_counts.get(&key).copied().unwrap_or_default() != 1 {
+                continue;
+            }
             let Some(range) = find_fluent_definition(&source, &key) else {
                 continue;
             };
-            let Some(expansion) = selector_expansion_for(&source, &key, 1)
+            let Some(expansion) =
+                selector_expansion_for(&source, &key, usize::MAX)
             else {
                 continue;
             };
@@ -2235,15 +2297,23 @@ impl Backend {
             {
                 continue;
             }
-            let Some(total_count) = selector_total_count_for(&source, &key)
-            else {
+            if expansion.total_count <= 1 {
                 continue;
-            };
+            }
+            let unique_render_count = expansion
+                .items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<FastSet<_>>()
+                .len();
+            if unique_render_count <= 1 {
+                continue;
+            }
 
             lenses.push(CodeLens {
                 range,
                 command: Some(Command {
-                    title: code_lens_title(total_count),
+                    title: code_lens_title(expansion.total_count),
                     command: SHOW_SELECTOR_COMBINATIONS_COMMAND.to_string(),
                     arguments: Some(vec![
                         Value::String(uri.to_string()),
@@ -2262,103 +2332,63 @@ impl Backend {
         params: ExecuteCommandParams,
     ) -> LspResult<Option<Value>> {
         if params.command != SHOW_SELECTOR_COMBINATIONS_COMMAND {
-            return self
-                .respond_to_clicked_command_with_error(
-                    LspError::invalid_params(format!(
-                        "unknown command: {}",
-                        params.command
-                    )),
-                    MessageType::ERROR,
-                    format!("Unknown command: {}", params.command),
-                )
-                .await;
+            return Err(LspError::invalid_params(format!(
+                "unknown command: {}",
+                params.command
+            )));
         }
 
         let mut arguments = params.arguments.into_iter();
         let Some(uri_value) = arguments.next() else {
-            return self
-                .respond_to_clicked_command_with_error(
-                    LspError::invalid_params("missing document URI argument"),
-                    MessageType::ERROR,
-                    "Missing document URI for selector combinations command",
-                )
-                .await;
+            return Err(LspError::invalid_params(
+                "missing document URI argument",
+            ));
         };
         let Some(key_value) = arguments.next() else {
-            return self
-                .respond_to_clicked_command_with_error(
-                    LspError::invalid_params("missing Fluent key argument"),
-                    MessageType::ERROR,
-                    "Missing Fluent key for selector combinations command",
-                )
-                .await;
+            return Err(LspError::invalid_params(
+                "missing Fluent key argument",
+            ));
+        };
+        if arguments.next().is_some() {
+            return Err(LspError::invalid_params(
+                "expected exactly two arguments: document URI and Fluent key",
+            ));
         };
 
         let Ok(uri) = serde_json::from_value::<String>(uri_value) else {
-            return self
-                .respond_to_clicked_command_with_error(
-                    LspError::invalid_params("document URI argument must be a string"),
-                    MessageType::ERROR,
-                    "Selector combinations command received an invalid document URI",
-                )
-                .await;
+            return Err(LspError::invalid_params(
+                "document URI argument must be a string",
+            ));
         };
         let Ok(key) = serde_json::from_value::<String>(key_value) else {
-            return self
-                .respond_to_clicked_command_with_error(
-                    LspError::invalid_params("Fluent key argument must be a string"),
-                    MessageType::ERROR,
-                    "Selector combinations command received an invalid Fluent key",
-                )
-                .await;
+            return Err(LspError::invalid_params(
+                "Fluent key argument must be a string",
+            ));
         };
         let Ok(uri) = uri.parse::<Uri>() else {
-            return self
-                .respond_to_clicked_command_with_error(
-                    LspError::invalid_params("document URI argument must be a valid URI"),
-                    MessageType::ERROR,
-                    "Selector combinations command received an invalid document URI",
-                )
-                .await;
+            return Err(LspError::invalid_params(
+                "document URI argument must be a valid URI",
+            ));
         };
         let Some(path) = uri.to_file_path().map(|path| path.into_owned())
         else {
-            return self
-                .respond_to_clicked_command_with_error(
-                    LspError::invalid_params("document URI must point to a file"),
-                    MessageType::ERROR,
-                    "Selector combinations command expected a file-backed document",
-                )
-                .await;
+            return Err(LspError::invalid_params(
+                "document URI must point to a file",
+            ));
         };
 
         let state = self.state.read().await;
         let Some(workspace) = state.workspace.clone() else {
-            return self
-                .respond_to_clicked_command_with_error(
-                    internal_error_with_message(
-                        "no fluent-lsp workspace is loaded",
-                    ),
-                    MessageType::ERROR,
-                    "fluent-lsp is not configured for this workspace",
-                )
-                .await;
+            return Err(internal_error_with_message(
+                "no fluent-lsp workspace is loaded",
+            ));
         };
         let supports_show_document = state.supports_show_document;
         if workspace.file_match(&path).is_none() {
-            return self
-                .respond_to_clicked_command_with_error(
-                    LspError::invalid_params(format!(
-                        "selector combinations are unavailable for {}",
-                        path.display()
-                    )),
-                    MessageType::ERROR,
-                    format!(
-                        "Selector combinations are unavailable for {}",
-                        path.display()
-                    ),
-                )
-                .await;
+            return Err(LspError::invalid_params(format!(
+                "document is outside the configured Fluent workspace: {}",
+                path.display()
+            )));
         }
         let source = state
             .open_documents
@@ -2367,136 +2397,100 @@ impl Backend {
             .or_else(|| std::fs::read_to_string(&path).ok());
         drop(state);
         let Some(source) = source else {
-            return self
-                .respond_to_clicked_command_with_error(
-                    internal_error_with_message(format!(
-                        "failed to read {}",
-                        path.display()
-                    )),
-                    MessageType::ERROR,
-                    format!("Failed to read {}", path.display()),
-                )
-                .await;
+            return Err(internal_error_with_message(format!(
+                "failed to read {}",
+                path.display()
+            )));
         };
         let Some(file_match) = workspace.file_match(&path) else {
-            return self
-                .respond_to_clicked_command_with_error(
-                    internal_error_with_message(format!(
-                        "failed to resolve file metadata for {}",
-                        path.display()
-                    )),
-                    MessageType::ERROR,
-                    format!(
-                        "Failed to resolve file metadata for {}",
-                        path.display()
-                    ),
-                )
-                .await;
+            return Err(internal_error_with_message(format!(
+                "failed to resolve file metadata for {}",
+                path.display()
+            )));
         };
 
-        let max_items = if supports_show_document {
-            usize::MAX
-        } else {
-            SHOW_MESSAGE_SELECTOR_COMBINATIONS_LIMIT
-        };
+        if !supports_show_document {
+            return Err(internal_error_with_message(
+                "client does not support window/showDocument",
+            ));
+        }
+
+        let max_items = usize::MAX;
         let Some(current_section) = render_selector_combinations_section(
             "Current language combinations:",
             &source,
             &key,
             max_items,
         ) else {
-            self.client
-                .show_message(
-                    MessageType::INFO,
-                    format!("No selector combinations available for `{key}`"),
-                )
-                .await;
-            return Ok(None);
+            return Err(LspError::invalid_params(format!(
+                "no selector combinations available for `{key}`"
+            )));
         };
 
-        if supports_show_document {
-            let origin_source = if workspace.is_origin_file(&path) {
-                source.clone()
-            } else {
-                self.request_index(|reply| IndexMessage::OriginSource {
-                    path: path.clone(),
-                    reply,
-                })
-                .await
-                .flatten()
-                .ok_or_else(|| {
-                    internal_error_with_message(format!(
-                        "failed to resolve origin counterpart for {}",
-                        path.display()
-                    ))
-                })?
-            };
-            let current_render = render_fluent_source(&source, &key);
-            let origin_render = render_fluent_source(&origin_source, &key);
-            let origin_section = if workspace.is_origin_file(&path) {
-                None
-            } else {
-                render_selector_combinations_section(
-                    "Source language combinations:",
-                    &origin_source,
-                    &key,
-                    max_items,
-                )
-            };
-            let document_text = render_selector_combinations_document(
+        let origin_source = if workspace.is_origin_file(&path) {
+            source.clone()
+        } else {
+            self.request_index(|reply| IndexMessage::OriginSource {
+                path: path.clone(),
+                reply,
+            })
+            .await
+            .flatten()
+            .ok_or_else(|| {
+                internal_error_with_message(format!(
+                    "failed to resolve origin counterpart for {}",
+                    path.display()
+                ))
+            })?
+        };
+        let current_render = render_fluent_source(&source, &key);
+        let origin_render = render_fluent_source(&origin_source, &key);
+        let origin_section = if workspace.is_origin_file(&path) {
+            None
+        } else {
+            render_selector_combinations_section(
+                "Source language combinations:",
+                &origin_source,
                 &key,
-                &file_match,
-                workspace.origin_language(),
-                origin_render.as_ref(),
-                origin_section.as_deref(),
-                current_render.as_ref(),
-                &current_section,
-            );
-
-            let document_uri =
-                write_selector_combinations_temp_document(&key, &document_text)
-                    .map_err(|message| {
-                        internal_error_with_message(message.clone())
-                    })?;
-            let opened = self
-                .client
-                .show_document(ShowDocumentParams {
-                    uri: document_uri,
-                    external: Some(false),
-                    take_focus: Some(true),
-                    selection: Some(Range::new(
-                        Position::new(0, 0),
-                        Position::new(0, 0),
-                    )),
-                })
-                .await
-                .map_err(|error| {
-                    internal_error_with_message(format!(
-                        "failed to open selector combinations document: {error}"
-                    ))
-                })?;
-            if opened {
-                return Ok(None);
-            }
-            return self
-                .respond_to_clicked_command_with_error(
-                    internal_error_with_message(
-                        "client declined to show the selector combinations document",
-                    ),
-                    MessageType::ERROR,
-                    "The editor refused to open the selector combinations document",
-                )
-                .await;
-        }
-
-        self.client
-            .show_message(
-                MessageType::INFO,
-                format!("Selector combinations for {key}\n\n{current_section}"),
+                max_items,
             )
-            .await;
+        };
+        let document_text = render_selector_combinations_document(
+            &key,
+            &file_match,
+            workspace.origin_language(),
+            origin_render.as_ref(),
+            origin_section.as_deref(),
+            current_render.as_ref(),
+            &current_section,
+        );
 
-        Ok(None)
+        let document_uri =
+            write_selector_combinations_temp_document(&key, &document_text)
+                .map_err(|message| internal_error_with_message(message.clone()))?;
+        let opened = self
+            .client
+            .show_document(ShowDocumentParams {
+                uri: document_uri,
+                external: Some(false),
+                take_focus: Some(true),
+                selection: Some(Range::new(
+                    Position::new(0, 0),
+                    Position::new(0, 0),
+                )),
+            })
+            .await
+            .map_err(|error| {
+                internal_error_with_message(format!(
+                    "failed to open selector combinations document: {error}"
+                ))
+            })?;
+        if opened {
+            return Ok(None);
+        }
+        Err(internal_error_with_message(
+            "client declined to show the selector combinations document",
+        ))
     }
 }
 
@@ -6067,18 +6061,52 @@ fn completion_site_for_position(
         .unwrap_or(source.len());
     let line = source.get(line_start..line_end)?;
     let cursor_in_line = byte_index.checked_sub(line_start)?;
-    let before_cursor = line.get(..cursor_in_line)?;
-    let trimmed_before = before_cursor.trim_start();
-    if trimmed_before.is_empty()
-        || trimmed_before.starts_with('#')
-        || before_cursor.contains('=')
-    {
+    let trimmed_line = line.trim_start();
+    let line_has_assignment = line.contains('=');
+    if trimmed_line.is_empty() || trimmed_line.starts_with('#') {
         return None;
     }
 
     let indent = leading_spaces(line);
+    let token_start = line
+        .char_indices()
+        .find(|(_, ch)| *ch != ' ')
+        .map(|(index, _)| index)?;
+    if cursor_in_line < token_start {
+        return None;
+    }
+    let mut token_end = token_start;
+    for byte in line.as_bytes().iter().skip(token_start) {
+        let is_valid = if indent == 0 {
+            is_key_byte(Some(*byte)) && *byte != b'.'
+        } else {
+            *byte == b'.' || (is_key_byte(Some(*byte)) && *byte != b'.')
+        };
+        if !is_valid {
+            break;
+        }
+        token_end += 1;
+    }
+    if token_end == token_start || cursor_in_line > token_end {
+        return None;
+    }
+    let token = line.get(token_start..token_end)?;
+    let prefix = if line_has_assignment {
+        let prefix_end = if cursor_in_line == token_end {
+            token_end
+        } else {
+            cursor_in_line.max(token_start + 1)
+        };
+        let prefix = line.get(token_start..prefix_end)?;
+        if prefix == token {
+            return None;
+        }
+        prefix
+    } else {
+        token
+    };
+
     if indent == 0 {
-        let prefix = trimmed_before.trim_end();
         if prefix.starts_with('.') || !is_completion_prefix(prefix, false) {
             return None;
         }
@@ -6087,11 +6115,10 @@ fn completion_site_for_position(
         });
     }
 
-    if cursor_in_line < indent {
+    if cursor_in_line < indent || token_start != indent {
         return None;
     }
-    if !trimmed_before.starts_with('.')
-        || !is_completion_prefix(trimmed_before, true)
+    if !prefix.starts_with('.') || !is_completion_prefix(prefix, true)
     {
         return None;
     }
@@ -6099,7 +6126,7 @@ fn completion_site_for_position(
         enclosing_message_key_for_attribute_completion(source, position.line)?;
     Some(CompletionSite::AttributeKey {
         message_key,
-        prefix: trimmed_before.to_string(),
+        prefix: prefix.to_string(),
     })
 }
 
@@ -7682,6 +7709,48 @@ fn range_contains_position(range: &Range, position: Position) -> bool {
         && (position.line < range.end.line
             || (position.line == range.end.line
                 && position.character <= range.end.character))
+}
+
+fn range_contains_position_exclusive_end(
+    range: &Range,
+    position: Position,
+) -> bool {
+    (range.start.line < position.line
+        || (range.start.line == position.line
+            && range.start.character <= position.character))
+        && (position.line < range.end.line
+            || (position.line == range.end.line
+                && position.character < range.end.character))
+}
+
+fn selection_range_for_key(
+    source: &str,
+    key: &str,
+    span: ByteRange<usize>,
+    range: Range,
+    is_attribute: bool,
+) -> Option<Range> {
+    let prefix = if is_attribute {
+        Some('.')
+    } else if key.starts_with('-') {
+        Some('-')
+    } else {
+        None
+    };
+    let Some(prefix) = prefix else {
+        return Some(range);
+    };
+    let prefix_start = span.start.checked_sub(prefix.len_utf8())?;
+    if source.get(prefix_start..span.start)? != prefix.to_string() {
+        return Some(range);
+    }
+    if range.start.character == 0 {
+        return Some(range);
+    }
+    Some(Range::new(
+        Position::new(range.start.line, range.start.character - 1),
+        range.end,
+    ))
 }
 
 fn internal_error_with_message<M>(message: M) -> LspError
