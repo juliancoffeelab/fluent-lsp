@@ -48,12 +48,12 @@ const LSP_COPY_MARKER: &str = "# [LSP-COPY]";
 const LSP_COPY_MARKER_PREFIX: &str = "# [LSP-COPY .";
 const BACKGROUND_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
-type FastMap<K, V> = FxHashMap<K, V>;
-type FastSet<K> = FxHashSet<K>;
+pub type FastMap<K, V> = FxHashMap<K, V>;
+pub type FastSet<K> = FxHashSet<K>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum SelectorStyle {
+pub enum SelectorStyle {
     Prefix,
     Suffix,
     Whole,
@@ -149,15 +149,19 @@ struct FileMask {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FileMatch {
-    mask_index: usize,
-    language: String,
-    filepath: String,
+pub struct FileMatch {
+    pub mask_index: usize,
+    pub language: String,
+    pub filepath: String,
 }
 
 impl WorkspaceConfig {
     pub fn load(root_dir: PathBuf) -> Result<Self> {
         Self::load_with_client(root_dir, &ClientConfig::default())
+    }
+
+    pub fn root_dir(&self) -> &Path {
+        &self.root_dir
     }
 
     fn load_with_client(
@@ -257,11 +261,11 @@ impl WorkspaceConfig {
         })
     }
 
-    fn origin_language(&self) -> &str {
+    pub fn origin_language(&self) -> &str {
         &self.origin_language
     }
 
-    fn file_match(&self, path: &Path) -> Option<FileMatch> {
+    pub fn file_match(&self, path: &Path) -> Option<FileMatch> {
         if !is_fluent_file(path) {
             return None;
         }
@@ -284,7 +288,7 @@ impl WorkspaceConfig {
         None
     }
 
-    fn is_origin_file(&self, path: &Path) -> bool {
+    pub fn is_origin_file(&self, path: &Path) -> bool {
         self.file_match(path)
             .map(|file_match| file_match.language == self.origin_language)
             .unwrap_or(false)
@@ -348,7 +352,7 @@ impl WorkspaceConfig {
         Some(relative.to_string_lossy().replace('\\', "/"))
     }
 
-    fn selector_style(&self) -> Option<SelectorStyle> {
+    pub fn selector_style(&self) -> Option<SelectorStyle> {
         self.selector_style
     }
 
@@ -503,9 +507,9 @@ fn collect_translation_files(workspace: &WorkspaceConfig) -> Vec<PathBuf> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SourceRender {
-    comments: Option<String>,
-    source: String,
+pub struct SourceRender {
+    pub comments: Option<String>,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -576,17 +580,17 @@ enum CompletionSite {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct OriginMessageTemplate {
-    key: String,
-    has_value: bool,
-    attributes: Vec<OriginAttributeTemplate>,
-    source_span: ByteRange<usize>,
+pub struct OriginMessageTemplate {
+    pub key: String,
+    pub has_value: bool,
+    pub attributes: Vec<OriginAttributeTemplate>,
+    pub source_span: ByteRange<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct OriginAttributeTemplate {
-    key: String,
-    source_span: ByteRange<usize>,
+pub struct OriginAttributeTemplate {
+    pub key: String,
+    pub source_span: ByteRange<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -619,22 +623,22 @@ struct MissingTranslationEntries {
 }
 
 #[derive(Debug, Clone)]
-struct IndexedFile {
-    path: PathBuf,
-    file_match: FileMatch,
-    source: String,
-    definitions: FastMap<String, Range>,
-    selection_ranges: FastMap<String, Range>,
-    keys: FastSet<String>,
-    block_line_ranges: FastMap<String, (usize, usize)>,
-    source_renders: RefCell<FastMap<String, Option<SourceRender>>>,
-    ordered_message_keys: Vec<String>,
-    message_attributes: FastMap<String, Vec<String>>,
-    origin_message_templates: Vec<OriginMessageTemplate>,
+pub struct IndexedFile {
+    pub path: PathBuf,
+    pub file_match: FileMatch,
+    pub source: String,
+    pub definitions: FastMap<String, Range>,
+    pub selection_ranges: FastMap<String, Range>,
+    pub keys: FastSet<String>,
+    pub block_line_ranges: FastMap<String, (usize, usize)>,
+    pub source_renders: RefCell<FastMap<String, Option<SourceRender>>>,
+    pub ordered_message_keys: Vec<String>,
+    pub message_attributes: FastMap<String, Vec<String>>,
+    pub origin_message_templates: Vec<OriginMessageTemplate>,
 }
 
 impl IndexedFile {
-    fn source_render(&self, key: &str) -> Option<SourceRender> {
+    pub fn source_render(&self, key: &str) -> Option<SourceRender> {
         if let Some(rendered) = self.source_renders.borrow().get(key) {
             return rendered.clone();
         }
@@ -645,7 +649,7 @@ impl IndexedFile {
         rendered
     }
 
-    fn key_at_position(&self, position: Position) -> Option<&str> {
+    pub fn key_at_position(&self, position: Position) -> Option<&str> {
         let line_index = usize::try_from(position.line).ok()?;
         self.block_line_ranges
             .iter()
@@ -662,7 +666,7 @@ impl IndexedFile {
             .map(|(key, _, _)| key)
     }
 
-    fn selected_key_at_position(&self, position: Position) -> Option<&str> {
+    pub fn selected_key_at_position(&self, position: Position) -> Option<&str> {
         let key = self.key_at_position(position)?;
         let selection_range = self.selection_ranges.get(key)?;
         range_contains_position_exclusive_end(selection_range, position)
@@ -671,9 +675,9 @@ impl IndexedFile {
 }
 
 #[derive(Debug, Clone, Default)]
-struct WorkspaceIndex {
-    files: FastMap<PathBuf, IndexedFile>,
-    by_identity: FastMap<(usize, String, String), PathBuf>,
+pub struct WorkspaceIndex {
+    pub files: FastMap<PathBuf, IndexedFile>,
+    pub by_identity: FastMap<(usize, String, String), PathBuf>,
 }
 
 impl WorkspaceIndex {
@@ -758,11 +762,11 @@ impl WorkspaceIndex {
         }
     }
 
-    fn file(&self, path: &Path) -> Option<&IndexedFile> {
+    pub fn file(&self, path: &Path) -> Option<&IndexedFile> {
         self.files.get(path)
     }
 
-    fn origin_for<'a>(
+    pub fn origin_for<'a>(
         &'a self,
         workspace: &WorkspaceConfig,
         file: &IndexedFile,
@@ -775,7 +779,7 @@ impl WorkspaceIndex {
         self.files.get(path)
     }
 
-    fn translations_for<'a>(
+    pub fn translations_for<'a>(
         &'a self,
         workspace: &WorkspaceConfig,
         origin: &IndexedFile,
@@ -1176,12 +1180,13 @@ impl IndexActor {
             &file.file_match.language,
             settings,
         );
-        let indexed_translation = self.indexed_translation_diagnostics_for(path);
+        let indexed_translation =
+            self.indexed_translation_diagnostics_for(path);
         if let Some(local_only_warning) =
             indexed_translation.iter().find(|diagnostic| {
-                diagnostic
-                    .message
-                    .starts_with("Translation file has no origin-language counterpart for `")
+                diagnostic.message.starts_with(
+                    "Translation file has no origin-language counterpart for `",
+                )
             })
         {
             diagnostics.push(local_only_warning.clone());
@@ -1249,19 +1254,7 @@ impl IndexActor {
     }
 
     fn definition(&self, path: &Path, position: Position) -> Option<Location> {
-        if !self.workspace.matches_translation_file(path) {
-            return None;
-        }
-        let file = self.index.file(path)?;
-        let key = file.selected_key_at_position(position)?;
-        let origin_file = self.index.origin_for(&self.workspace, file)?;
-        if !origin_file.keys.contains(key) {
-            return None;
-        }
-        Some(Location {
-            uri: Uri::from_file_path(&origin_file.path)?,
-            range: *origin_file.definitions.get(key)?,
-        })
+        definition_for_position(&self.workspace, &self.index, path, position)
     }
 
     fn references(
@@ -1271,31 +1264,14 @@ impl IndexActor {
         position: Position,
         include_declaration: bool,
     ) -> Option<Vec<Location>> {
-        if !self.workspace.is_origin_file(path) {
-            return None;
-        }
-        let origin_file = self.index.file(path)?;
-        let key = origin_file.selected_key_at_position(position)?;
-        let mut references = Vec::new();
-        if include_declaration {
-            references.push(Location {
-                uri: uri.clone(),
-                range: *origin_file.definitions.get(key)?,
-            });
-        }
-        for translation_file in
-            self.index.translations_for(&self.workspace, origin_file)
-        {
-            let Some(range) = translation_file.definitions.get(key).copied()
-            else {
-                continue;
-            };
-            let Some(uri) = Uri::from_file_path(&translation_file.path) else {
-                continue;
-            };
-            references.push(Location { uri, range });
-        }
-        Some(references)
+        references_for_position(
+            &self.workspace,
+            &self.index,
+            path,
+            uri,
+            position,
+            include_declaration,
+        )
     }
 
     fn hover(
@@ -1303,91 +1279,7 @@ impl IndexActor {
         path: &Path,
         position: Position,
     ) -> LspResult<Option<Hover>> {
-        let Some(file) = self.index.file(path) else {
-            return Ok(None);
-        };
-        let Some(key) = file.key_at_position(position) else {
-            return Ok(None);
-        };
-        let Some(hover_range) = file.definitions.get(key).copied() else {
-            return Ok(None);
-        };
-        if range_contains_position_exclusive_end(&hover_range, position) {
-            let current_comments = file
-                .source_render(key)
-                .and_then(|rendered| rendered.comments)
-                .filter(|comments| !comments.is_empty());
-            let origin_comments = if !self.workspace.is_origin_file(path) {
-                self.index
-                    .origin_for(&self.workspace, file)
-                    .and_then(|origin_file| origin_file.source_render(key))
-                    .and_then(|rendered| rendered.comments.clone())
-                    .filter(|comments| !comments.is_empty())
-            } else {
-                None
-            };
-            if let Some(value) = render_hover_comment_markdown(
-                origin_comments.as_deref(),
-                current_comments.as_deref(),
-            ) {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value,
-                    }),
-                    range: Some(hover_range),
-                }));
-            }
-            return Ok(None);
-        }
-        let Some(position_byte_index) =
-            position_to_byte_index(&file.source, position)
-        else {
-            return Ok(None);
-        };
-        let resource = parse_fluent_resource(&file.source);
-        let Some(pattern) = find_fluent_pattern(&resource, key) else {
-            return Ok(None);
-        };
-        if !pattern.span.0.contains(&position_byte_index) {
-            return Ok(None);
-        }
-        let selector_overrides =
-            selector_overrides_for_position(&file.source, key, position);
-        let current_preview =
-            render_message_preview(pattern, Some(&selector_overrides));
-        let source_preview = if !self.workspace.is_origin_file(path)
-            && !range_contains_position(&hover_range, position)
-        {
-            self.index
-                .origin_for(&self.workspace, file)
-                .and_then(|origin_file| {
-                    origin_file.keys.contains(key).then_some(origin_file)
-                })
-                .map(|origin_file| {
-                    let origin_resource =
-                        parse_fluent_resource(&origin_file.source);
-                    let origin_pattern =
-                        find_fluent_pattern(&origin_resource, key)?;
-                    Some(render_message_preview(
-                        origin_pattern,
-                        Some(&selector_overrides),
-                    ))
-                })
-                .flatten()
-        } else {
-            None
-        };
-        Ok(Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: render_hover_markdown(
-                    source_preview.as_ref(),
-                    &current_preview,
-                ),
-            }),
-            range: Some(hover_range),
-        }))
+        hover_for_position(&self.workspace, &self.index, path, position)
     }
 
     fn completion(
@@ -1395,23 +1287,7 @@ impl IndexActor {
         path: &Path,
         position: Position,
     ) -> LspResult<Option<CompletionResponse>> {
-        let Some(file) = self.index.file(path) else {
-            return Ok(None);
-        };
-        if file.file_match.language == self.workspace.origin_language {
-            return Ok(Some(CompletionResponse::Array(Vec::new())));
-        }
-        let Some(site) = completion_site_for_position(&file.source, position)
-        else {
-            return Ok(Some(CompletionResponse::Array(Vec::new())));
-        };
-        let Some(origin_file) = self.index.origin_for(&self.workspace, file)
-        else {
-            return Ok(Some(CompletionResponse::Array(Vec::new())));
-        };
-        Ok(Some(CompletionResponse::Array(
-            indexed_completion_items_for_site(origin_file, file, &site),
-        )))
+        completion_for_position(&self.workspace, &self.index, path, position)
     }
 
     fn origin_message_templates(
@@ -1515,10 +1391,489 @@ impl IndexActor {
     }
 }
 
-pub fn build_workspace_index_snapshot(
+pub fn definition_for_position(
+    workspace: &WorkspaceConfig,
+    index: &WorkspaceIndex,
+    path: &Path,
+    position: Position,
+) -> Option<Location> {
+    if !workspace.matches_translation_file(path) {
+        return None;
+    }
+    let file = index.file(path)?;
+    let key = file.selected_key_at_position(position)?;
+    let origin_file = index.origin_for(workspace, file)?;
+    if !origin_file.keys.contains(key) {
+        return None;
+    }
+    Some(Location {
+        uri: Uri::from_file_path(&origin_file.path)?,
+        range: *origin_file.definitions.get(key)?,
+    })
+}
+
+pub fn references_for_position(
+    workspace: &WorkspaceConfig,
+    index: &WorkspaceIndex,
+    path: &Path,
+    uri: &Uri,
+    position: Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    if !workspace.is_origin_file(path) {
+        return None;
+    }
+    let origin_file = index.file(path)?;
+    let key = origin_file.selected_key_at_position(position)?;
+    let mut references = Vec::new();
+    if include_declaration {
+        references.push(Location {
+            uri: uri.clone(),
+            range: *origin_file.definitions.get(key)?,
+        });
+    }
+    for translation_file in index.translations_for(workspace, origin_file) {
+        let Some(range) = translation_file.definitions.get(key).copied() else {
+            continue;
+        };
+        let Some(uri) = Uri::from_file_path(&translation_file.path) else {
+            continue;
+        };
+        references.push(Location { uri, range });
+    }
+    Some(references)
+}
+
+pub fn hover_for_position(
+    workspace: &WorkspaceConfig,
+    index: &WorkspaceIndex,
+    path: &Path,
+    position: Position,
+) -> LspResult<Option<Hover>> {
+    let Some(file) = index.file(path) else {
+        return Ok(None);
+    };
+    let Some(key) = file.key_at_position(position) else {
+        return Ok(None);
+    };
+    let Some(hover_range) = file.definitions.get(key).copied() else {
+        return Ok(None);
+    };
+    if range_contains_position_exclusive_end(&hover_range, position) {
+        let current_comments = file
+            .source_render(key)
+            .and_then(|rendered| rendered.comments)
+            .filter(|comments| !comments.is_empty());
+        let origin_comments = if !workspace.is_origin_file(path) {
+            index
+                .origin_for(workspace, file)
+                .and_then(|origin_file| origin_file.source_render(key))
+                .and_then(|rendered| rendered.comments.clone())
+                .filter(|comments| !comments.is_empty())
+        } else {
+            None
+        };
+        if let Some(value) = render_hover_comment_markdown(
+            origin_comments.as_deref(),
+            current_comments.as_deref(),
+        ) {
+            return Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value,
+                }),
+                range: Some(hover_range),
+            }));
+        }
+        return Ok(None);
+    }
+    let Some(position_byte_index) =
+        position_to_byte_index(&file.source, position)
+    else {
+        return Ok(None);
+    };
+    let resource = parse_fluent_resource(&file.source);
+    let Some(pattern) = find_fluent_pattern(&resource, key) else {
+        return Ok(None);
+    };
+    if !pattern.span.0.contains(&position_byte_index) {
+        return Ok(None);
+    }
+    let selector_overrides =
+        selector_overrides_for_position(&file.source, key, position);
+    let current_preview =
+        render_message_preview(pattern, Some(&selector_overrides));
+    let source_preview = if !workspace.is_origin_file(path)
+        && !range_contains_position(&hover_range, position)
+    {
+        index
+            .origin_for(workspace, file)
+            .and_then(|origin_file| {
+                origin_file.keys.contains(key).then_some(origin_file)
+            })
+            .and_then(|origin_file| {
+                let origin_resource =
+                    parse_fluent_resource(&origin_file.source);
+                let origin_pattern =
+                    find_fluent_pattern(&origin_resource, key)?;
+                Some(render_message_preview(
+                    origin_pattern,
+                    Some(&selector_overrides),
+                ))
+            })
+    } else {
+        None
+    };
+    Ok(Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: render_hover_markdown(
+                source_preview.as_ref(),
+                &current_preview,
+            ),
+        }),
+        range: Some(hover_range),
+    }))
+}
+
+pub fn completion_for_position(
+    workspace: &WorkspaceConfig,
+    index: &WorkspaceIndex,
+    path: &Path,
+    position: Position,
+) -> LspResult<Option<CompletionResponse>> {
+    let Some(file) = index.file(path) else {
+        return Ok(None);
+    };
+    if file.file_match.language == workspace.origin_language {
+        return Ok(Some(CompletionResponse::Array(Vec::new())));
+    }
+    let Some(site) = completion_site_for_position(&file.source, position)
+    else {
+        return Ok(Some(CompletionResponse::Array(Vec::new())));
+    };
+    let Some(origin_file) = index.origin_for(workspace, file) else {
+        return Ok(Some(CompletionResponse::Array(Vec::new())));
+    };
+    Ok(Some(CompletionResponse::Array(
+        indexed_completion_items_for_site(origin_file, file, &site),
+    )))
+}
+
+pub fn code_actions_for_document(
+    workspace: &WorkspaceConfig,
+    path: &Path,
+    uri: &Uri,
+    source: &str,
+    position: Position,
+    style: SelectorStyle,
+    supports_snippet_text_edits: bool,
+    origin_templates: Option<&[OriginMessageTemplate]>,
+    origin_source: Option<&str>,
+    current_key: Option<&str>,
+) -> LspResult<Option<CodeActionResponse>> {
+    let Some(file_match) = workspace.file_match(path) else {
+        return Ok(None);
+    };
+    let selector_context =
+        build_selector_code_action_context(source, path, position, current_key);
+
+    let mut actions = Vec::new();
+    if let Some(origin_templates) = origin_templates {
+        let missing = collect_missing_translation_entries_from_templates(
+            origin_templates,
+            source,
+        );
+        if !missing.is_empty() {
+            if let Some(edit) = build_missing_entries_workspace_edit(
+                uri,
+                source,
+                &missing,
+                origin_source,
+                MissingEntryRenderMode::CopySource,
+            ) {
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: "Copy missing strings in file".to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    edit: Some(edit),
+                    ..CodeAction::default()
+                }));
+            }
+        }
+        if let Some(origin_source) = origin_source {
+            if let Some(action) = build_single_message_copy_code_action(
+                uri,
+                source,
+                origin_templates,
+                origin_source,
+                current_key,
+            ) {
+                actions.push(CodeActionOrCommand::CodeAction(action));
+            }
+        }
+    }
+
+    if let Some(target) = selector_context.as_ref().and_then(|context| {
+        find_generate_selector_target_in_context(source, context)
+    }) {
+        let Some(edit_range) =
+            byte_range_to_lsp_range(source, target.pattern_span.clone())
+        else {
+            return Ok(None);
+        };
+        let ordered_styles =
+            ordered_selector_styles(available_selector_styles(&target), style);
+        for candidate_style in ordered_styles {
+            let Some(generated) = generate_number_selector_edit(
+                source,
+                &target,
+                &file_match.language,
+                candidate_style,
+                supports_snippet_text_edits,
+            ) else {
+                continue;
+            };
+            let generated = pad_assignment_replacement(
+                source,
+                &target.pattern_span,
+                generated,
+            );
+
+            let edit = if supports_snippet_text_edits {
+                WorkspaceEdit {
+                    changes: None,
+                    document_changes: Some(DocumentChanges::Edits(vec![
+                        TextDocumentEdit {
+                            text_document:
+                                OptionalVersionedTextDocumentIdentifier {
+                                    uri: uri.clone(),
+                                    version: None,
+                                },
+                            edits: vec![OneOf3::Right(SnippetTextEdit {
+                                range: edit_range,
+                                snippet: generated,
+                                annotation_id: None,
+                            })],
+                        },
+                    ])),
+                    change_annotations: None,
+                }
+            } else {
+                let mut changes = HashMap::new();
+                changes.insert(
+                    uri.clone(),
+                    vec![TextEdit::new(edit_range, generated)],
+                );
+                WorkspaceEdit {
+                    changes: Some(changes),
+                    document_changes: None,
+                    change_annotations: None,
+                }
+            };
+
+            let title = if let Some(function) = &target.selected_function {
+                format!(
+                    "Generate number selector from {} ({})",
+                    function.selector_text,
+                    candidate_style.label()
+                )
+            } else if let Some(variable) = &target.selected_variable {
+                format!(
+                    "Generate number selector from {} ({})",
+                    variable.name,
+                    candidate_style.label()
+                )
+            } else {
+                format!(
+                    "Generate number selector ({})",
+                    candidate_style.label()
+                )
+            };
+
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title,
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                edit: Some(edit),
+                is_preferred: Some(candidate_style == style),
+                ..CodeAction::default()
+            }));
+        }
+    }
+
+    if let Some((pattern_span, rewrite_actions)) =
+        selector_context.as_ref().and_then(|context| {
+            find_selector_rewrite_target_in_context(source, context)
+        })
+    {
+        let Some(edit_range) =
+            byte_range_to_lsp_range(source, pattern_span.clone())
+        else {
+            return Ok(None);
+        };
+        for rewrite in rewrite_actions {
+            let mut changes = HashMap::new();
+            changes.insert(
+                uri.clone(),
+                vec![TextEdit::new(
+                    edit_range,
+                    pad_assignment_replacement(
+                        source,
+                        &pattern_span,
+                        rewrite.replacement,
+                    ),
+                )],
+            );
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: rewrite.kind.title().to_string(),
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                edit: Some(WorkspaceEdit {
+                    changes: Some(changes),
+                    document_changes: None,
+                    change_annotations: None,
+                }),
+                ..CodeAction::default()
+            }));
+        }
+    }
+
+    if actions.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(actions))
+    }
+}
+
+pub fn code_lenses_for_document(
+    workspace: &WorkspaceConfig,
+    path: &Path,
+    uri: &Uri,
+    source: &str,
+) -> Option<Vec<CodeLens>> {
+    workspace.file_match(path)?;
+    let resource = parse_fluent_resource(source);
+    let mut message_key_counts = FastMap::default();
+    for entry in &resource.body {
+        if let Entry::Message(message) = entry {
+            *message_key_counts
+                .entry(message.id.name.to_string())
+                .or_insert(0usize) += 1;
+        }
+    }
+    let mut lenses = Vec::new();
+    for key in collect_fluent_keys_from_resource(&resource) {
+        if key.starts_with('-') || key.contains('.') {
+            continue;
+        }
+        if message_key_counts.get(&key).copied().unwrap_or_default() != 1 {
+            continue;
+        }
+        let Some(range) = find_fluent_definition(source, &key) else {
+            continue;
+        };
+        let Some(expansion) = selector_expansion_for(source, &key, usize::MAX)
+        else {
+            continue;
+        };
+        if expansion.items.is_empty()
+            || expansion.items.iter().all(|item| item.selectors.is_empty())
+        {
+            continue;
+        }
+        if expansion.total_count <= 1 {
+            continue;
+        }
+        let unique_render_count = expansion
+            .items
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<FastSet<_>>()
+            .len();
+        if unique_render_count <= 1 {
+            continue;
+        }
+
+        lenses.push(CodeLens {
+            range,
+            command: Some(Command {
+                title: code_lens_title(expansion.total_count),
+                command: SHOW_SELECTOR_COMBINATIONS_COMMAND.to_string(),
+                arguments: Some(vec![
+                    Value::String(uri.to_string()),
+                    Value::String(key),
+                ]),
+            }),
+            data: None,
+        });
+    }
+    Some(lenses)
+}
+
+pub fn selector_combinations_document_for_key(
+    workspace: &WorkspaceConfig,
+    path: &Path,
+    key: &str,
+    source: &str,
+    origin_source: Option<&str>,
+) -> LspResult<String> {
+    let Some(file_match) = workspace.file_match(path) else {
+        return Err(LspError::invalid_params(format!(
+            "document is outside the configured Fluent workspace: {}",
+            path.display()
+        )));
+    };
+    let max_items = usize::MAX;
+    let Some(current_section) = render_selector_combinations_section(
+        "Current language combinations:",
+        source,
+        key,
+        max_items,
+    ) else {
+        return Err(LspError::invalid_params(format!(
+            "no selector combinations available for `{key}`"
+        )));
+    };
+
+    let origin_source = if workspace.is_origin_file(path) {
+        source
+    } else {
+        origin_source.ok_or_else(|| {
+            internal_error_with_message(format!(
+                "failed to resolve origin counterpart for {}",
+                path.display()
+            ))
+        })?
+    };
+    let current_render = render_fluent_source(source, key);
+    let origin_render = render_fluent_source(origin_source, key);
+    let origin_section = if workspace.is_origin_file(path) {
+        None
+    } else {
+        render_selector_combinations_section(
+            "Source language combinations:",
+            origin_source,
+            key,
+            max_items,
+        )
+    };
+    Ok(render_selector_combinations_document(
+        key,
+        &file_match,
+        workspace.origin_language(),
+        origin_render.as_ref(),
+        origin_section.as_deref(),
+        current_render.as_ref(),
+        &current_section,
+    ))
+}
+
+pub fn build_workspace_index(
     workspace: &WorkspaceConfig,
     overlays: &FastMap<Uri, String>,
-) -> (FastMap<PathBuf, SystemTime>, IndexBuildSummary) {
+) -> (
+    WorkspaceIndex,
+    FastMap<PathBuf, SystemTime>,
+    IndexBuildSummary,
+) {
     let paths = collect_matching_files(workspace);
     let snapshot = paths
         .par_iter()
@@ -1542,6 +1897,14 @@ pub fn build_workspace_index_snapshot(
         snapshotted_files: snapshot.len(),
         indexed_files: index.files.len(),
     };
+    (index, snapshot, summary)
+}
+
+pub fn build_workspace_index_snapshot(
+    workspace: &WorkspaceConfig,
+    overlays: &FastMap<Uri, String>,
+) -> (FastMap<PathBuf, SystemTime>, IndexBuildSummary) {
+    let (_, snapshot, summary) = build_workspace_index(workspace, overlays);
     (snapshot, summary)
 }
 
@@ -1912,9 +2275,9 @@ impl Backend {
         };
         if let Some(local_only_warning) =
             indexed_translation.iter().find(|diagnostic| {
-                diagnostic
-                    .message
-                    .starts_with("Translation file has no origin-language counterpart for `")
+                diagnostic.message.starts_with(
+                    "Translation file has no origin-language counterpart for `",
+                )
             })
         {
             diagnostics.push(local_only_warning.clone());
@@ -2010,7 +2373,7 @@ impl Backend {
             .to_file_path()
             .ok_or_else(|| LspError::invalid_params("expected a file URI"))?
             .into_owned();
-        let Some(file_match) = workspace.file_match(&path) else {
+        let Some(_file_match) = workspace.file_match(&path) else {
             return Ok(None);
         };
 
@@ -2064,178 +2427,18 @@ impl Backend {
         } else {
             None
         };
-        let selector_context = build_selector_code_action_context(
-            &source,
+        code_actions_for_document(
+            &workspace,
             &path,
+            &uri,
+            &source,
             params.range.start,
+            style,
+            supports_snippet_text_edits,
+            origin_templates.as_deref(),
+            origin_source.as_deref(),
             current_key.as_deref(),
-        );
-
-        let mut actions = Vec::new();
-        if let Some(origin_templates) = origin_templates.as_deref() {
-            let missing = collect_missing_translation_entries_from_templates(
-                origin_templates,
-                &source,
-            );
-            if !missing.is_empty() {
-                if let Some(edit) = build_missing_entries_workspace_edit(
-                    &uri,
-                    &source,
-                    &missing,
-                    origin_source.as_deref(),
-                    MissingEntryRenderMode::CopySource,
-                ) {
-                    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                        title: "Copy missing strings in file".to_string(),
-                        kind: Some(CodeActionKind::QUICKFIX),
-                        edit: Some(edit),
-                        ..CodeAction::default()
-                    }));
-                }
-            }
-            if let Some(origin_source) = origin_source.as_deref() {
-                if let Some(action) = build_single_message_copy_code_action(
-                    &uri,
-                    &source,
-                    origin_templates,
-                    origin_source,
-                    current_key.as_deref(),
-                ) {
-                    actions.push(CodeActionOrCommand::CodeAction(action));
-                }
-            }
-        }
-
-        if let Some(target) = selector_context.as_ref().and_then(|context| {
-            find_generate_selector_target_in_context(&source, context)
-        }) {
-            let Some(edit_range) =
-                byte_range_to_lsp_range(&source, target.pattern_span.clone())
-            else {
-                return Ok(None);
-            };
-            let ordered_styles = ordered_selector_styles(
-                available_selector_styles(&target),
-                style,
-            );
-            for candidate_style in ordered_styles {
-                let Some(generated) = generate_number_selector_edit(
-                    &source,
-                    &target,
-                    &file_match.language,
-                    candidate_style,
-                    supports_snippet_text_edits,
-                ) else {
-                    continue;
-                };
-                let generated = pad_assignment_replacement(
-                    &source,
-                    &target.pattern_span,
-                    generated,
-                );
-
-                let edit = if supports_snippet_text_edits {
-                    WorkspaceEdit {
-                        changes: None,
-                        document_changes: Some(DocumentChanges::Edits(vec![
-                            TextDocumentEdit {
-                                text_document:
-                                    OptionalVersionedTextDocumentIdentifier {
-                                        uri: uri.clone(),
-                                        version: None,
-                                    },
-                                edits: vec![OneOf3::Right(SnippetTextEdit {
-                                    range: edit_range,
-                                    snippet: generated,
-                                    annotation_id: None,
-                                })],
-                            },
-                        ])),
-                        change_annotations: None,
-                    }
-                } else {
-                    let mut changes = HashMap::new();
-                    changes.insert(
-                        uri.clone(),
-                        vec![TextEdit::new(edit_range, generated)],
-                    );
-                    WorkspaceEdit {
-                        changes: Some(changes),
-                        document_changes: None,
-                        change_annotations: None,
-                    }
-                };
-
-                let title = if let Some(function) = &target.selected_function {
-                    format!(
-                        "Generate number selector from {} ({})",
-                        function.selector_text,
-                        candidate_style.label()
-                    )
-                } else if let Some(variable) = &target.selected_variable {
-                    format!(
-                        "Generate number selector from {} ({})",
-                        variable.name,
-                        candidate_style.label()
-                    )
-                } else {
-                    format!(
-                        "Generate number selector ({})",
-                        candidate_style.label()
-                    )
-                };
-
-                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                    title,
-                    kind: Some(CodeActionKind::REFACTOR_REWRITE),
-                    edit: Some(edit),
-                    is_preferred: Some(candidate_style == style),
-                    ..CodeAction::default()
-                }));
-            }
-        }
-
-        if let Some((pattern_span, rewrite_actions)) =
-            selector_context.as_ref().and_then(|context| {
-                find_selector_rewrite_target_in_context(&source, context)
-            })
-        {
-            let Some(edit_range) =
-                byte_range_to_lsp_range(&source, pattern_span.clone())
-            else {
-                return Ok(None);
-            };
-            for rewrite in rewrite_actions {
-                let mut changes = HashMap::new();
-                changes.insert(
-                    uri.clone(),
-                    vec![TextEdit::new(
-                        edit_range,
-                        pad_assignment_replacement(
-                            &source,
-                            &pattern_span,
-                            rewrite.replacement,
-                        ),
-                    )],
-                );
-                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                    title: rewrite.kind.title().to_string(),
-                    kind: Some(CodeActionKind::REFACTOR_REWRITE),
-                    edit: Some(WorkspaceEdit {
-                        changes: Some(changes),
-                        document_changes: None,
-                        change_annotations: None,
-                    }),
-                    ..CodeAction::default()
-                }));
-            }
-        }
-
-        if actions.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(actions))
-        }
+        )
     }
 
     async fn code_lenses_for(
@@ -2267,64 +2470,7 @@ impl Backend {
                 ))
             })?;
         drop(state);
-        let resource = parse_fluent_resource(&source);
-        let mut message_key_counts = FastMap::default();
-        for entry in &resource.body {
-            if let Entry::Message(message) = entry {
-                *message_key_counts
-                    .entry(message.id.name.to_string())
-                    .or_insert(0usize) += 1;
-            }
-        }
-        let mut lenses = Vec::new();
-        for key in collect_fluent_keys_from_resource(&resource) {
-            if key.starts_with('-') || key.contains('.') {
-                continue;
-            }
-            if message_key_counts.get(&key).copied().unwrap_or_default() != 1 {
-                continue;
-            }
-            let Some(range) = find_fluent_definition(&source, &key) else {
-                continue;
-            };
-            let Some(expansion) =
-                selector_expansion_for(&source, &key, usize::MAX)
-            else {
-                continue;
-            };
-            if expansion.items.is_empty()
-                || expansion.items.iter().all(|item| item.selectors.is_empty())
-            {
-                continue;
-            }
-            if expansion.total_count <= 1 {
-                continue;
-            }
-            let unique_render_count = expansion
-                .items
-                .iter()
-                .map(|item| item.text.as_str())
-                .collect::<FastSet<_>>()
-                .len();
-            if unique_render_count <= 1 {
-                continue;
-            }
-
-            lenses.push(CodeLens {
-                range,
-                command: Some(Command {
-                    title: code_lens_title(expansion.total_count),
-                    command: SHOW_SELECTOR_COMBINATIONS_COMMAND.to_string(),
-                    arguments: Some(vec![
-                        Value::String(uri.to_string()),
-                        Value::String(key),
-                    ]),
-                }),
-                data: None,
-            });
-        }
-
-        Ok(Some(lenses))
+        Ok(code_lenses_for_document(&workspace, &path, &uri, &source))
     }
 
     async fn execute_selector_combinations_command(
@@ -2402,30 +2548,11 @@ impl Backend {
                 path.display()
             )));
         };
-        let Some(file_match) = workspace.file_match(&path) else {
-            return Err(internal_error_with_message(format!(
-                "failed to resolve file metadata for {}",
-                path.display()
-            )));
-        };
-
         if !supports_show_document {
             return Err(internal_error_with_message(
                 "client does not support window/showDocument",
             ));
         }
-
-        let max_items = usize::MAX;
-        let Some(current_section) = render_selector_combinations_section(
-            "Current language combinations:",
-            &source,
-            &key,
-            max_items,
-        ) else {
-            return Err(LspError::invalid_params(format!(
-                "no selector combinations available for `{key}`"
-            )));
-        };
 
         let origin_source = if workspace.is_origin_file(&path) {
             source.clone()
@@ -2443,31 +2570,19 @@ impl Backend {
                 ))
             })?
         };
-        let current_render = render_fluent_source(&source, &key);
-        let origin_render = render_fluent_source(&origin_source, &key);
-        let origin_section = if workspace.is_origin_file(&path) {
-            None
-        } else {
-            render_selector_combinations_section(
-                "Source language combinations:",
-                &origin_source,
-                &key,
-                max_items,
-            )
-        };
-        let document_text = render_selector_combinations_document(
+        let document_text = selector_combinations_document_for_key(
+            &workspace,
+            &path,
             &key,
-            &file_match,
-            workspace.origin_language(),
-            origin_render.as_ref(),
-            origin_section.as_deref(),
-            current_render.as_ref(),
-            &current_section,
-        );
+            &source,
+            Some(origin_source.as_str()),
+        )?;
 
         let document_uri =
             write_selector_combinations_temp_document(&key, &document_text)
-                .map_err(|message| internal_error_with_message(message.clone()))?;
+                .map_err(|message| {
+                    internal_error_with_message(message.clone())
+                })?;
         let opened = self
             .client
             .show_document(ShowDocumentParams {
@@ -6121,8 +6236,7 @@ fn completion_site_for_position(
     if cursor_in_line < indent || token_start != indent {
         return None;
     }
-    if !prefix.starts_with('.') || !is_completion_prefix(prefix, true)
-    {
+    if !prefix.starts_with('.') || !is_completion_prefix(prefix, true) {
         return None;
     }
     let message_key =

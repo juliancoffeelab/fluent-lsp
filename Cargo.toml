@@ -1,5 +1,5 @@
 [workspace]
-members = ["."]
+members = [".", "crates/bench"]
 default-members = ["."]
 resolver = "2"
 

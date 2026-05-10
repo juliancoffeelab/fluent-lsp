@@ -38,12 +38,27 @@ cargo test
 
 Benchmarks:
 
+Bench binaries:
+
 ```bash
-cargo build --bins
-FLUENT_LSP_BENCH_MESSAGES=10 target/debug/fluent-lsp-bench benchmarks/results/indexed-2026-05-05.json target/debug/fluent-lsp
+cargo run -p bench --release --bin fluent-lsp-bench-index
+cargo run -p bench --release --bin fluent-lsp-bench-definition
+cargo run -p bench --release --bin fluent-lsp-bench-references
+cargo run -p bench --release --bin fluent-lsp-bench-hover
+cargo run -p bench --release --bin fluent-lsp-bench-completion
+cargo run -p bench --release --bin fluent-lsp-bench-code-actions
+cargo run -p bench --release --bin fluent-lsp-bench-code-lens
+cargo run -p bench --release --bin fluent-lsp-bench-execute-command
+cargo run -p bench --release --bin fluent-lsp-bench-missing-entries
 ```
 
-The benchmark harness defaults the synthetic workspace to 31 languages, 50 files per language, and 2000 messages per file. Set `FLUENT_LSP_BENCH_MESSAGES` for faster local validation runs. Current bounded results are recorded in [STAGES.md](/home/codex/workspace/fluent-lsp/STAGES.md) and [benchmarks/results/indexed-2026-05-05.json](/home/codex/workspace/fluent-lsp/benchmarks/results/indexed-2026-05-05.json).
+Criterion:
+
+```bash
+make bench-criterion
+```
+
+Older bounded results and profiling notes are recorded in [STAGES.md](/Users/illiadenysenko/Workspace/lab/fluent-lsp/STAGES.md) and under [benchmarks/](/Users/illiadenysenko/Workspace/lab/fluent-lsp/benchmarks).
 
 Try it locally from this repo:
 

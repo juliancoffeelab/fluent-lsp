@@ -1,0 +1,20 @@
+[package]
+name = "bench"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+fluent-lsp = { path = "../.." }
+rkyv = { version = "0.7.46", features = ["validation"] }
+rustc-hash = "2.1"
+serde_json = "1.0"
+tempfile = "3.23"
+tower-lsp = { package = "tower-lsp-server", version = "0.23.0", features = ["proposed"] }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "request_paths"
+harness = false
