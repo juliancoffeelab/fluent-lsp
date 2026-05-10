@@ -5,4 +5,5 @@ junk/
 benchmarks/criterion/
 benchmarks/profiles/
 benchmarks/flamegraphs/
+benchmarks/results/
 crates/bench/target/
